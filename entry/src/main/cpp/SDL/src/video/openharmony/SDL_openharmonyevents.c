@@ -59,28 +59,6 @@ static SDL_Window *openharmony_window(void)
     return OPENHARMONY_Window;
 }
 
-/*
- * TEMPORARY DIAGNOSTIC -- remove once the Escape question is settled.
- *
- * Records every key event that reaches this layer, with the platform key code,
- * before any mapping to an SDL scancode. The open question is whether Escape
- * closes the app because the SYSTEM claimed the key before SDL saw it, or because
- * the key arrived and the game chose to exit. Those look identical from outside
- * and have nothing in common as fixes, and the answer is in whether this line is
- * written at all, and with which code.
- */
-static void key_probe_log(const char *fmt, ...)
-{
-    FILE *f = fopen("/data/storage/el2/base/files/sdl_keys.log", "a");
-    if (f) {
-        va_list ap;
-        va_start(ap, fmt);
-        vfprintf(f, fmt, ap);
-        va_end(ap);
-        fputc('\n', f);
-        fclose(f);
-    }
-}
 
 /*
  * Multi-touch diagnostic, and deliberately NOT one line per touch.
@@ -239,7 +217,13 @@ static SDL_Scancode MapOHKeycodeToSDLScancode(const OH_NativeXComponent_KeyCode 
         //KEYMAP(EXPLORER = 2052,
         //KEYMAP(ENVELOPE = 2053,
         KEYMAP(ENTER, RETURN);
-        KEYMAP(DEL, DELETE);
+        /* HarmonyOS's KEY_DEL is the BACKSPACE key (SDK: KEY_DEL = 2055,
+         * confirmed on device), and KEY_FORWARD_DEL (2071) is the real Delete.
+         * Mapping KEY_DEL to SDL_SCANCODE_DELETE sent every backspace down
+         * Arc's Delete path, which types character 127 where a text field
+         * expects 8. Both keys are mapped to what they actually are. */
+        KEYMAP(DEL, BACKSPACE);
+        KEYMAP(FORWARD_DEL, DELETE);
         KEYMAP(GRAVE, GRAVE);
         KEYMAP(MINUS, MINUS);
         KEYMAP(EQUALS, EQUALS);
@@ -684,7 +668,6 @@ void SDL_OpenHarmonyDispatchKeyEvent(void *component, void *window)
     {
         OH_NativeXComponent_KeyAction a = OH_NATIVEXCOMPONENT_KEY_ACTION_UNKNOWN;
         OH_NativeXComponent_GetKeyEventAction(event, &a);
-        key_probe_log("KEY raw_code=%d action=%d", (int) keycode, (int) a);
     }
     const SDL_Scancode scancode = MapOHKeycodeToSDLScancode(keycode);
     if (scancode == SDL_SCANCODE_UNKNOWN) {
@@ -706,14 +689,238 @@ void SDL_OpenHarmonyDispatchKeyEvent(void *component, void *window)
     OH_NativeXComponent_GetKeyEventTimestamp(event, &timestamp);
 
     SDL_SendKeyboardKey((Uint64) timestamp, SDL_DEFAULT_KEYBOARD_ID, keycode, scancode, down);
+
+    /*
+     * Emit text for printable keys while a text field wants input.
+     *
+     * This backend never produced text: the handler above is the whole key path
+     * and it only ever sent a key event, so a physical keyboard could move a
+     * cursor and delete characters but could never type a character into a
+     * field. The on-screen keyboard is the other route to text and it cannot
+     * work in this process, because the ArkTS IME controller is held by the
+     * OTHER mapping of libSDL3.so: this process maps the library twice, and
+     * SDL_OpenHarmonyShowScreenKeyboard finds ime_controller_ref == NULL and
+     * returns before it ever calls attach(). So text has to come from here.
+     *
+     * The gate is the same one every backend uses -- text is produced only when
+     * the window has text input active, i.e. only when the game has focused a
+     * text field. That is true in THIS copy of the library: this copy reached
+     * SDL_OpenHarmonyShowScreenKeyboard below, and only SDL_StartTextInput()
+     * calls that, so window->text_input_active is set here.
+     *
+     * The character is resolved through SDL's own keymap with the live modifier
+     * state, so shift/capslock behaviour stays SDL's rather than a private
+     * table's. Consequence worth knowing: this is keyboard input, mapping the
+     * physical keys through SDL's keymap -- there is no IME, so no composed
+     * input (no CJK) and the layout follows SDL's keymap rather than the
+     * device's.
+     */
+    if (down) {
+        SDL_Window *focus = SDL_GetKeyboardFocus();
+        if (focus && SDL_TextInputActive(focus)) {
+            SDL_Keycode kc = SDL_GetKeyFromScancode(scancode, SDL_GetModState(), false);
+            if (kc >= 0x20 && kc < 0x7F) {
+                char text[2];
+                text[0] = (char) kc;
+                text[1] = '\0';
+                SDL_SendKeyboardText(text);
+            }
+        }
+    }
 }
 
 void OPENHARMONY_InitEvents(void)
 {
 }
 
+/*
+ * Feeds ArkUI's text into SDL. Called every frame, so it must be cheap when there
+ * is nothing to do: one open, one seek and one size check, then out.
+ *
+ * The backspace case goes through SDL_SendKeyboardKey rather than
+ * SDL_SendKeyboardText because text events can only append -- there is no
+ * "delete" text event. A synthethic backspace key event travels the normal path
+ * and Arc turns it into the character 8 its text fields expect.
+ */
+static void IMEBridgePump(void)
+{
+    static long offset = 0;
+
+    FILE *f = fopen(SDL_OPENHARMONY_IME_CMD_FILE, "r");
+    if (!f) {
+        return;
+    }
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return;
+    }
+    long size = ftell(f);
+    if (size < 0) {
+        fclose(f);
+        return;
+    }
+    if (size < offset) {
+        offset = 0;   /* the file was truncated: a new input session started */
+    }
+    if (size == offset) {
+        fclose(f);
+        return;
+    }
+
+    long avail = size - offset;
+    char *buf = (char *) SDL_malloc((size_t) avail + 1);
+    if (!buf) {
+        fclose(f);
+        return;
+    }
+    if (fseek(f, offset, SEEK_SET) != 0) {
+        SDL_free(buf);
+        fclose(f);
+        return;
+    }
+    size_t got = fread(buf, 1, (size_t) avail, f);
+    fclose(f);
+    buf[got] = '\0';
+
+    /*
+     * Only whole lines are consumed. ArkUI may be mid-write, and acting on half a
+     * command would type half a name; the rest is left for the next frame.
+     */
+    long last_nl = -1;
+    for (long i = (long) got - 1; i >= 0; --i) {
+        if (buf[i] == '\n') {
+            last_nl = i;
+            break;
+        }
+    }
+    if (last_nl < 0) {
+        SDL_free(buf);
+        return;
+    }
+
+    long line_start = 0;
+    for (long i = 0; i <= last_nl; ++i) {
+        if (buf[i] != '\n') {
+            continue;
+        }
+        long len = i - line_start;
+        if (len > 0 && buf[i > 0 ? i - 1 : 0] == '\r') {
+            --len;
+        }
+        char *line = buf + line_start;
+        /* len > 0, NOT len > 1: a bare command letter is a whole command. `E` is
+         * exactly one character, and gating on len > 1 dropped every forwarded ESC
+         * on the floor -- silently, because a discarded command produces no error
+         * and no event, so the only symptom was a key that did not work. Verified
+         * by the line `E\n` having len == 1 (no CR to strip: ArkTS writes LF). */
+        if (len > 0) {
+            char kind = line[0];
+            /* Terminate every line, not just the text one: without it a short
+             * command's argument parser would read straight on into the NEXT line,
+             * since only the newline separated them. The newline is safe to
+             * overwrite -- the scan above is positional and has already passed it. */
+            line[len] = '\0';
+            if (kind == 'T') {
+                SDL_SendKeyboardText(line + 1);
+            } else if (kind == 'E') {
+                /*
+                 * Forward ESC into the game.
+                 *
+                 * The app consumes ESC at the ArkUI layer so HarmonyOS does not
+                 * treat it as Back -- which means the game never sees the key
+                 * while the app's text field has focus, and so its dialog never
+                 * closes and it keeps asking for text. Sending it from here puts
+                 * the key back where the user aimed it, and then everything
+                 * unwinds on its own: game closes its dialog, drops focus, stops
+                 * asking for text, and the keyboard goes away with it.
+                 */
+                SDL_Keycode escape = SDL_GetKeyFromScancode(SDL_SCANCODE_ESCAPE, SDL_KMOD_NONE, false);
+                Uint64 esc_ts = SDL_GetTicksNS();
+                SDL_SendKeyboardKey(esc_ts, SDL_DEFAULT_KEYBOARD_ID, escape, SDL_SCANCODE_ESCAPE, true);
+                SDL_SendKeyboardKey(esc_ts, SDL_DEFAULT_KEYBOARD_ID, escape, SDL_SCANCODE_ESCAPE, false);
+            } else if (kind == 'B') {
+                int count = SDL_atoi(line + 1);
+                SDL_Keycode backspace = SDL_GetKeyFromScancode(SDL_SCANCODE_BACKSPACE, SDL_KMOD_NONE, false);
+                for (int n = 0; n < count; ++n) {
+                    Uint64 ts = SDL_GetTicksNS();
+                    SDL_SendKeyboardKey(ts, SDL_DEFAULT_KEYBOARD_ID, backspace, SDL_SCANCODE_BACKSPACE, true);
+                    SDL_SendKeyboardKey(ts, SDL_DEFAULT_KEYBOARD_ID, backspace, SDL_SCANCODE_BACKSPACE, false);
+                }
+            }
+        }
+        line_start = i + 1;
+    }
+
+    offset += last_nl + 1;
+    SDL_free(buf);
+}
+
+/*
+ * Publish the game's text field rectangle for the app's ArkUI layer.
+ *
+ * WHY POLL INSTEAD OF SENDING IT WHEN THE KEYBOARD IS SHOWN
+ *     The obvious place to read this is SDL_OpenHarmonyShowScreenKeyboard, which
+ *     already receives the rect as an argument. That would be wrong, and wrong in
+ *     a way that only shows up the FIRST time someone types in a session.
+ *
+ *     Arc drives both from one update (SdlApplication.addTextInputListener), in
+ *     this order:
+ *
+ *         if(lastFocus == null) SDL_StartTextInput(window);   // -> Show...Keyboard
+ *         ... compute the field rect ...
+ *         nSDL_SetTextInputArea(window, rect, 0);             // -> window->text_input_rect
+ *
+ *     The show comes FIRST, so at that moment text_input_rect still holds the
+ *     previous value -- and SDL_Window comes from SDL_calloc, so on the first
+ *     focus of a session it is {0,0,0,0}. Reading it there would place the app's
+ *     field at the top-left corner, and the layout would be right from the second
+ *     use onward. A defect that reproduces only on the first attempt is exactly
+ *     the kind that gets diagnosed as flaky and left alone.
+ *
+ *     Polling sidesteps the ordering completely, and has a second benefit: the
+ *     rect is re-read every frame, so if the field moves while it is focused
+ *     (a dialog dragging, the keyboard shrinking the viewport) the app follows it.
+ *
+ * Written only when the value changes, because this runs at frame rate and a
+ * write per frame would be 60 file writes a second for no reason.
+ */
+static void IMEBridgePublishRect(SDL_VideoDevice *_this)
+{
+    static char last[64];
+    char line[64];
+    SDL_Window *window;
+
+    if (!_this || !_this->windows) {
+        return;
+    }
+    /* One surface, one window in this backend; see SDL_OpenHarmonyVideoSurfaceChanged. */
+    window = _this->windows;
+    if (!SDL_TextInputActive(window)) {
+        return;
+    }
+
+    SDL_snprintf(line, sizeof (line), "%d %d %d %d\n",
+                 window->text_input_rect.x, window->text_input_rect.y,
+                 window->text_input_rect.w, window->text_input_rect.h);
+
+    if (SDL_strcmp(line, last) == 0) {
+        return;
+    }
+    SDL_strlcpy(last, line, sizeof (last));
+
+    {
+        FILE *f = fopen(SDL_OPENHARMONY_IME_RECT_FILE, "w");
+        if (f) {
+            fwrite(line, 1, SDL_strlen(line), f);
+            fclose(f);
+        }
+    }
+}
+
 void OPENHARMONY_PumpEvents(SDL_VideoDevice *_this)
 {
+    IMEBridgePump();
+    IMEBridgePublishRect(_this);
 }
 
 void OPENHARMONY_QuitEvents(void)

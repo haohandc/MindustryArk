@@ -38,14 +38,6 @@
 #include "../../events/SDL_events_c.h"
 #include "../../events/SDL_windowevents_c.h"
 
-/*
- * TEMPORARY DIAGNOSTIC -- remove once the window question is settled.
- *
- * Appends to a file in the app's own writable area rather than going through
- * SDL_Log, because these callbacks fire on the UI thread before the launcher's
- * main() has run and redirected its stdio, and because a file survives to be
- * read over hdc afterwards. hilog rotated past the run before it could be read.
- */
 #include <stdarg.h>
 #include <stdio.h>
 
@@ -54,22 +46,11 @@
  * after it. */
 #include "SDL_openharmonyvideo.h"
 
-static void probe_log(const char *fmt, ...)
-{
-    FILE *f = fopen("/data/storage/el2/base/files/sdl_surface.log", "a");
-    if (f) {
-        va_list ap;
-        va_start(ap, fmt);
-        vfprintf(f, fmt, ap);
-        va_end(ap);
-        fputc('\n', f);
-        fclose(f);
-    }
-}
 
 /*
- * TEMPORARY DIAGNOSTIC -- exported so the launcher can ask a given COPY of SDL
- * what it is holding. Defined below, after the statics it reports on.
+ * Exported for the launcher: lets it ask a given COPY of libSDL3.so what window
+ * it is holding, which is how the copy that creates the window is identified.
+ * Load-bearing for the window (see the copy-boundary note below), not a probe.
  */
 
 /*
@@ -201,8 +182,8 @@ static OH_NativeXComponent *native_xcomponent = NULL;
 static void *native_window = NULL;
 
 /*
- * TEMPORARY DIAGNOSTIC -- exported so the launcher can ask a given COPY of SDL
- * what it is holding.
+ * Exported for the launcher -- see the note above the declaration: this is the
+ * bridge's read side and the window depends on it, so it is not a probe.
  *
  * The surface log shows the library's constructor running twice, which means two
  * independent mappings of the same path exist, each with its own copy of the two
@@ -215,12 +196,10 @@ static void *native_window = NULL;
 __attribute__((visibility("default")))
 void haohandc_probe_surface_copy(const char *tag)
 {
-    probe_log("COPY[%s]: xcomponent=%p window=%p", tag, native_xcomponent, native_window);
 }
 
 void SDL_OpenHarmonyGetNativeWindowPointers(void **xcomponent, void **window)
 {
-    probe_log("GetNativeWindowPointers: xcomponent=%p window=%p", native_xcomponent, native_window);
 
     /*
      * This mapping was not the one the XComponent's callbacks landed in, so the
@@ -233,7 +212,6 @@ void SDL_OpenHarmonyGetNativeWindowPointers(void **xcomponent, void **window)
         void *c = SDL_OpenHarmonyBridgeGet(SDL_OPENHARMONY_BRIDGE_COMPONENT);
         void *w = SDL_OpenHarmonyBridgeGet(SDL_OPENHARMONY_BRIDGE_SURFACE);
         if (c && w) {
-            probe_log("GetNativeWindowPointers: adopting bridged surface component=%p window=%p", c, w);
             native_xcomponent = (OH_NativeXComponent *) c;
             native_window = w;
         }
@@ -245,7 +223,6 @@ void SDL_OpenHarmonyGetNativeWindowPointers(void **xcomponent, void **window)
 
 void SDL_OpenHarmonyVideoSurfaceDestroyed(void *component, void *window)
 {
-    probe_log("SurfaceDestroyed: component=%p window=%p (clearing)", component, window);
     SDL_assert(native_xcomponent == ((OH_NativeXComponent *) component));  // right now we assume one surface, one window.
     native_xcomponent = NULL;
     native_window = NULL;
@@ -256,7 +233,6 @@ void SDL_OpenHarmonyVideoSurfaceChanged(void *component, void *window)
     SDL_assert(native_xcomponent == ((OH_NativeXComponent *) component));  // right now we assume one surface, one window.
     uint64_t w, h;
     OH_NativeXComponent_GetXComponentSize(native_xcomponent, native_window, &w, &h);
-    probe_log("SurfaceChanged: size=%llux%llu", (unsigned long long)w, (unsigned long long)h);
     /*
      * Only the mapping that owns the window may send it an event; in the other
      * one there is no event queue to send through. Borrowing the window across
@@ -273,7 +249,6 @@ void SDL_OpenHarmonyVideoSurfaceChanged(void *component, void *window)
 
 void SDL_OpenHarmonyVideoSurfaceCreated(void *component, void *window)
 {
-    probe_log("SurfaceCreated: component=%p window=%p", component, window);
     SDL_assert(native_xcomponent == NULL);  // right now we assume one surface, one window.
     native_xcomponent = (OH_NativeXComponent *) component;
     native_window = window;

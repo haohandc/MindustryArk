@@ -31,3 +31,22 @@ extern void SDL_OpenHarmonyDispatchUIInputEvent(void *component, void *event, in
 extern void OPENHARMONY_InitEvents(void);
 extern void OPENHARMONY_PumpEvents(SDL_VideoDevice *_this);
 extern void OPENHARMONY_QuitEvents(void);
+
+/*
+ * Text input is provided by the app's ArkUI layer rather than by SDL's own IME
+ * path, which cannot work in this process (two mappings of libSDL3.so; ArkTS
+ * gives the IME controller to the one that is not running the game). See the
+ * long note in SDL_openharmony.c above SDL_OpenHarmonyShowScreenKeyboard.
+ *
+ * All three are written in the app's application-level files directory, which is
+ * the one native code and ArkTS share. Note that ArkTS's own context.filesDir is
+ * the HAP-level directory and is a DIFFERENT place -- using it here would
+ * silently never be seen.
+ *
+ * RECT carries the game's text field as "x y w h", so the app can place its own
+ * invisible text field exactly over it and let the framework's keyboard
+ * avoidance move the page by the right amount. See IMEBridgePublishRect.
+ */
+#define SDL_OPENHARMONY_IME_WANT_FILE "/data/storage/el2/base/files/ime_want"
+#define SDL_OPENHARMONY_IME_CMD_FILE  "/data/storage/el2/base/files/ime_cmd"
+#define SDL_OPENHARMONY_IME_RECT_FILE "/data/storage/el2/base/files/ime_rect"

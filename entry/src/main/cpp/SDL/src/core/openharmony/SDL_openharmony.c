@@ -71,29 +71,9 @@ bool OH_ResourceManager_ReleaseRawFileDescriptor64(const RawFileDescriptor64 *de
 #include "../../video/openharmony/SDL_openharmonyvideo.h"
 #include "../../video/openharmony/SDL_openharmonyevents.h"
 
-/*
- * TEMPORARY DIAGNOSTIC -- remove once the window question is settled.
- *
- * Both failure paths in SDL_Init_Native_Interfaces return silently, so a missing
- * XComponent looks exactly like a working one from the outside. Appends to a file
- * the app can write and hdc can read; hilog rotated past the run before it could
- * be inspected.
- */
 #include <stdarg.h>
 #include <stdio.h>
 
-static void probe_napi_log(const char *fmt, ...)
-{
-    FILE *f = fopen("/data/storage/el2/base/files/sdl_surface.log", "a");
-    if (f) {
-        va_list ap;
-        va_start(ap, fmt);
-        vfprintf(f, fmt, ap);
-        va_end(ap);
-        fputc('\n', f);
-        fclose(f);
-    }
-}
 
 static CommonEvent_Subscriber *commonevent_subscriber = NULL;
 static napi_ref ability_object_ref = NULL;
@@ -722,7 +702,44 @@ static void CallJSShowScreenKeyboard(napi_env env, napi_value js_callback, void 
 bool SDL_OpenHarmonyShowScreenKeyboard(int input_type, int cap_type, const SDL_Rect *text_input_rect)
 {
     if (!ime_controller_ref) {
-        return SDL_SetError("IME controller not initialized");
+        /*
+         * This copy has no IME controller, so SDL's own path cannot show a
+         * keyboard -- but a keyboard can still be provided: the app's ArkUI layer
+         * puts up a text field of its own, which the framework wires to the input
+         * method without any controller from us.
+         *
+         * Ask for it with a file, and report SUCCESS. Reporting failure here would
+         * also be wrong in effect: from SDL's point of view an on-screen keyboard
+         * is being shown, and it must go on believing text input is active.
+         *
+         * Truncating the command file starts the session empty. PumpEvents
+         * notices the truncation by size and resets its read offset.
+         */
+        FILE *want = fopen(SDL_OPENHARMONY_IME_WANT_FILE, "w");
+        if (want) {
+            fclose(want);
+        }
+        FILE *cmd = fopen(SDL_OPENHARMONY_IME_CMD_FILE, "w");
+        if (cmd) {
+            fclose(cmd);
+        }
+        /*
+         * Tell SDL the on-screen keyboard is up.
+         *
+         * This is not bookkeeping. SDL_StopTextInput() only calls the backend's
+         * HideScreenKeyboard when it believes a keyboard is showing:
+         *
+         *     if (AutoShowingScreenKeyboard() && SDL_ScreenKeyboardShown(window))
+         *
+         * and that flag is set HERE, by SDL_SendScreenKeyboardShown(). The normal
+         * path sets it from the attach() callback; returning early without it left
+         * the flag false, so HideScreenKeyboard was never called, so the request
+         * file was never removed, so the keyboard could not be dismissed at all --
+         * not by leaving the field and not by ESC either, since ESC only makes the
+         * game close its dialog and the file outlived that.
+         */
+        SDL_SendScreenKeyboardShown();
+        return true;
     }
 
     ShowKeyboardData *data = (ShowKeyboardData *) SDL_calloc(1, sizeof (*data));
@@ -762,10 +779,50 @@ static void CallJSHideScreenKeyboard(napi_env env, napi_value js_callback, void 
 bool SDL_OpenHarmonyHideScreenKeyboard(void)
 {
     if (!ime_controller_ref) {
-        return SDL_SetError("IME controller not initialized");
+        /*
+         * The ArkUI text field is up; withdrawing the request file is what takes
+         * it down. See SDL_OpenHarmonyShowScreenKeyboard above.
+         *
+         * Pair the flag with the one set on show, or SDL keeps believing a
+         * keyboard is on screen and the next StopTextInput/HideScreenKeyboard
+         * pair behaves wrongly.
+         */
+        remove(SDL_OPENHARMONY_IME_WANT_FILE);
+        SDL_SendScreenKeyboardHidden();
+        return true;
     }
     return (CallNapiThreadsafeFunction(hide_screenkeyboard_threadsafefn, NULL, napi_tsfn_nonblocking) == napi_ok);
 }
+
+/*
+ * KNOWN LIMITATION: the on-screen keyboard does not work in this app, and the
+ * reason is structural rather than a bug in the code above.
+ *
+ * This process maps libSDL3.so TWICE. ArkTS loads one copy (the ArkUI
+ * XComponent names it, and `import sdl from 'libSDL3.so'` resolves to it) and
+ * the game reaches another through libmain.so/LWJGL; the two live in different
+ * linker namespaces, so the same file is mapped twice and every `static` in it
+ * exists twice. Confirmed on device: /proc/self/maps lists the same path, same
+ * inode, two different base addresses, with two [anon:libSDL3.so.bss] regions.
+ *
+ * `ime_controller_ref` is one of those statics, and it is set by
+ * SDL_JS_ProvideArkTSObjects -- which ArkTS calls on ITS copy. So the copy that
+ * runs the game finds the ref NULL and returns here before attach() is ever
+ * called, and no keyboard appears.
+ *
+ * This is the same dual-mapping that previously split the window/surface
+ * callbacks and the touch events; both were addressed by controlling which copy
+ * does the work (org.lwjgl.librarypath ordering, SDL_OpenHarmonyAdoptXComponent).
+ * Fixing the IME the same way is not possible: a napi_ref belongs to the
+ * napi_env that created it, so the controller cannot simply be handed across,
+ * and even if the other copy ran attach(), its insertText callback would type
+ * into its own (unread) event queue rather than the game's.
+ *
+ * So text input is provided by synthesising characters from key presses in
+ * SDL_OpenHarmonyDispatchKeyEvent instead. That covers a physical keyboard and
+ * ASCII; it is not an IME. Anyone revisiting this should read that comment too.
+ */
+
 
 // this function is called from the main Javascript thread when it's convenient to fire it.
 static void CallJSChangeMousePointer(napi_env env, napi_value js_callback, void *context, void *userdata)
@@ -1214,7 +1271,6 @@ void SDL_OpenHarmonyAdoptXComponent(void *component)
 //  ArkTS code can call into our native code.
 static napi_value SDL_Init_Native_Interfaces(napi_env env, napi_value exports)
 {
-    probe_napi_log("Init_Native_Interfaces: entered (napi module 'SDL3' was loaded by ArkTS)");
 
     // Functions that we want to be able to call from ArkTS go here.
     // (declare them in C as `napi_value MyFunctionName(napi_env env, napi_callback_info info);`)
@@ -1225,18 +1281,14 @@ static napi_value SDL_Init_Native_Interfaces(napi_env env, napi_value exports)
 
     // Wire into our XComponent, so we can take control from C code. If any of this fails, I assume the app will either blow up or do nothing.
     napi_value xcompobj = GetNapiObjField(env, exports, OH_NATIVE_XCOMPONENT_OBJ);
-    probe_napi_log("Init_Native_Interfaces: xcompobj=%p", (void *) xcompobj);
     if (!xcompobj) {
-        probe_napi_log("Init_Native_Interfaces: NO XComponent object -- callbacks never get registered");
         return exports;
     }
 
     OH_NativeXComponent *nativeXComponent = NULL;
     if (napi_unwrap(env, xcompobj, (void **) &nativeXComponent) != napi_ok) {
-        probe_napi_log("Init_Native_Interfaces: napi_unwrap FAILED");
         return exports;
     }
-    probe_napi_log("Init_Native_Interfaces: nativeXComponent=%p -- registering callbacks", (void *) nativeXComponent);
 
     register_xcomponent_callbacks(nativeXComponent);
 
@@ -1266,7 +1318,6 @@ void __attribute__((constructor)) SDL_RegisterNativeInterfaces(void)
         .reserved = { 0 },
     };
     napi_module_register(&sdl_napi_module);
-    probe_napi_log("RegisterNativeInterfaces: constructor ran, module 'SDL3' registered");
 }
 
 #endif // SDL_PLATFORM_OPENHARMONY
