@@ -2,11 +2,11 @@
   "string": [
     {
       "name": "module_desc",
-      "value": "MindustryArk - a Mindustry launcher for HarmonyOS"
+      "value": "MindustryArk —— 鸿蒙上的 Mindustry 启动器"
     },
     {
       "name": "EntryAbility_desc",
-      "value": "MindustryArk - a Mindustry launcher for HarmonyOS"
+      "value": "MindustryArk —— 鸿蒙上的 Mindustry 启动器"
     },
     {
       "name": "EntryAbility_label",
@@ -14,23 +14,23 @@
     },
     {
       "name": "perm_reason_MICROPHONE",
-      "value": "Used to record audio"
+      "value": "用于录制音频"
     },
     {
       "name": "perm_reason_CAMERA",
-      "value": "Used to record video"
+      "value": "用于录制视频"
     },
     {
       "name": "perm_reason_INTERNET",
-      "value": "Used to download additional content"
+      "value": "用于下载额外内容"
     },
     {
       "name": "perm_reason_READ_PASTEBOARD",
-      "value": "Used to read from the pasteboard"
+      "value": "用于读取剪贴板"
     },
     {
       "name": "perm_reason_DOWNLOAD",
-      "value": "Used to import save files (.msav), schematics (.msch) and exported game data (.zip) from the Download folder"
+      "value": "用于从「下载」目录导入存档（.msav）、蓝图（.msch）与导出的游戏数据（.zip）"
     }
   ]
 }
