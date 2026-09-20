@@ -70,6 +70,12 @@ MARKER2 = b"arc.sdl.mobile"
 # field references the new methods make.
 MARKER3 = b"MAX_TOUCH_POINTERS"
 MARKER4 = b"pointerJustDown"
+# Added later than the two above, and gated separately for that reason: those two
+# were already present in both the source and the previously-shipped class, so
+# they cannot tell a rebuilt SdlInput.class from a stale one. This one can -- it
+# is a method name introduced by the hover-follows-touch fix, so it exists only in
+# a class compiled from the source as it stands now.
+MARKER7 = b"syncMouseToFinger"
 
 # Present in the new SdlFiles code, absent from the old (the browser root used
 # to be inseparable from the game data path).
@@ -86,7 +92,7 @@ def main():
     # Each source is checked for its own markers, against its own contents. A
     # marker found in the wrong file would prove nothing, which is why these are
     # paired up rather than pooled into one list.
-    for path, markers in ((SRC, (MARKER, MARKER2)), (SRC_INPUT, (MARKER3, MARKER4)),
+    for path, markers in ((SRC, (MARKER, MARKER2)), (SRC_INPUT, (MARKER3, MARKER4, MARKER7)),
                           (SRC_FILES, (MARKER5, MARKER6))):
         if not os.path.isfile(path):
             print("FAIL missing %s" % path)
@@ -127,7 +133,7 @@ def main():
         # own markers. Bytecode major 61 (Java 17) is checked per class, because
         # a class compiled for the wrong release would only fail on the device.
         for cls, markers in (("SdlApplication.class", (MARKER, MARKER2)),
-                             ("SdlInput.class", (MARKER3, MARKER4)),
+                             ("SdlInput.class", (MARKER3, MARKER4, MARKER7)),
                              ("SdlFiles.class", (MARKER5, MARKER6))):
             produced = os.path.join(tmp, "arc", "backend", "sdl", cls)
             if not os.path.isfile(produced):
@@ -164,7 +170,7 @@ def main():
         if not os.path.isfile(p):
             print("FAIL %s was not installed" % name)
             return 1
-    for cls, marker in (("SdlApplication.class", MARKER), ("SdlInput.class", MARKER3),
+    for cls, marker in (("SdlApplication.class", MARKER), ("SdlInput.class", MARKER3),  # MARKER7 checked above; this late pass is a second, independent read
                         ("SdlFiles.class", MARKER5)):
         installed_blob = open(os.path.join(OUT_SDL3, cls), "rb").read()
         if marker not in installed_blob:
