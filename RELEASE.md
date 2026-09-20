@@ -140,7 +140,7 @@ Run Mindustry on HarmonyOS / OpenHarmony via a self-built launcher — embedded 
 ### Release title
 
 ```
-v0.1.0-beta1 — Mindustry 在鸿蒙上跑通
+v0.1.0-beta1 — Mindustry v8 Build 160.4 on HarmonyOS
 ```
 
 ### Release body
@@ -148,66 +148,92 @@ v0.1.0-beta1 — Mindustry 在鸿蒙上跑通
 ````markdown
 # Mindustry 鸿蒙移植 · v0.1.0-beta1
 
-在 HarmonyOS / OpenHarmony 上用**自建启动器**运行 Mindustry。
-不依赖任何现成的模拟层：内嵌 JDK、从 native 代码创建 JVM、把真正的 SDL3 窗口交给游戏。
+在 HarmonyOS / OpenHarmony 上用**自建启动器**运行 Mindustry ——
+内嵌 JDK、从 native 代码创建 JVM、把真正的 SDL3 窗口交给游戏，不套任何现成的模拟层。
 
-**内嵌的游戏版本：Mindustry `v8 Build 160.4`**（游戏内标题栏显示 `release build 160.4`）。
-⚠️ 这是 **Mindustry 自己的**版本号，和本项目的 `v0.1.0-beta1` 是两套体系 ——
-以后换游戏 jar 时游戏版本会变，但本项目版本号按自己的节奏走。
+**Run Mindustry on HarmonyOS / OpenHarmony with a self-built launcher** — an embedded
+JDK, a JVM created from native code, and a real SDL3 window handed to the game.
+No existing emulation layer involved.
 
-> ⚠️ **非官方项目**，与 Mindustry 及 Anuken 无隶属关系。
-> 本项目以 **GPL-3.0** 分发（因为构建产物再分发了 GPL-3.0 的 Mindustry）。
+内嵌的游戏版本 / Embedded game: **Mindustry `v8 Build 160.4`**（游戏内显示 `release build 160.4`）
+⚠️ 这是 **Mindustry 自己的**版本号，和本项目的 `v0.1.0-beta1` 是两套体系 /
+that is the *game's* version, not this project's — the two move independently.
 
-## 已验证可用的功能
+> ⚠️ **非官方项目 / Unofficial.** 与 Mindustry 及 Anuken 无隶属关系 · Not affiliated with,
+> endorsed by, or supported by the Mindustry project or Anuken.
+> 以 **GPL-3.0** 分发（构建产物再分发了 GPL-3.0 的 Mindustry）/ licensed GPL-3.0.
 
-在 HarmonyOS 7 / API 26 设备上真机验证（**HUAWEI MatePad Pro 12.2" 2025** 平板、**HUAWEI Mate 80 Pro** 手机）：
+---
 
-| 项目 | 状态 |
+## 下载哪个文件 / Which file to download
+
+| 文件 / File | 说明 / What it is |
 |---|---|
-| 主菜单 / 渲染 | ✅ 正常，使用移动端布局 |
-| 音频 | ✅ OHAudio |
-| 触屏 | ✅ 点击、长按、**双指捏合缩放** |
-| 键盘 | ✅ 物理键盘 WASD；ESC 打开菜单（**不会被系统当成"返回"**） |
-| 鼠标 | ✅ 全部按键 + 滚轮 |
-| 存档 / 数据导入导出 | ✅ 从「下载」目录 |
-| 退出 | ✅ 正常关闭，不被系统标记为崩溃 |
+| `MindustryArk-v0.1.0-beta1-unsigned.hap` | **应用本体。** 未签名，需自签一次（见下）<br>**This is the app.** Unsigned — sign it once yourself (below) |
+| `MindustryArk-v0.1.0-beta1-payload.zip` | 载荷包。**只有要从源码构建才需要**<br>Build inputs — **only needed to build from source** |
 
-## 下载哪个文件
+⚠️ **未签名的 HAP 装不上**（HarmonyOS 要求先签名）/ **An unsigned HAP will not install**
+(HarmonyOS requires a signature). 用你自己的证书签一次 / sign it once with your own certificate:
 
-| 文件 | 说明 |
+1. 用 DevEco Studio 打开本项目 / open this project in DevEco Studio
+2. **File → Project Structure → Signing Configs → Automatically generate signature**
+3. `bash deploy.sh`
+
+**本项目不申请任何受限权限 / no restricted ACL permission is requested**，
+所以自动生成的证书就够了，不必去 AppGallery Connect 申请 ·
+so the automatically generated profile is sufficient and there is nothing to apply for.
+
+---
+
+## 已验证 / Verified
+
+HarmonyOS 7 / API 26 真机验证：**HUAWEI MatePad Pro 12.2" 2025** 平板、**HUAWEI Mate 80 Pro** 手机。
+Verified on a HUAWEI MatePad Pro 12.2" 2025 tablet and a HUAWEI Mate 80 Pro phone, both HarmonyOS 7 / API 26.
+
+| 项目 / Area | 状态 / State |
 |---|---|
-| `MindustryArk-v0.1.0-beta1-unsigned.hap` | **这就是应用。** 未签名，需要你用自己的证书签一次才能装（见下） |
-| `MindustryArk-v0.1.0-beta1-payload.zip` | **载荷包。** 想在本地从源码构建才需要；只想玩的话**不用下** |
+| 主菜单与渲染 / menu and rendering | ✅ 正常，移动端布局 / works, mobile layout |
+| 音频 / audio | ✅ OHAudio |
+| 触屏 / touch | ✅ 点击、长按、**双指捏合缩放** / tap, long-press, **two-finger pinch zoom** |
+| 键盘 / keyboard | ✅ 物理键盘 WASD；ESC 打开菜单，**不被系统当成「返回」**<br>WASD; ESC opens the menu and is **not** treated as Back |
+| 鼠标 / mouse | ✅ 全部按键 + 滚轮 / all buttons and the wheel |
+| 存档与数据导入导出 / save and data import | ✅ 从「下载」目录往返 / via the Download folder |
+| 退出 / quitting | ✅ 正常关闭，不被系统标记为崩溃 / clean exit, not flagged as a crash |
 
-⚠️ **签名方式**：HarmonyOS 上未签名的 HAP 装不了，必须先用你自己的证书签名。
-在 DevEco Studio 里打开本项目 → File → Project Structure → Signing Configs →
-Automatically generate signature，然后运行 `bash deploy.sh`。
-**本项目不需要任何受限权限**，所以自动生成的证书就够了，不用去 AGC 申请。
+## 已知限制 / Known limitations
 
-## 已知限制
-
-- **桌面 / 移动模式无法运行期切换**（启动时固定）。游戏内自带「鼠标 + 键盘操控」开关可覆盖大部分需求。
-- 游戏内的文件浏览器走的是 Mindustry **自带**的兜底实现（Arc 的文件对话框库是 glibc 链接，鸿蒙加载不了）。
+- **桌面/移动模式无法运行期切换**（启动时固定）。游戏内自带「鼠标 + 键盘操控」开关可覆盖大部分需求。
+  *Desktop/mobile mode cannot be switched at runtime.* Mindustry's own in-game
+  "mouse + keyboard control" toggle covers most of what you would want it for.
+- 游戏内的文件浏览器用的是 Mindustry **自带**的兜底实现（Arc 的文件对话框库是 glibc 链接，鸿蒙加载不了）。
+  *The in-game file browser is Mindustry's own fallback* — Arc's file-dialog native
+  is glibc-linked and cannot load here.
 - **导入游戏数据后游戏会主动退出** —— 这是 Mindustry 的设计（用新数据重启），**看起来像崩溃但不是**。
-- 只在 **MatePad Pro 12.2" 2025** 与 **Mate 80 Pro** 这两台设备上验证过，均为 HarmonyOS 7 / API 26。
-  其他鸿蒙设备未测试 —— 本项目依赖平台对「可执行内存」的策略，若某设备在这点上做法不同，
-  出错方式我们无法预判。
+  *Importing game data makes the game exit on purpose*, so it restarts with the new
+  data. It looks like a crash and is not one.
+- 只在上面那两台设备上验证过，其他鸿蒙设备**未测试**。
+  *Verified on those two devices only.* This depends on the platform's policy on
+  executable memory, and a device that enforces it differently would fail in ways
+  this project has no way to predict.
 
-## 从源码构建
+## 从源码构建 / Building from source
 
 ```bash
-# 1) 先准备载荷（见 payload-src/README.md），或解开载荷包
+# 先准备载荷（见 payload-src/README.md），或解开载荷包
 unzip -o MindustryArk-v0.1.0-beta1-payload.zip
-# 2) 配置签名：DevEco → Project Structure → Signing Configs → 自动生成签名
+# 配置签名（同上），然后 / then configure signing as above and run:
 bash deploy.sh          # 构建 + 校验 + 安装 + 启动 + 收日志
 ```
 
-## 致谢
+## 致谢与许可 / Credits and licences
 
-Mindustry 与 Arc 由 **Anuken** 开发；窗口/输入/音频层是 **SDL3**；
-JNI 绑定是 **LWJGL**；运行时是 **OpenJDK 21**。各组件许可证见 `THIRD-PARTY.md`。
+Mindustry 与 Arc 由 **Anuken** 开发 / by **Anuken**；窗口·输入·音频层 / windowing,
+input and audio: **SDL3**；JNI 绑定 / bindings: **LWJGL**；运行时 / runtime: **OpenJDK 21**。
+逐组件条款见 / per-component terms: [`THIRD-PARTY.md`](THIRD-PARTY.md)。
+中文说明见 / Chinese docs: [`README.zh-CN.md`](README.zh-CN.md)。
 
-本仓库大部分代码由 AI 辅助完成（Claude via Cherry Studio，deepseek-flash v4.1）。
+本仓库大部分代码由 AI 辅助完成 / most of the code here was written with AI
+assistance（Claude via Cherry Studio，deepseek-flash v4.1）。
 ````
 
 ---
