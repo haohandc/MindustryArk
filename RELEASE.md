@@ -134,8 +134,42 @@ before promising it to anyone:
 Run Mindustry on HarmonyOS / OpenHarmony via a self-built launcher — embedded JDK, native JVM startup, real SDL3 window.
 ```
 
-**Topics**: `harmonyos` `openharmony` `mindustry` `arkts` `deveco-studio` `sdl3`
-`jni` `jvm` `hotspot` `java` `game-port` `hap`
+### Topics
+
+Paste this into the repo's **Topics** box (space-separated; GitHub allows 20):
+
+```
+harmonyos harmonyos-next openharmony ohos arkts deveco-studio mindustry game-port sdl3 lwjgl jni jvm
+```
+
+Grouped by what they're for: **platform** `harmonyos` `harmonyos-next` `openharmony` `ohos` ·
+**how it's written** `arkts` `deveco-studio` `jni` `jvm` · **what it is** `mindustry` `game-port` ·
+**what it stands on** `sdl3` `lwjgl`.
+
+#### Three candidates were dropped after checking what they actually contain
+
+Not from intuition — each one would have found the wrong audience, and one of them was
+in an earlier draft of this list:
+
+| Dropped | What the topic actually is | Measured |
+|---|---|---|
+| `hap` | HomeKit Accessory Protocol (`homebridge`, `homebridge/HAP-NodeJS`), `html-agility-pack`, `HAP-python` | 121 repos, **none** HarmonyOS |
+| `java` | tutorials, LeetCode, Spring — `JavaGuide`, `spring-boot`, `elasticsearch` | **324,781** repos |
+| `hotspot` | WiFi tethering (`VPNHotspot`, `tetherfusenet`), mixed with `doocs/jvm` and `jitwatch` | 476 repos, mostly unrelated |
+
+The decisive one is `hap`: on this platform it means *HarmonyOS Ability Package*, so it looks
+like the obvious tag, and on GitHub it means something else entirely. The same conclusion
+arrives from the other direction — the HarmonyOS HAP-tooling repo `Zitann/HarmonyOS-Haps`
+tags itself `harmonyos-next`, not `hap`.
+
+`jvm` is kept where `java` was dropped on the same reasoning: `jvm` (3,382 repos) is about
+the runtime — `arthas`, `btrace`, `openjdk/jdk` — which is what this project embeds and
+starts from native code, while `java` is about the language and is 96× larger and
+tutorial-dominated.
+
+**Source for every count and repo name above**: the `https://github.com/topics/<name>`
+pages, fetched 2026-09-20. Local measurement plays no part in this table — it is all
+web-sourced, and worth re-checking if it ever matters.
 
 ### Release title
 
