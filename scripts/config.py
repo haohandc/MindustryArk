@@ -121,7 +121,74 @@ OUT_DIR = os.path.join(PROJECT_ROOT, "entry", "build", "default", "outputs", "de
 # one of the three and not the others fails the build rather than producing a
 # file whose name lies about its contents.
 APP_NAME = "MindustryArk"
-APP_VERSION = "1.0.0"
+
+# ---------------------------------------------------------------------------
+# Version
+# ---------------------------------------------------------------------------
+# versionName and artifactName have DIFFERENT allowed characters, which is the
+# trap here -- both were measured by building, not read off a document:
+#
+#   versionName   must start with a digit or a dot (hvigor's schema pattern is
+#                 ^[0-9.]+|(?=.*[{])(?=.*[}])[0-9a-zA-Z_.{}]+$, whose first
+#                 branch is a PREFIX match, so almost anything after the first
+#                 character passes -- including spaces and exclamation marks).
+#                 A leading "v" is rejected.
+#   artifactName  ^[\da-zA-Z0-9._-]+$ -- no spaces, no "+".
+#
+# So the leading "v" belongs to the release tag and the artifact name, never to
+# the version name, and the safe alphabet for both is digits, letters, dot,
+# underscore and hyphen.
+APP_VERSION = "0.1.0-beta1"
+
+# versionCode is the integer the platform actually orders installs by.
+#
+#   base = major*1000000 + minor*10000 + patch*100
+#   then +1..98 for a pre-release, +99 for the final release of that version
+#
+# which keeps the ordering a semver reader expects (a beta sorts below its own
+# final release) while staying a plain int32, which is all the field accepts:
+# measured, 0 <= versionCode <= 2147483647.
+#
+#   0.1.0-beta1 -> 10001        0.1.0-beta2 -> 10002        0.1.0 -> 10099
+#   0.1.1-beta1 -> 10101        0.2.0-beta1 -> 20001        1.0.0 -> 1000099
+#
+# version_code_for() below derives it, and the module checks its own constant
+# against the derivation, so a version bump that forgets the code fails on
+# import rather than shipping an install that cannot replace the previous one.
+VERSION_CODE = 10001
+
+
+def version_code_for(version):
+    """versionCode for a version string, per the rule above.
+
+    Handles the only shapes this project uses: M[.m[.p]][-preN]. Anything else
+    raises rather than guessing -- a wrong versionCode is invisible until an
+    install silently refuses to upgrade, which is a bad way to find out.
+    """
+    import re
+
+    m = re.fullmatch(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([a-z]+)(\d+))?", version)
+    if not m:
+        raise ValueError("unrecognised version %r; expected M[.m[.p]][-preN]"
+                         % version)
+    major = int(m.group(1))
+    minor = int(m.group(2) or 0)
+    patch = int(m.group(3) or 0)
+    pre = int(m.group(5) or 0)
+    if pre > 98:
+        raise ValueError("pre-release number %d is too large (max 98; 99 means "
+                         "the final release)" % pre)
+    return major * 1000000 + minor * 10000 + patch * 100 + (pre if pre else 99)
+
+
+if version_code_for(APP_VERSION) != VERSION_CODE:
+    raise SystemExit(
+        "FAIL VERSION_CODE %d does not match %s (%d). Fix one of them:\n"
+        "     APP_VERSION = %r\n"
+        "     VERSION_CODE = %d"
+        % (VERSION_CODE, APP_VERSION, version_code_for(APP_VERSION),
+           APP_VERSION, version_code_for(APP_VERSION)))
+
 ARTIFACT_NAME = "%s-v%s" % (APP_NAME, APP_VERSION)
 BUNDLE_NAME = "com.haohandc.mindustryark"
 

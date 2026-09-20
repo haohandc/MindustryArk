@@ -57,7 +57,7 @@ built HAP and the profile is right there as JSON.
 
 ```
 python - <<'PY'
-p = "entry/build/default/outputs/default/MindustryArk-v1.0.0.hap"
+p = "entry/build/default/outputs/default/MindustryArk-v0.1.0-beta1.hap"
 d = open(p, "rb").read()[-400000:]
 i = d.find(b'"debug-info"')
 print(d[max(0, i - 900):i + 400].decode("utf-8", "replace"))
@@ -140,16 +140,20 @@ Run Mindustry on HarmonyOS / OpenHarmony via a self-built launcher — embedded 
 ### Release title
 
 ```
-v1.0.0 — Mindustry 在鸿蒙上跑通
+v0.1.0-beta1 — Mindustry 在鸿蒙上跑通
 ```
 
 ### Release body
 
 ````markdown
-# Mindustry 鸿蒙移植 · v1.0.0
+# Mindustry 鸿蒙移植 · v0.1.0-beta1
 
 在 HarmonyOS / OpenHarmony 上用**自建启动器**运行 Mindustry。
 不依赖任何现成的模拟层：内嵌 JDK、从 native 代码创建 JVM、把真正的 SDL3 窗口交给游戏。
+
+**内嵌的游戏版本：Mindustry `v8 Build 160.4`**（游戏内标题栏显示 `release build 160.4`）。
+⚠️ 这是 **Mindustry 自己的**版本号，和本项目的 `v0.1.0-beta1` 是两套体系 ——
+以后换游戏 jar 时游戏版本会变，但本项目版本号按自己的节奏走。
 
 > ⚠️ **非官方项目**，与 Mindustry 及 Anuken 无隶属关系。
 > 本项目以 **GPL-3.0** 分发（因为构建产物再分发了 GPL-3.0 的 Mindustry）。
@@ -172,8 +176,8 @@ v1.0.0 — Mindustry 在鸿蒙上跑通
 
 | 文件 | 说明 |
 |---|---|
-| `MindustryArk-v1.0.0-unsigned.hap` | **这就是应用。** 未签名，需要你用自己的证书签一次才能装（见下） |
-| `MindustryArk-v1.0.0-payload.zip` | **载荷包。** 想在本地从源码构建才需要；只想玩的话**不用下** |
+| `MindustryArk-v0.1.0-beta1-unsigned.hap` | **这就是应用。** 未签名，需要你用自己的证书签一次才能装（见下） |
+| `MindustryArk-v0.1.0-beta1-payload.zip` | **载荷包。** 想在本地从源码构建才需要；只想玩的话**不用下** |
 
 ⚠️ **签名方式**：HarmonyOS 上未签名的 HAP 装不了，必须先用你自己的证书签名。
 在 DevEco Studio 里打开本项目 → File → Project Structure → Signing Configs →
@@ -193,7 +197,7 @@ Automatically generate signature，然后运行 `bash deploy.sh`。
 
 ```bash
 # 1) 先准备载荷（见 payload-src/README.md），或解开载荷包
-unzip -o MindustryArk-v1.0.0-payload.zip
+unzip -o MindustryArk-v0.1.0-beta1-payload.zip
 # 2) 配置签名：DevEco → Project Structure → Signing Configs → 自动生成签名
 bash deploy.sh          # 构建 + 校验 + 安装 + 启动 + 收日志
 ```
@@ -217,7 +221,7 @@ bash build.sh assembleHap                       # -> the HAPs, in entry/build/..
 # changes, or the published zip will disagree with the repository:
 python - <<'PY'
 import os, zipfile
-with zipfile.ZipFile("dist/MindustryArk-v1.0.0-payload.zip", "w",
+with zipfile.ZipFile("dist/MindustryArk-v0.1.0-beta1-payload.zip", "w",
                      zipfile.ZIP_DEFLATED, compresslevel=9) as z:
     z.write("dist/README-PAYLOAD.txt", "README-PAYLOAD.txt")
     for dp, _d, fs in os.walk("entry/libs"):
@@ -235,17 +239,22 @@ unzipping into the repository root does the right thing.
 - [ ] Repository description and topics filled in (above)
 - [ ] Upload **only** the unsigned HAP and the payload zip — never the signed one
 - [ ] Confirm the uploaded HAP has no signature block:
-      `python -c "d=open('MindustryArk-v1.0.0-unsigned.hap','rb').read()[-400000:]; print(b'debug-info' in d)"`
+      `python -c "d=open('MindustryArk-v0.1.0-beta1-unsigned.hap','rb').read()[-400000:]; print(b'debug-info' in d)"`
       should print `False`
 - [ ] Confirm the repository has no local paths left. The leading boundary group
       is what keeps this from matching every `https://` in the docs:
       ```bash
       git grep -nE '(^|[^A-Za-z0-9])[A-Za-z]:[\/\\]' -- . ':!entry/src/main/cpp/SDL' ':!LICENSE'
       ```
-      Expected: only the `E:/Program Files/DevEco Studio` default in `build.sh`
-      and `deploy.sh`, which is a documented, overridable default rather than
-      somebody's home directory. A control for the pattern itself — a quoted
-      heredoc, because `printf` eats the backslashes:
+      Expected: **only documented, overridable defaults** — `scripts/config.py`
+      (which holds every path the toolchain uses, each an `ARK_*`-overridable
+      default), the same values repeated in `build.sh` and `deploy.sh` for the
+      tools they invoke directly, and this file's own example above. Nothing
+      that would break for someone whose checkout is not at one particular
+      path, and no home directory outside those defaults.
+
+      A control for the pattern itself — a quoted heredoc, because `printf`
+      eats the backslashes:
       ```bash
       cat <<'EOF' | grep -nE '(^|[^A-Za-z0-9])[A-Za-z]:[\/\\]'
       ok https://x.dev/a

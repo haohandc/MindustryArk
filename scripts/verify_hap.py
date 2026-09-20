@@ -95,14 +95,17 @@ def check_version_matches_name(hap, ok_ref):
         info = json.loads(z.read("pack.info").decode("utf-8"))
 
     ver = info["summary"]["app"]["version"]["name"]
+    code = info["summary"]["app"]["version"]["code"]
     packname = info["packages"][0]["name"]
     ver_want = config.APP_VERSION
+    code_want = config.VERSION_CODE
     name_want = config.ARTIFACT_NAME
 
     print("   file name       %s" % name)
     print("   artifactName    %s   (in pack.info)" % packname)
     print("   versionName     %s   (config: %s / %s)"
           % (ver, ver_want, name_want))
+    print("   versionCode     %s   (config: %s)" % (code, code_want))
 
     problems = []
     if packname != name_want:
@@ -111,6 +114,18 @@ def check_version_matches_name(hap, ok_ref):
     if ver != ver_want:
         problems.append("versionName %r != config.APP_VERSION %r"
                         % (ver, ver_want))
+    # versionCode is what the platform orders installs by, and it is the only one
+    # of these that fails silently: a code that is too low does not error, it
+    # just refuses to replace the installed build. Checked against the value
+    # derived from versionName, not only against the constant -- so a bump that
+    # changes one and not the other is caught here rather than on a device.
+    if code != code_want:
+        problems.append("versionCode %r != config.VERSION_CODE %r"
+                        % (code, code_want))
+    derived = config.version_code_for(ver)
+    if code != derived:
+        problems.append("versionCode %r != %d, which is what versionName %r "
+                        "derives to" % (code, derived, ver))
     if not name.startswith(name_want):
         problems.append("file name %r does not start with %r" % (name, name_want))
     if name not in (name_want + ".hap", name_want + "-unsigned.hap"):

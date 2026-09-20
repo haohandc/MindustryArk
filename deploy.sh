@@ -69,7 +69,7 @@ OUT_DIR="entry/build/default/outputs/default"
 # The signed one is for THIS machine only (see the top of this file) and is not
 # a release artifact. What gets published is the unsigned HAP, plus the payload
 # zip -- see RELEASE.md.
-HAP_BASE="MindustryArk-v1.0.0"
+HAP_BASE="MindustryArk-v0.1.0-beta1"
 UNSIGNED="$OUT_DIR/$HAP_BASE-unsigned.hap"
 SIGNED="$OUT_DIR/$HAP_BASE.hap"
 
