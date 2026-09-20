@@ -50,6 +50,20 @@ _build.bat
 sy_act*.py
 clean_perms.py
 
+# The abandoned C++ shim replacement, kept locally but not published.
+#
+# libjvm.so declares __cxa_thread_atexit, which neither the JDK's shim nor OHOS
+# libc was believed to export, so a replacement shim was built to supply it. It
+# worked; what retired it was finding a working configuration that does not need
+# it -- the same libjvm.so with the JDK's unmodified shim. Nothing in the build
+# references these any more, and CMakeLists.txt explains the reasoning.
+#
+# Untracked rather than deleted: they are the readable record of a real
+# measurement. See entry/src/main/cpp/CMakeLists.txt.
+/scripts/make_cxxabi_real.py
+/entry/src/main/cpp/cxatls.c
+/entry/src/main/cpp/libcxxabi_real.so
+
 # Signing config with real key paths/passwords. Never commit this: it is
 # machine-specific, and the password blobs do not belong in a public repository.
 build-profile.local.json5

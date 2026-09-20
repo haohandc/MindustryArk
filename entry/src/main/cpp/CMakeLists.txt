@@ -55,10 +55,12 @@ include_directories(${NATIVEAPP_ROOT_PATH}
 #   verify_hap.py checks that file's SHA-1 against the original, which is how
 #   "we ship the unmodified one" is enforced rather than remembered.
 #
-# cxatls.c, the hand-written implementation, is still in this directory. It is
-# not compiled. It is kept because it is the readable record of why
-# __cxa_thread_atexit was a problem at all; delete it if that stops being worth
-# anything.
+# The two files that implemented it -- cxatls.c and scripts/make_cxxabi_real.py
+# -- are NOT in this repository. They were removed once the approach was
+# abandoned, so nothing here references them and a fresh clone does not carry
+# them. If you are looking for the reasoning above and want the code as well, it
+# is a small, self-contained pair: a TLS destructor list and an equal-length
+# in-place .dynstr patch.
 # ---------------------------------------------------------------------------
 
 

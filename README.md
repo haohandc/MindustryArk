@@ -76,9 +76,10 @@ wrote, so a stale or wrong input fails loudly instead of producing a jar that
 silently differs from the one that was tested. Any of them takes `--check` to
 report without writing.
 
-The JDK and the two derived libraries (`libjvm.so`, `libcxxabi_shim.so`) come
-from `prep_vendor.py` and `make_cxxabi_real.py` — see the notes at the top of
-each; the former is part of the build, the latter is not.
+The JDK-derived libraries (`jdk21/lib/server/libjvm_real.so` and the anchor
+`libjvm.so`) come from `prep_vendor.py` — see the note at the top of it.
+`libcxxabi_shim.so` is not derived at all: the JDK's own file is copied and
+shipped unmodified, and `verify_hap.py` pins its SHA-1 so that stays true.
 
 ### 3. Build
 

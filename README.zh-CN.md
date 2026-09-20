@@ -68,8 +68,10 @@ python scripts/prep_helper.py     # 编译并打包 helper jar
 **直接报错退出**，而不会悄悄产出与测试过的版本不一致的产物。
 每个脚本都支持 `--check`：只报告，不写文件。
 
-JDK 与两个派生库（`libjvm.so`、`libcxxabi_shim.so`）出自 `prep_vendor.py` 与
-`make_cxxabi_real.py` —— 见各自文件顶部的说明；**前者是构建的一部分，后者不是**。
+JDK 派生的两个库（`jdk21/lib/server/libjvm_real.so` 与锚库 `libjvm.so`）出自
+`prep_vendor.py` —— 见该文件顶部的说明。
+`libcxxabi_shim.so` **不是派生物**：直接把 JDK 自己那份原样拷进去，
+并由 `verify_hap.py` 钉住它的 SHA-1 来保证这一点。
 
 ### 三、构建
 
