@@ -1,0 +1,75 @@
+{
+  "app": {
+    // Signing is deliberately EMPTY in the committed copy of this file.
+    //
+    // WHAT WAS HERE AND WHY IT IS GONE
+    //   DevEco Studio writes the signing config straight into this file:
+    //   certpath, keyAlias, keyPassword, profile, storeFile, storePassword.
+    //   Committing that publishes personal signing material -- password blobs
+    //   and the paths to the key files -- in a public repository.
+    //
+    //   The key files themselves live in ~/.ohos/config/ and were never inside
+    //   the repository, so no key material was ever uploaded; but there is no
+    //   reason to publish the rest of it either.
+    //
+    // SETTING IT UP (once per machine, two clicks)
+    //   DevEco Studio -> File -> Project Structure -> Signing Configs ->
+    //   "Automatically generate signature". That fills this block back in.
+    //
+    //   No restricted ACL permissions are needed, so the generated profile is
+    //   enough -- there is nothing to request from AGC. See module.json5 for the
+    //   permission that was removed and the measurement behind that decision.
+    //
+    // KEEPING A LOCAL COPY OUT OF GIT
+    //   To keep this file filled in locally without committing it:
+    //       git update-index --skip-worktree build-profile.json5
+    //   The committed version stays clean while your working copy keeps your
+    //   signing config. Undo with --no-skip-worktree. This repository is set up
+    //   that way already.
+    "signingConfigs": [],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        // Verified combination on HarmonyOS 7 (API 26). The APIs used here need
+        // far less: the ArkUI key hooks are API 12 and API 15.
+        //
+        // Do not raise targetSdkVersion above what the target device runs, and do
+        // not lower compatibleSdkVersion without testing on a device -- the
+        // @kit.* import style and the Environment file APIs are only verified at
+        // this level.
+        "targetSdkVersion": "26.0.0",
+        "compatibleSdkVersion": "6.1.1(24)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug",
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}

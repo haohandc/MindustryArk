@@ -1,0 +1,43 @@
+/node_modules
+/oh_modules
+/local.properties
+/.idea
+**/build
+/.hvigor
+.cxx
+/.clangd
+/.clang-format
+/.clang-tidy
+**/.test
+/.appanalyzer
+
+# ---------------------------------------------------------------------------
+# The payload -- NOT in git, on purpose.
+#
+# entry/libs/arm64-v8a/ holds the JDK (255 MB), the game jar (83 MB) and the Arc
+# natives. Two reasons it stays out:
+#
+#   1. GitHub rejects any single file over 100 MB on a normal repository, and
+#      jdk21/lib/jimg.so is 134 MB. Making it fit would mean Git LFS, which
+#      spends most of a free account's 1 GB monthly bandwidth on a single clone.
+#   2. It is derivable. Everything in there is produced by the prep_*.py scripts
+#      from the inputs listed in README.md, so keeping it in git would be
+#      keeping a build artifact.
+#
+# Prebuilt HAPs (which do contain the payload) are published as Release assets
+# instead -- those do not count toward repository size.
+# ---------------------------------------------------------------------------
+entry/libs/
+
+# Scratch from our own diagnostic runs
+*.jpeg
+_probe*/
+_hapcheck/
+_anchorpad/
+_build.bat
+sy_act*.py
+clean_perms.py
+
+# Signing config with real key paths/passwords. Never commit this: it is
+# machine-specific, and the password blobs do not belong in a public repository.
+build-profile.local.json5

@@ -1,0 +1,66 @@
+{
+  "apiType": "stageMode",
+  "buildOption": {
+    // Keep debug symbols in the native libraries.
+    //
+    // The loader reads a 25 MB libjvm_real.so; the packaging step was stripping
+    // it to 20 MB. Segment layout is identical either way, so stripping looked
+    // harmless -- but that was inference, and every other difference in the load
+    // path had already been ruled out by measurement. This is the cheapest one
+    // to settle: a single build either breaks the JVM or it does not.
+    "nativeLib": {
+      "debugSymbol": {
+        "strip": false
+      }
+    },
+    "resOptions": {
+      "copyCodeResource": {
+        "enable": false
+      }
+    },
+    "externalNativeOptions": {
+      "path": "./src/main/cpp/CMakeLists.txt",
+      // SDL's own template sets this, with the comment "Otherwise, we load
+      // SDL3's data segment twice.  :(" -- which is a real hazard here: the same
+      // shared object can end up with two independent mappings in one process
+      // (ArkTS loads one copy for its XComponent, the game's library loader may
+      // pick another), and two mappings means two sets of static variables.
+      // Not emitting a versioned SONAME is upstream's fix for it; use it rather
+      // than patching DT_NEEDED by hand afterwards.
+      "arguments": "-DCMAKE_PLATFORM_NO_VERSIONED_SONAME=1",
+      "cppFlags": "",
+      // Template default is ["arm64-v8a", "x86_64"]; x86_64 is for emulators.
+      // Real devices here are arm64, and dropping x86_64 halves the compile of
+      // SDL's ~490 source files. Add it back if you want to test on an emulator.
+      "abiFilters": [
+        "arm64-v8a"
+      ]
+    }
+  },
+  "buildOptionSet": [
+    {
+      "name": "release",
+      "arkOptions": {
+        "obfuscation": {
+          "ruleOptions": {
+            "enable": false,
+            "files": [
+              "./obfuscation-rules.txt"
+            ]
+          }
+        }
+      },
+      "nativeLib": {
+        "debugSymbol": {
+          "strip": true,
+          "exclude": []
+        }
+      }
+    },
+  ],
+  "targets": [
+    {
+      "name": "default"
+    },
+  ]
+}

@@ -1,0 +1,86 @@
+{
+  "module": {
+    "name": "entry",
+    "type": "entry",
+    "description": "$string:module_desc",
+    "mainElement": "EntryAbility",
+    // !!! FIXME: we can maybe put "car" and "wearable" in here, too, if SDL will run on them and we could test it at some point.
+    "deviceTypes": [
+      "phone",
+      "tablet",
+      "2in1",
+      "tv"
+    ],
+    "deliveryWithInstall": true,
+    "installationFree": false,
+    "pages": "$profile:main_pages",
+
+    // PERMISSIONS: Uncomment if your app needs any of these things. Please edit the "reason" text to more-clearly explain why you need access to the feature.
+    // Documentation on this section: https://developer.huawei.com/consumer/en/doc/harmonyos-guides/declare-permissions
+    // Lists of specific permissions: https://developer.huawei.com/consumer/en/doc/harmonyos-guides/app-permissions
+    // Note that READ_PASTEBOARD is a restricted permission, you need to take serious extra steps to use it. https://developer.huawei.com/consumer/en/doc/harmonyos-guides/restricted-permissions#ohospermissionread_pasteboard
+    "requestPermissions": [
+      //{ "name": "ohos.permission.MICROPHONE", "reason": "$string:perm_reason_MICROPHONE", "usedScene": { "abilities": [ "EntryAbility" ], "when": "inuse" } },
+      //{ "name": "ohos.permission.CAMERA", "reason": "$string:perm_reason_CAMERA", "usedScene": { "abilities": [ "EntryAbility" ], "when": "inuse" } },
+      //{ "name": "ohos.permission.INTERNET", "reason": "$string:perm_reason_INTERNET", "usedScene": { "abilities": [ "EntryAbility" ], "when": "inuse" } },
+      //{ "name": "ohos.permission.READ_PASTEBOARD", "reason": "$string:perm_reason_READ_PASTEBOARD", "usedScene": { "abilities": [ "EntryAbility" ], "when": "inuse" } },
+
+      // The game reads files the player placed in Download when importing a
+      // save or a game-data export, which is why this is needed.
+      //
+      // Not needed (and deliberately absent):
+      //   ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY
+      // That is the restricted ACL permission for making the writable sandbox
+      // executable. An earlier revision declared it, which forced every install
+      // to be re-signed with a profile carrying the matching ACL entry -- and
+      // made the HAP impossible for anyone else to install. It was measured
+      // unnecessary and removed: the JDK ships inside the HAP's lib area, which
+      // is executable already, and the sandbox holds only data (the module
+      // image is opened by java.base as a file). Executable memory at runtime
+      // is anonymous, which this platform permits without any permission.
+      //
+      // Do not add it back unless something genuinely needs file-backed
+      // executable pages: this platform blocks mapping a FILE as executable,
+      // and that restriction is what forces the JDK to live in the HAP.
+      { "name": "ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY", "reason": "$string:perm_reason_DOWNLOAD", "usedScene": { "abilities": [ "EntryAbility" ], "when": "inuse" } }
+    ],
+
+    "abilities": [
+      {
+        "name": "EntryAbility",
+        "orientation": "auto_rotation_restricted",
+        "srcEntry": "./ets/entryability/EntryAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindowIcon": "$media:startIcon",
+        "startWindowBackground": "$color:start_window_background",
+        "exported": true,
+        "skills": [
+          {
+            "entities": [
+              "entity.system.home"
+            ],
+            "actions": [
+              "ohos.want.action.home"
+            ]
+          }
+        ]
+      }
+    ],
+    "extensionAbilities": [
+      {
+        "name": "EntryBackupAbility",
+        "srcEntry": "./ets/entrybackupability/EntryBackupAbility.ets",
+        "type": "backup",
+        "exported": false,
+        "metadata": [
+          {
+            "name": "ohos.extension.backup",
+            "resource": "$profile:backup_config"
+          }
+        ],
+      }
+    ]
+  }
+}
