@@ -49,7 +49,7 @@ SRC = config.GAME_JAR
 # OpenHarmony needs because it has no desktop GL at all. Built by
 # build_arc_patch.py -> patch_mindustry.py -> build_variants.py, each of which
 # refuses to run on a stale input.
-SRC_SHA1 = "732ead5a45fa4d4d4a595e23e65ba952d86cbed3"
+SRC_SHA1 = "e25bc13837ccd476fd32fb274b5da90991c6fbad"
 
 DEST = os.path.join(PROJECT_ROOT,
                     "entry", "libs", "arm64-v8a", "game", "mindustry.so")

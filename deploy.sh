@@ -166,7 +166,26 @@ if [ ! -f "$SIGNED" ]; then
     exit 1
 fi
 "${HDC[@]}" uninstall "$BUNDLE" >/dev/null 2>&1
-"${HDC[@]}" install -r "$SIGNED" 2>&1 | tail -3
+# Install, and actually check that it happened.
+#
+# The previous form was `install -r "$SIGNED" 2>&1 | tail -3`, which masked a
+# failure twice over: a pipeline's status is tail's and never hdc's, and keeping
+# only the last three lines discards a one-line error outright. Measured
+# consequence: two runs printed `[Fail]ExecuteCommand need connect-key` and then
+# carried on to launch an app that was not installed, while looking for all the
+# world like a successful deploy.
+#
+# The success string is matched positively because a negative check ("no [Fail]")
+# cannot tell a failed install from an hdc that printed nothing at all. The exact
+# wording is what this hdc emits; a different one would show up as a loud refusal
+# rather than as a silent stale install, which is the trade we want.
+INSTALL_OUT="$("${HDC[@]}" install -r "$SIGNED" 2>&1)"
+printf '%s\n' "$INSTALL_OUT" | tail -3
+if ! printf '%s' "$INSTALL_OUT" | grep -q "install bundle successfully"; then
+    echo "!! install did not report success -- refusing to launch" >&2
+    echo "!! (hdc is flaky on this device: rerun, or check 'hdc list targets')" >&2
+    exit 1
+fi
 
 echo
 echo "############ 4/4 launch + collect ############"
@@ -182,7 +201,15 @@ LOG="/data/app/el2/100/base/$BUNDLE/files/stderr.log"
 "${HDC[@]}" shell hilog -r >/dev/null 2>&1
 "${HDC[@]}" shell "aa force-stop $BUNDLE" >/dev/null 2>&1
 sleep 2
-"${HDC[@]}" shell "aa start -a $ABILITY -b $BUNDLE" 2>&1 | tail -2
+START_OUT="$("${HDC[@]}" shell "aa start -a $ABILITY -b $BUNDLE" 2>&1)"
+printf '%s\n' "$START_OUT" | tail -2
+# Same masking as the install above. A failed launch here used to be discovered
+# only by noticing that the logs below were empty -- which reads as "the app
+# crashed on startup", a completely different problem, and one this project has
+# already chased once.
+if ! printf '%s' "$START_OUT" | grep -q "start ability successfully"; then
+    echo "!! launch did not report success -- the logs below will be empty" >&2
+fi
 echo "waiting 30 s ..."
 sleep 30
 echo

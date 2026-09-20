@@ -273,7 +273,7 @@ def main():
     # ==================================================================
     print("== 6. the game jar, hashed as packaged ==")
     import hashlib
-    WANT_GAME = "732ead5a45fa4d4d4a595e23e65ba952d86cbed3"
+    WANT_GAME = "e25bc13837ccd476fd32fb274b5da90991c6fbad"
     GAME_ENTRY = "libs/arm64-v8a/game/mindustry.so"
     game_ok = False
     with zipfile.ZipFile(hap) as z:
