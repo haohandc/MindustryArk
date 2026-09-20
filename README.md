@@ -1,5 +1,7 @@
 # MindustryArk
 
+**English** | [简体中文](README.zh-CN.md)
+
 Run **Mindustry** on HarmonyOS / OpenHarmony, using a self-built launcher instead
 of an existing emulation layer.
 
