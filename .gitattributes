@@ -1,0 +1,30 @@
+# Normalise line endings in the repository, and check out native ones.
+#
+# Without this, files created on Windows land in the repository with CRLF and
+# every clone on another platform reports the whole file as modified. It also
+# keeps diffs readable: a patch touching one line should show one line.
+* text=auto
+
+# Scripts that are executed must keep LF regardless of platform. A shell script
+# with CRLF fails on anything but Windows, and the failure is a confusing
+# "bad interpreter" rather than a line-ending complaint.
+*.sh      text eol=lf
+*.py      text eol=lf
+
+# The launcher and the SDL tree are built by clang. Sources there are fine with
+# either ending, but pinning them keeps the tree consistent with what the
+# compiler has already been tested against.
+*.c       text eol=lf
+*.h       text eol=lf
+
+# Binary payloads. These are not committed (see .gitignore) but stating it here
+# means a future `git add -f` cannot corrupt them.
+*.so      binary
+*.so.*    binary
+*.hap     binary
+*.jar     binary
+*.p12     binary
+*.p7b     binary
+*.cer     binary
+*.png     binary
+*.jpeg    binary

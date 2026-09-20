@@ -4,8 +4,10 @@ Run **Mindustry** on HarmonyOS / OpenHarmony, using a self-built launcher instea
 of an existing emulation layer.
 
 The launcher embeds a JDK, creates a JVM from native code, and hands the game a
-real SDL3 window. This repository is the launcher; Mindustry itself is loaded as
-an unmodified upstream build.
+real SDL3 window. This repository is the launcher. **Mindustry's own code is
+loaded unmodified**; what gets patched is the framework underneath it — four of
+Arc's backend classes are recompiled and written into the jar, because that is
+where the platform-specific work lives.
 
 > **Unofficial.** Not affiliated with, endorsed by, or supported by the Mindustry
 > project or Anuken. See [THIRD-PARTY.md](THIRD-PARTY.md).
@@ -158,6 +160,32 @@ build without a special signing profile.
 | `deploy.sh`, `build.sh` | Build and deploy, with gates |
 | `esc_ab.sh`, `quit_timing.sh` | The measurement harnesses used to fix input and shutdown |
 | `verify_hap.py`, `scan_needed.py` | Read the packaged HAP back and check the bytes |
+
+## Licence
+
+**GPL-3.0** — see [LICENSE](LICENSE).
+
+Copyright (C) 2026 Haohandc and contributors.
+
+This project is not free to choose a permissive licence, because a build
+redistributes Mindustry, which is GPL-3.0. A HAP is a single installable unit
+whose only purpose is to run that game, so it is a combined work rather than a
+mere aggregation of independent programs, and GPL-3.0 applies to the whole of
+it. The practical consequence worth knowing before contributing: **derivative
+works must also be GPL-3.0**, so this cannot be built into a closed-source
+product.
+
+Every other component in the stack is compatible with GPL-3.0, which is what
+makes this combination distributable at all — including the JDK, whose
+Classpath Exception is the specific provision that permits shipping it
+alongside a work under other terms. Details, and the obligations that come with
+each component, are in [THIRD-PARTY.md](THIRD-PARTY.md).
+
+**Third-party files keep their own licences.** `entry/src/main/cpp/SDL/` is
+Zlib-licensed SDL3 with local modifications; it is not relicensed by this
+project's GPL, and Zlib requires that modified copies not be presented as the
+original. The same applies to the LWJGL payload and to the vendored Arc sources
+referenced by `tools/`.
 
 ## Credits
 
