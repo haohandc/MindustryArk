@@ -66,11 +66,15 @@ v1.0.0 — Mindustry 在鸿蒙上跑通
 
 ## 下载哪个文件
 
-| 文件 | 说明 |
-|---|---|
-| `MindustryArk-v1.0.0-signed.hap` | **已签名，推荐。** 用 DevEco 生成的调试签名，可直接 `hdc install` |
-| `MindustryArk-v1.0.0-unsigned.hap` | 未签名。需要你用自己的证书重新签名后安装 |
-| `payload-v1.0.0.tar.zst`（约 255 MB） | **载荷包。** 想在本地自己构建就需要它，见 README |
+| 文件 | 大小 | 说明 |
+|---|---|---|---|
+| `MindustryArk-v1.0.0-signed.hap` | 264 MB | **已签名，推荐。** 用 DevEco 生成的调试签名，可直接 `hdc install` |
+| `MindustryArk-v1.0.0-unsigned.hap` | 262 MB | 未签名。需要你用自己的证书重新签名后安装 |
+| `MindustryArk-v1.0.0-payload.zip` | 139 MB | **载荷包。** 只想玩的话**不需要**它；想在本地从源码构建才需要，见下 |
+
+**只玩游戏的话，下第一个就行** —— 载荷已经打进 HAP 里了。
+载荷包是给「要自己编译」的人准备的（JDK + 游戏 jar + LWJGL/Arc 原生库），
+解压到仓库的 `entry/libs/arm64-v8a/` 下即可。
 
 ### 安装方式
 
@@ -94,8 +98,9 @@ hdc install -r MindustryArk-v1.0.0-signed.hap
 ## 从源码构建
 
 ```bash
-# 1) 把载荷放进 entry/libs/arm64-v8a/  （README 里有清单）
-# 2) 配置签名：DevEco → Project Structure → Signing Configs
+# 1) 解开载荷包（解压后 entry/libs/arm64-v8a/ 下会有 JDK、游戏 jar、原生库）
+unzip -o MindustryArk-v1.0.0-payload.zip
+# 2) 配置签名：DevEco → Project Structure → Signing Configs → 自动生成签名
 bash deploy.sh          # 构建 + 校验 + 安装 + 启动 + 收日志
 ```
 

@@ -50,3 +50,7 @@ esc_ab.sh
 quit_timing.sh
 jvmrun.sh
 tryopts.sh
+
+# Release artifacts assembled locally (the payload zip is ~140 MB -- it goes on
+# the Releases page, never in git; see the note on entry/libs above).
+dist/
