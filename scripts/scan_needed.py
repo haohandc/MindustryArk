@@ -21,12 +21,13 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import config
+
 HERE = os.path.dirname(os.path.abspath(__file__))
-# this file lives in scripts/, so the project root is one level up
-PROJECT_ROOT = os.path.dirname(HERE)
-SDK = r"E:\Program Files\DevEco Studio\sdk\default\openharmony\native"
-READELF = os.path.join(SDK, "llvm", "bin", "llvm-readelf.exe")
-ROOT = os.path.join(PROJECT_ROOT, "entry", "libs", "arm64-v8a")
+PROJECT_ROOT = config.PROJECT_ROOT
+READELF = config.READELF
+ROOT = config.LIBS
 
 OK_PREFIX = "/data/storage/"
 

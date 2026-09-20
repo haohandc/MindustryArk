@@ -5,7 +5,16 @@
 #   Each step here exists because skipping it once produced a wrong result that
 #   looked like a code problem. Chained, they cannot be forgotten.
 #
-# NO ACL RE-SIGNING ANY MORE
+# THIS INSTALLS *YOUR OWN* BUILD, SIGNED WITH *YOUR OWN* CERTIFICATE
+#   The HAP this installs is signed by DevEco with an automatically generated
+#   debug profile, and a debug profile names the device UDIDs it is valid for
+#   (up to 100, registered in AppGallery Connect). So this build works on the
+#   machines whose UDIDs are in that profile and nowhere else -- which is fine
+#   here, because this is the local development loop, and it is why the signed
+#   HAP is NOT the thing to hand to other people. See RELEASE.md for what to
+#   distribute instead.
+#
+# NO ACL RE-SIGNING
 #   This used to re-sign the HAP with a special profile from AGC, because
 #   module.json5 requested the restricted permission
 #   ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY, which an ordinary
@@ -23,6 +32,10 @@
 #   DevEco: File -> Project Structure -> Signing Configs -> Automatically
 #   generate signature.
 #
+# PATHS
+#   ARK_DEVECO_STUDIO, DEVECO_SDK_HOME, ARK_PYTHON -- see build.sh and
+#   scripts/config.py. Nothing here is fixed to one machine any more.
+#
 # Usage:
 #   bash deploy.sh              # build + verify + install + launch + log
 #   bash deploy.sh --no-build   # reuse the existing HAP
@@ -32,19 +45,47 @@ cd "$(dirname "$0")" || exit 1
 
 export MSYS_NO_PATHCONV=1
 
-HDC=("E:/Program Files/DevEco Studio/sdk/default/openharmony/toolchains/hdc.exe")
-PY=("C:/Users/Haohandc/AppData/Local/Programs/Python/Python312/python.exe")
-OUT_DIR="entry/build/default/outputs/default"
-UNSIGNED="$OUT_DIR/entry-default-unsigned.hap"
-SIGNED="$OUT_DIR/entry-default-signed.hap"
+# Bundle name is also in scripts/config.py; keep the two in step.
 BUNDLE="com.haohandc.mindustryark"
 ABILITY="EntryAbility"
 
-for f in "${HDC[0]}" "${PY[0]}"; do
+STUDIO="${ARK_DEVECO_STUDIO:-E:/Program Files/DevEco Studio}"
+SDK_HOME="${DEVECO_SDK_HOME:-$STUDIO/sdk}"
+
+# Arrays, per the note in build.sh: these paths contain spaces.
+HDC=("$SDK_HOME/default/openharmony/toolchains/hdc.exe")
+PY=("${ARK_PYTHON:-python}")
+
+OUT_DIR="entry/build/default/outputs/default"
+# Matches targets[].output.artifactName in entry/build-profile.json5 -- bump the
+# two together, with versionName in AppScope/app.json5. verify_hap.py checks
+# that all three agree.
+#
+# NOTE the asymmetry, which is hvigor's and not a typo here: with an
+# artifactName of X it writes X.hap SIGNED and X-unsigned.hap unsigned. Measured
+# -- the default entry-default-signed.hap name only appears because the default
+# artifactName has no version in it.
+#
+# The signed one is for THIS machine only (see the top of this file) and is not
+# a release artifact. What gets published is the unsigned HAP, plus the payload
+# zip -- see RELEASE.md.
+HAP_BASE="MindustryArk-v1.0.0"
+UNSIGNED="$OUT_DIR/$HAP_BASE-unsigned.hap"
+SIGNED="$OUT_DIR/$HAP_BASE.hap"
+
+for f in "${HDC[0]}"; do
     [ -f "$f" ] || { echo "missing: $f" >&2; exit 1; }
 done
+command -v "${PY[0]}" >/dev/null 2>&1 || [ -f "${PY[0]}" ] || {
+    echo "python not found: ${PY[0]} (set ARK_PYTHON)" >&2; exit 1; }
 
 if [ "$1" != "--no-build" ]; then
+    echo "############ 0/4 check inputs ############"
+    # Cheap, and it turns "25 minutes into the build, one input missing" into an
+    # immediate, named failure.
+    "${PY[@]}" scripts/config.py | sed 's/^/  /'
+
+    echo
     echo "############ 1/4 build ############"
 
     # GATE: hvigor's native step reports success even when it decides the CMake
@@ -89,7 +130,11 @@ if [ "$1" != "--no-build" ]; then
     grep -Ei "\berror\b" "$build_log" | head -20
     rm -f "$build_log"
 
-    [ -f "$UNSIGNED" ] || { echo "no unsigned hap produced" >&2; exit 1; }
+    [ -f "$UNSIGNED" ] || {
+        echo "no unsigned hap at $UNSIGNED" >&2
+        echo "if the name changed, check artifactName in entry/build-profile.json5" >&2
+        exit 1
+    }
 
     # same gate, after the fact: prove the artifact is newer than the source now
     if [ -f "$OBJ" ]; then

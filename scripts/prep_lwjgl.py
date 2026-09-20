@@ -4,8 +4,9 @@ r"""Bring LWJGL into the HAP: the Java jars AND the native libraries.
 WHY LWJGL IS NEEDED AT ALL
     The game jar does not contain LWJGL. Its Arc SDL3 backend calls the platform
     through org.lwjgl.opengl.* and org.lwjgl.sdl.*, and those classes come from
-    somewhere else -- there they came from a bundled libraries directory, which is
-    exactly why the game ran there and would not run here without this step.
+    somewhere else -- the launcher that previously ran this game supplied them
+    from its own libraries directory, which is exactly why the game ran there and
+    would not run here without this step.
 
     Measured on the packaged jar: zero entries under org/, and the SDL3 backend
     classes reference org/lwjgl/opengl/{GL11..GL43,GLCapabilities,EXTFramebufferObject}
@@ -21,17 +22,30 @@ WHERE THE TWO HALVES GO, AND WHY THEY DIFFER
     exactly as the module image is (see prep_game.py). The JVM opens a class-path
     entry by content, not by name.
 
+WHERE THE FILES COME FROM
+    payload-src/lwjgl-ohos/, which holds the three Java jars and the two natives
+    together. They were collected from a prebuilt HarmonyOS application that
+    demonstrably runs this game on this platform, which makes them a known-good
+    set rather than whatever a build server happens to produce. Every file is
+    identified by SHA-1 below, so a substituted one is caught, not shipped.
+
 WHY THE VERSION MATCH IS CHECKED AND NOT ASSUMED
     A Java jar and a native library from different LWJGL releases can look fine
     and fail at the first call, because the generated function tables are built
-    from the library's symbol list. The two halves here come from two different
-    places, so the script refuses to proceed unless the jar's manifest says the
-    version the natives were built for.
+    from the library's symbol list. Both halves now come from one directory, but
+    that directory is assembled by hand, so the script still refuses to proceed
+    unless the jar's manifest says the version the natives were built for.
 
-Sources
-    natives : extracted from a prebuilt bundle, which is the copy that demonstrably
-              runs on this device
-    jars    : the lwjgl-ohos set collected for this device
+WHY THERE IS NO libSDL3.so HERE
+    This script used to ship a third native, libSDL3.so, taken from the same
+    application. That made two SDL3 libraries in one HAP: that copy under lwjgl/,
+    and the one this project builds from entry/src/main/cpp/SDL/ at the top level
+    of the bundle. org.lwjgl.librarypath lists the bundle before lwjgl/ (see
+    opt_lwjglpath in myapp.c), and it was measured resolving to the bundle copy --
+    "SAME instance as the launcher's" -- so the lwjgl/ copy was already
+    unreachable by the loader and is not shipped any more. The two places that
+    still mention lwjgl/libSDL3.so are diagnostics that stat or dlopen it and
+    report the result; both were repointed at the bundle copy.
 
 Usage:  python prep_lwjgl.py [--check]
 """
@@ -44,28 +58,27 @@ import zipfile
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-SRC_HAP = r"<path to the prebuilt lwjgl-ohos bundle>"
-JAR_DIR = r"<path to the lwjgl-ohos source dir>"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import config
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-# this file lives in scripts/, so the project root is one level up
-PROJECT_ROOT = os.path.dirname(HERE)
-LIBS = os.path.join(PROJECT_ROOT, "entry", "libs", "arm64-v8a")
+PROJECT_ROOT = config.PROJECT_ROOT
+LIBS = config.LIBS
 NATIVE_DEST = os.path.join(LIBS, "lwjgl")        # real .so, executable area
 JAVA_DEST = os.path.join(LIBS, "lwjgl-java")     # jars, renamed to .so
 
+# One directory for both halves, so the version check below cannot be defeated by
+# someone pointing the jars and the natives at different releases.
+JAR_DIR = config.LWJGL_SRC
+
 # The version the whole set must agree on. Arc's own build targets 3.4.2, and the
-# natives in the prebuilt bundle are from that line.
+# natives collected for this platform are from that line.
 WANT_VERSION = "3.4.2"
 
-# name -> (entry inside the prebuilt bundle, sha1)
+# source file name -> sha1. The destination name is the same: these are real
+# shared objects and the loader looks them up by exactly these names.
 NATIVES = {
-    "liblwjgl.so":        ("libs/arm64-v8a/liblwjgl.so",
-                           "663e5cab870ac3427cbfbe01f93facbc260fa504"),
-    "liblwjgl_opengl.so": ("libs/arm64-v8a/liblwjgl_opengl.so",
-                           "f3661e892d4d2deb3aa574cab2e64c13b7ac6b4d"),
-    "libSDL3.so":         ("libs/arm64-v8a/libSDL3.so",
-                           "3b0986dec22ee837f06e8ce62dd5f8283e52fc9a"),
+    "liblwjgl.so":        "663e5cab870ac3427cbfbe01f93facbc260fa504",
+    "liblwjgl_opengl.so": "f3661e892d4d2deb3aa574cab2e64c13b7ac6b4d",
 }
 
 # source file name -> (destination name, sha1)
@@ -125,36 +138,32 @@ def main():
         return 1
     print()
 
-    print("== 2. native libraries, from the prebuilt bundle ==")
-    if not os.path.isfile(SRC_HAP):
-        print("FAIL missing %s" % SRC_HAP)
-        return 1
-    with zipfile.ZipFile(SRC_HAP) as z:
-        names = z.namelist()
-        for name, (entry, want) in NATIVES.items():
-            if entry not in names:
-                print("   %-22s MISSING from the HAP" % name)
+    print("== 2. native libraries ==")
+    for name, want in NATIVES.items():
+        srcp = os.path.join(JAR_DIR, name)
+        if not os.path.isfile(srcp):
+            print("   %-22s MISSING source" % name)
+            bad += 1
+            continue
+        data = open(srcp, "rb").read()
+        got = sha1b(data)
+        if got != want:
+            print("   %-22s SHA1 MISMATCH  %s" % (name, got))
+            bad += 1
+            continue
+        dst = os.path.join(NATIVE_DEST, name)
+        if a.check:
+            ok = os.path.isfile(dst) and sha1f(dst) == want
+            print("   %-22s %9d  %s" % (name, len(data),
+                                        "present" if ok else "ABSENT/DIFFERS"))
+            if not ok:
                 bad += 1
-                continue
-            data = z.read(entry)
-            got = sha1b(data)
-            if got != want:
-                print("   %-22s SHA1 MISMATCH  %s" % (name, got))
-                bad += 1
-                continue
-            dst = os.path.join(NATIVE_DEST, name)
-            if a.check:
-                ok = os.path.isfile(dst) and sha1f(dst) == want
-                print("   %-22s %9d  %s" % (name, len(data),
-                                            "present" if ok else "ABSENT/DIFFERS"))
-                if not ok:
-                    bad += 1
-                continue
-            res, got2 = write_verified(dst, data, want)
-            print("   %-22s %9d  sha1=%s  %s"
-                  % (name, len(data), got2[:12], "OK" if res else "WRITE FAILED"))
-            if not res:
-                bad += 1
+            continue
+        res, got2 = write_verified(dst, data, want)
+        print("   %-22s %9d  sha1=%s  %s"
+              % (name, len(data), got2[:12], "OK" if res else "WRITE FAILED"))
+        if not res:
+            bad += 1
     print()
 
     print("== 3. the Java jars, renamed so hvigor will carry them ==")

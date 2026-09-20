@@ -4,7 +4,6 @@
 #   1. project(loopwave) -> project(mindustry_launcher)
 #   2. include the jni/ dir (the NDK has no jni.h, so we carry our own)
 #   3. link dl (we dlopen libjvm.so out of the bundled JDK)
-#   4. build a replacement libcxxabi_shim.so (see cxatls.c / make_cxxabi_real.py)
 #
 # Two hard requirements from docs/README-harmonyos.md:
 #   - the artifact MUST be a shared library named libmain.so (not an executable)
@@ -28,52 +27,39 @@ include_directories(${NATIVEAPP_ROOT_PATH}
                     ${NATIVEAPP_ROOT_PATH}/SDL/include)
 
 # ---------------------------------------------------------------------------
-# Replacement libcxxabi_shim.so
+# A replacement libcxxabi_shim.so WAS built here. It is not any more, and the
+# target has been deleted rather than left commented out -- a commented-out
+# build rule is a claim about the build that is not true.
 #
-# libjvm.so's DT_NEEDED is [libcxxabi_shim.so, libc.so]. The JDK's shim provides
-# 35 C++ ABI symbols but NOT __cxa_thread_atexit, which libjvm.so also needs.
-# Measured on device: OHOS's linker does not put RTLD_GLOBAL libraries into the
-# relocation scope of a newly dlopen'd library (dlsym(RTLD_DEFAULT, ...) returned
-# 0 right after we had dlopen'd an exporter). So the symbol must come from
-# libjvm.so's own dependency list.
+# WHAT IT WAS FOR
+#   libjvm.so's DT_NEEDED is [libcxxabi_shim.so, libc.so]. The JDK's shim
+#   provides 35 C++ ABI symbols but NOT __cxa_thread_atexit, which libjvm.so
+#   declares as a strong undefined symbol (GLOBAL, not WEAK -- verified with
+#   readelf --dyn-syms). Measured on device: OHOS's linker does not put
+#   RTLD_GLOBAL libraries into the relocation scope of a newly dlopen'd library
+#   (dlsym(RTLD_DEFAULT, ...) returned 0 right after we had dlopen'd an
+#   exporter), so the symbol had to come from libjvm.so's own dependency list.
+#   The replacement took the name libcxxabi_shim.so, exported
+#   __cxa_thread_atexit, and depended on the original shim under a new name.
 #
-# Hence: we produce a library that takes the NAME libcxxabi_shim.so, exports
-# __cxa_thread_atexit (cxatls.c), and depends on libcxxabi_real.so -- the
-# original shim, renamed by make_cxxabi_real.py -- so the other 35 symbols
-# still resolve through the dependency chain.
+# WHY IT IS GONE
+#   It did make libjvm.so loadable, so the reasoning held. What changed the
+#   picture: another launcher for this platform, on the same device, loads the
+#   SAME libjvm.so together with the UNMODIFIED shim from the JDK and works. A
+#   working configuration therefore does not need our implementation -- and a
+#   hand-written TLS destructor list sitting on the JVM's dependency chain is a
+#   plausible source of exactly the kind of memory corruption being chased.
 #
-# Run `python make_cxxabi_real.py` once (it creates libcxxabi_real.so and
-# removes the original name from entry/libs/).
+# SO WHAT SHIPS INSTEAD
+#   The JDK's own shim, byte-for-byte, as entry/libs/arm64-v8a/libcxxabi_shim.so.
+#   verify_hap.py checks that file's SHA-1 against the original, which is how
+#   "we ship the unmodified one" is enforced rather than remembered.
+#
+# cxatls.c, the hand-written implementation, is still in this directory. It is
+# not compiled. It is kept because it is the readable record of why
+# __cxa_thread_atexit was a problem at all; delete it if that stops being worth
+# anything.
 # ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# DISABLED 2026-09-19: the C++ shim replacement is no longer built.
-#
-# It existed to supply __cxa_thread_atexit, which libjvm.so declares as a strong
-# undefined symbol (GLOBAL, not WEAK -- verified with readelf --dyn-syms) and
-# which neither the JDK's own shim nor OHOS libc exports. So the reasoning was
-# sound, and the replacement did make libjvm.so loadable.
-#
-# What changed the picture: another launcher for this platform, running on the
-# same device, loads the SAME libjvm.so together with the UNMODIFIED shim from
-# the JDK and works. So a working configuration does not need our hand-written
-# implementation, and a hand-written TLS destructor list sitting on the JVM's
-# dependency chain is a plausible source of exactly the kind of memory
-# corruption we are chasing.
-#
-# So: ship the JDK's own shim (copied into entry/libs/arm64-v8a/) and drop this
-# target entirely. If libjvm.so turns out to genuinely require the symbol at
-# load time, the load will fail loudly and this file can be restored.
-#
-# To restore: re-create libcxxabi_real.so with `python make_cxxabi_real.py`,
-# put it back under entry/libs/arm64-v8a/, and un-comment the block below.
-# ---------------------------------------------------------------------------
-# set(CXXABI_REAL ${NATIVEAPP_ROOT_PATH}/libcxxabi_real.so)
-# if(EXISTS ${CXXABI_REAL})
-#     add_library(cxxshim SHARED cxatls.c)
-#     set_target_properties(cxxshim PROPERTIES OUTPUT_NAME cxxabi_shim)
-#     target_link_options(cxxshim PRIVATE
-#         "-Wl,--no-as-needed" ${CXXABI_REAL} "-Wl,--as-needed")
-# endif()
 
 
 # libjvm.so (the anchor) and jdk21/lib/server/libjvm_real.so are produced by

@@ -38,24 +38,40 @@ Arc 的四个后端类被重新编译后写回 jar，因为平台相关的改造
 
 ## 构建
 
-**载荷不在本仓库里**（原因见 `.gitignore`）。因为 HAP 会把载荷整个打进去，
-所以构建前必须先把它准备好。
+**载荷不在本仓库里，它的输入也不在**（原因见 `.gitignore`）。
+因为 HAP 会把载荷整个打进去，所以构建前必须先准备输入。
 
-### 一、把载荷放到 `entry/libs/arm64-v8a/`
+### 一、把输入放进 `payload-src/`
 
-| 仓库内路径 | 是什么 | 从哪来 |
-|---|---|---|
-| `jdk21/` | 面向 OpenHarmony 的 OpenJDK 21（musl / aarch64）。**桌面版 JDK 用不了** | 载荷发布包，或自行获取同类构建 |
-| `game/mindustry.so` | Mindustry 的 jar，改了文件名 | 官方 Mindustry 发行版 jar |
-| `lwjgl/`、`lwjgl-java/` | 本平台的 LWJGL 3 原生库与 jar | 面向 OpenHarmony 的 LWJGL 构建 |
-| `arc/` | Arc 的原生库 | 从 Arc 源码构建 |
-| `libjvm.so`、`libcxxabi_shim.so` | 由 JDK 派生 | 由 `prep_vendor.py` 生成 |
-| `launcher/` | 只有一个类的 helper jar | 由 `prep_helper.py` 从 `helper-src/` 编译 |
+`payload-src/README.md` 列了清单 —— 三个 jar、两个 LWJGL 原生库、JDK 里的两个文件 ——
+并写明每一个从哪来。那里面的东西**都不进 git**。
 
-`scripts/` 下的脚本负责这些派生工作，**每个都会先校验输入的哈希**再动手写文件。
-所以输入陈旧或不对时会**直接报错退出**，而不会悄悄产出与测试过的版本不一致的产物。
+工具链用到的**每一个路径都在 `scripts/config.py` 里**，可以用 `ARK_*` 环境变量覆盖，
+所以换一台机器不需要改任何脚本。查看它解析成什么：
 
-### 二、构建
+```bash
+python scripts/config.py          # 打印每个路径，以及它是否存在
+```
+
+### 二、把载荷组装到 `entry/libs/arm64-v8a/`
+
+```bash
+python scripts/prep_jdklib.py     # JDK 里按名字读取的那两个文件
+python scripts/prep_lwjgl.py      # LWJGL —— jar 改名，原生库原样
+python scripts/prep_arc.py        # Arc 的原生库，取自那个定版 jar
+python scripts/prep_freetype.py   # Arc 的 freetype，取自 Arc 的 Android 构建
+python scripts/prep_game.py       # 游戏 jar 本体
+python scripts/prep_helper.py     # 编译并打包 helper jar
+```
+
+**每个脚本都会先校验输入的哈希**、写完再回读一遍，所以输入陈旧或不对时会
+**直接报错退出**，而不会悄悄产出与测试过的版本不一致的产物。
+每个脚本都支持 `--check`：只报告，不写文件。
+
+JDK 与两个派生库（`libjvm.so`、`libcxxabi_shim.so`）出自 `prep_vendor.py` 与
+`make_cxxabi_real.py` —— 见各自文件顶部的说明；**前者是构建的一部分，后者不是**。
+
+### 三、构建
 
 ```bash
 bash build.sh assembleHap        # 仅编译
@@ -68,6 +84,11 @@ bash deploy.sh                   # 构建 + 校验 + 安装 + 启动 + 收日志
 签名需要配置一次：DevEco Studio → File → Project Structure → Signing Configs →
 Automatically generate signature。`deploy.sh` 安装的是 hvigor 产出的**已签名** HAP。
 **没有 ACL 重签名这一步**，因为本应用不需要任何受限权限（见下文）。
+
+⚠️ **这个签名只属于你自己的机器。** DevEco 自动生成的是**调试 profile**，
+它指定了允许安装的**设备 UDID 列表**，而产出的 HAP 里**内嵌了这份列表** ——
+还有你的开发者 ID 与证书上的姓名。用它构建、用它安装都可以，**但不要把它发布出去**。
+该发布什么见 **[RELEASE.md](RELEASE.md)**。
 
 ---
 
@@ -100,9 +121,12 @@ JDK 在 HAP 里，沙箱只存数据 —— 而**正是因为没有它，别人�
 | `entry/src/main/cpp/myapp.c` | 启动器：沙箱准备、JVM 选项、启动游戏、退出握手 |
 | `entry/src/main/cpp/SDL/` | SDL3，含 OpenHarmony 输入/窗口/音频的改造 |
 | `entry/src/main/ets/` | ArkTS：XComponent 页面与按键处理、ability |
-| `entry/libs/` | 载荷（**不在 git 里**，见 `.gitignore`） |
-| `scripts/` | 构建期工具链：从输入组装载荷、重建打过补丁的 jar、打包校验 |
+| `payload-src/` | 构建的**输入**（不在 git 里）—— 见其 `README.md` |
+| `entry/libs/` | **组装好的载荷**（**不在 git 里**，见 `.gitignore`） |
+| `scripts/config.py` | 工具链用到的所有路径，集中一处 |
+| `scripts/` | 从输入组装载荷、重建打过补丁的 jar、打包校验 |
 | `deploy.sh`、`build.sh` | 构建与部署，带闸门 |
+| `RELEASE.md` | 该发布什么、什么**绝不能**发布 |
 
 ## 许可证
 

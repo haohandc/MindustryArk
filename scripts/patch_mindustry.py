@@ -22,10 +22,16 @@ import zipfile
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-TB = os.path.join(os.environ.get("TEMP", r"C:\Users\Haohandc\AppData\Local\Temp"), "arcbuild")
-SRC_JAR = r"E:\User\Downloads\Mindustry.jar"
-OUT_DIR = r"E:\User\Desktop\mindustry-ohos"
-OUT_JAR = os.path.join(OUT_DIR, "mindustry-1.0.jar")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import config
+
+TB = os.path.join(config.TMP, "arcbuild")
+# The upstream release jar in, the patched jar out. Both sit in payload-src/
+# (config.py), so the three-stage chain -- patch, repack, variant -- can be
+# re-run in place without moving anything by hand.
+SRC_JAR = config.UPSTREAM_JAR
+OUT_DIR = os.path.dirname(config.PATCHED_JAR)
+OUT_JAR = config.PATCHED_JAR
 
 # 单文件替换（arc-core 改动）
 SINGLE = [

@@ -50,17 +50,19 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-SRC = (r"C:\Users\Haohandc\Arc\natives\natives-freetype-android"
-       r"\libs\arm64-v8a\libarc-freetype.so")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import config
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-# this file lives in scripts/, so the project root is one level up
-PROJECT_ROOT = os.path.dirname(HERE)
-DEST = os.path.join(PROJECT_ROOT, "entry", "libs", "arm64-v8a", "arc",
-                    "libarc-freetypearm64.so")
+PROJECT_ROOT = config.PROJECT_ROOT
 
-READELF = (r"E:\Program Files\DevEco Studio\sdk\default\openharmony\native"
-           r"\llvm\bin\llvm-readelf.exe")
+# Arc's own Android build, from the checked-out Arc tree (ARK_ARC_SRC). Its
+# undefined symbols are what make it usable here; see the note above.
+SRC = os.path.join(config.ARC_SRC, "natives", "natives-freetype-android",
+                   "libs", "arm64-v8a", "libarc-freetype.so")
+
+DEST = os.path.join(config.LIBS, "arc", "libarc-freetypearm64.so")
+
+READELF = config.READELF
 
 # The build this is derived from. Pinned so that a different file cannot be
 # substituted silently -- the whole point of this script is that there is exactly

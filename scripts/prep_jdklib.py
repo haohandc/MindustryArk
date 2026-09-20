@@ -45,10 +45,11 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-# this file lives in scripts/, so the project root is one level up
-PROJECT_ROOT = os.path.dirname(HERE)
-JDK_LIB = os.path.join(PROJECT_ROOT, "entry", "libs", "arm64-v8a", "jdk21", "lib")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import config
+
+PROJECT_ROOT = config.PROJECT_ROOT
+JDK_LIB = os.path.join(config.LIBS, "jdk21", "lib")
 
 # source name -> (shipped name, sha1)
 FILES = {

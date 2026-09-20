@@ -26,7 +26,12 @@ import tempfile
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-ARC = r"C:\Users\Haohandc\Arc"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import config
+
+# The checkout of Arc's sources that gets compiled from (ARK_ARC_SRC). The three
+# classes below are the only Arc files this project modifies.
+ARC = config.ARC_SRC
 SRC = os.path.join(ARC, "backends", "backend-sdl3", "src",
                    "arc", "backend", "sdl", "SdlApplication.java")
 # The touch/pinch patch lives here. Recompiled by the same run, and gated the
@@ -41,11 +46,13 @@ SRC_FILES = os.path.join(ARC, "backends", "backend-sdl3", "src",
 SRC_ROOT = os.path.join(ARC, "backends", "backend-sdl3", "src")
 CORE_ROOT = os.path.join(ARC, "arc-core", "src")
 
-LWJGL = r"<path to the lwjgl-ohos source dir>"
-ARCBUILD = os.path.join(os.environ.get("TEMP", tempfile.gettempdir()), "arcbuild")
+# The LWJGL jars, needed on the compile class path because Arc's SDL3 backend
+# references org.lwjgl.* -- same directory prep_lwjgl.py ships from.
+LWJGL = config.LWJGL_SRC
+ARCBUILD = os.path.join(config.TMP, "arcbuild")
 OUT_SDL3 = os.path.join(ARCBUILD, "sdl3", "arc", "backend", "sdl")
 
-JAVAC = r"C:\Program Files\Java\jdk-17\bin\javac.exe"
+JAVAC = config.JAVAC
 
 # Present in the new code, absent from the old. Checking the compiled class for it
 # is what distinguishes "recompiled" from "the previous class files are still

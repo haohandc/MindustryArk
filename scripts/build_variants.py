@@ -18,9 +18,10 @@ r"""
    派生 jar 的 .so = 我们自编版（SDL3 后端）
 
 用法：
-    & python build_variants.py
-环境变量可覆盖：
-    BASE_JAR / AUDIO_SO / AUDIODBG_SO / OFFICIAL_SO / OUT_DIR
+    python build_variants.py
+环境变量可覆盖（见 config.py）：
+    ARK_PATCHED_JAR（基础 jar）/ ARK_GAME_JAR（决定输出目录）/ ARK_TMP
+    仍可用 AUDIO_SO / AUDIODBG_SO / OFFICIAL_SO 覆盖这三个中间产物
 """
 import hashlib
 import os
@@ -31,10 +32,15 @@ import zipfile
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-TMP = os.environ.get("TEMP", r"C:\Users\Haohandc\AppData\Local\Temp")
-OUT_DIR = os.environ.get("OUT_DIR", r"E:\User\Desktop\mindustry-ohos")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import config
 
-BASE_JAR = os.environ.get("BASE_JAR", os.path.join(OUT_DIR, "mindustry-1.0.jar"))
+TMP = config.TMP
+# The variants land next to the pinned one they are compared against, which is
+# what prep_game.py ships (ARK_GAME_JAR).
+OUT_DIR = os.path.dirname(config.GAME_JAR)
+
+BASE_JAR = config.PATCHED_JAR
 OFFICIAL_SO = os.environ.get("OFFICIAL_SO", os.path.join(TMP, "arcjni", "official.so"))
 TARGET = "libarcarm64.so"
 
@@ -60,9 +66,7 @@ def java_syms(blob):
 # 于是"我们的音频版 .so"其实是个修复前的旧构建，设备上就是没声音。
 # ⚠️ 不能用 `b"SDL_SetMainReady" in blob` 判断：日志文案「已调用 SDL_SetMainReady()」
 #    本身就含这个子串，会假阳性。必须读**动态符号表**看它是不是 UND。
-READELF = os.environ.get(
-    "READELF",
-    r"E:\Program Files\DevEco Studio\sdk\default\openharmony\native\llvm\bin\llvm-readelf.exe")
+READELF = config.READELF
 
 # 这些必须是 UND（未定义 = 由设备上的 libSDL3.so 提供 = 我们确实调用了）
 REQUIRED_UND = [

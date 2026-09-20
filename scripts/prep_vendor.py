@@ -48,21 +48,21 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
 
+import config
+
 HERE = os.path.dirname(os.path.abspath(__file__))
-# this file lives in scripts/, so the project root is one level up
-PROJECT_ROOT = os.path.dirname(HERE)
-CPP = os.path.join(PROJECT_ROOT, "entry", "src", "main", "cpp")
-LIBS = os.path.join(PROJECT_ROOT, "entry", "libs", "arm64-v8a")
+PROJECT_ROOT = config.PROJECT_ROOT
+CPP = config.CPP
+LIBS = config.LIBS
 JDK_SERVER = os.path.join(LIBS, "jdk21", "lib", "server")
 PAD_DIR = os.path.join(HERE, "_anchorpad")          # host-only scratch, not shipped
 
-SDK = r"E:\Program Files\DevEco Studio\sdk\default\openharmony\native"
-CLANG = os.path.join(SDK, "llvm", "bin", "clang.exe")
-SYSROOT = os.path.join(SDK, "sysroot")
+SDK = config.NATIVE_SDK
+CLANG = config.CLANG
+SYSROOT = config.SYSROOT
 
 # the unmodified libjvm as it comes out of the JDK
-SRC_JVM = os.environ.get(
-    "SRC_JVM", r"E:\User\Desktop\jdk-from-device\jdk21slim\lib\server\libjvm.so")
+SRC_JVM = config.SRC_JVM
 
 # where the real JVM has to end up ON DEVICE -- its length is what we must match
 DEVICE_JVM = "/data/storage/el1/bundle/libs/arm64/jdk21/lib/server/libjvm_real.so"

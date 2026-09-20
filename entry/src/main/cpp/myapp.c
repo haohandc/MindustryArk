@@ -127,17 +127,23 @@
  * AMCL's libraries directory when the game ran under AMCL. This launcher has to
  * supply them itself or the backend cannot even be loaded.
  *
- *   LWJGL_LIBS  real ELF shared objects: the dyncall dispatch in liblwjgl.so,
- *               the OpenGL binding in liblwjgl_opengl.so, and the SDL3 that
- *               LWJGL's sdl module loads by that exact name. They need no
- *               disguise, but they must be in the executable area.
+ *   LWJGL_LIBS  real ELF shared objects: the dyncall dispatch in liblwjgl.so and
+ *               the OpenGL binding in liblwjgl_opengl.so. They need no disguise,
+ *               but they must be in the executable area.
  *   LWJGL_JARS  not ELF at all; renamed to .so only because that is the sole
  *               condition on which hvigor copies a file into the HAP.
  *
- * The SDL3 here is deliberately LWJGL's own build rather than the one this
- * project compiles for its own use. LWJGL's sdl bindings are generated against a
- * specific SDL3 symbol list, and SDL's development branch renames things; using
- * the matching pair keeps this step about the game instead of about SDL drift.
+ * THERE IS NO libSDL3.so IN LWJGL_LIBS, and that is deliberate -- see the note
+ * on opt_lwjglpath below. There used to be one: LWJGL's own build of SDL3, on
+ * the reasoning that LWJGL's sdl bindings are generated against a specific
+ * symbol list while SDL's development branch renames things, so the matching
+ * pair would avoid SDL drift. That reasoning is still sound in general, but it
+ * was overtaken by a worse problem: a second libSDL3.so anywhere means two
+ * independent mappings of SDL3 in one process, each with its own static
+ * variables, and this project lost a round to exactly that -- two event queues,
+ * a window created in one copy and surface callbacks delivered to the other.
+ * So the loader is pointed at ONE SDL3, the one this project builds from
+ * entry/src/main/cpp/SDL/, and nothing else provides that name.
  */
 #define LWJGL_LIBS  BUNDLE_LIBS "/lwjgl"
 #define LWJGL_JARS  BUNDLE_LIBS "/lwjgl-java"
@@ -1254,7 +1260,7 @@ static void probe_sandbox_exec(void)
 {
     static const char *srcs[] = {
         BUNDLE_LIBS "/lwjgl/liblwjgl.so",
-        BUNDLE_LIBS "/lwjgl/libSDL3.so",
+        BUNDLE_LIBS "/libSDL3.so",
     };
     static const char *names[] = { "liblwjgl.so", "libSDL3.so" };
     static const char *dirs[] = {
@@ -1720,7 +1726,7 @@ static void report_shipped_files(void)
         GAME_JAR,
         LWJGL_LIBS "/liblwjgl.so",
         LWJGL_LIBS "/liblwjgl_opengl.so",
-        LWJGL_LIBS "/libSDL3.so",
+        BUNDLE_LIBS "/libSDL3.so",
         LWJGL_JARS "/lwjgl.so",
         LWJGL_JARS "/lwjgl-opengl.so",
         LWJGL_JARS "/lwjgl-sdl.so",

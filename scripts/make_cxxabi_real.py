@@ -1,8 +1,22 @@
 # -*- coding: utf-8 -*-
 r"""
+NOT USED BY THE CURRENT BUILD.
+
+  Nothing calls this script, and the CMake target it feeds was removed on
+  2026-09-19 -- see the note in entry/src/main/cpp/CMakeLists.txt. What ships
+  instead is the JDK's own shim, byte-for-byte, and verify_hap.py pins its SHA-1
+  to enforce that.
+
+  It is kept because it is the readable record of a problem that was real: the
+  measurement below (OHOS's linker not feeding RTLD_GLOBAL libraries into a
+  newly dlopen'd library's relocation scope) is why __cxa_thread_atexit had to
+  be supplied at all, and it took a while to establish. Deleting the script would
+  delete that. If the reasoning stops being useful, delete both this file and
+  cxatls.c.
+
 Prepare the prebuilt dependency used by our replacement libcxxabi_shim.so.
 
-WHY THIS IS NEEDED
+WHY THIS WAS NEEDED
   libjvm.so's DT_NEEDED is [libcxxabi_shim.so, libc.so]. That shim carries the
   C++ ABI pieces the JDK build needs (__cxa_throw, __cxa_guard_acquire, RTTI
   vtables, operator new/delete, ...) -- 35 symbols -- but it does NOT export
@@ -35,15 +49,14 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-# this file lives in scripts/, so the project root is one level up
-PROJECT_ROOT = os.path.dirname(HERE)
-CPP = os.path.join(PROJECT_ROOT, "entry", "src", "main", "cpp")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import config
+
+PROJECT_ROOT = config.PROJECT_ROOT
+CPP = config.CPP
 
 # source: the original shim as it ships in the JDK
-SRC = os.environ.get(
-    "ORIG_SHIM",
-    r"E:\User\Desktop\jdk-from-device\jdk21slim\lib\libcxxabi_shim.so")
+SRC = os.environ.get("ORIG_SHIM") or config.SRC_CXXABI_SHIM
 # destination: a prebuilt next to our own CMakeLists (linked against by our shim)
 DST = os.path.join(CPP, "libcxxabi_real.so")
 
@@ -116,9 +129,7 @@ def main():
 
     # verify
     import subprocess
-    readelf = os.environ.get(
-        "READELF",
-        r"E:\Program Files\DevEco Studio\sdk\default\openharmony\native\llvm\bin\llvm-readelf.exe")
+    readelf = os.environ.get("READELF") or config.READELF
     if os.path.isfile(readelf):
         r = subprocess.run([readelf, "-d", DST], capture_output=True, text=True,
                            encoding="utf-8", errors="replace")

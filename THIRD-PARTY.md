@@ -140,12 +140,25 @@ Redistributed as jars and natives. Retain the copyright notice, the list of
 conditions and the disclaimer, and do not use the "Lightweight Java Game
 Library" name to endorse this project.
 
+**Provenance**, because it is not obvious from the files: the LWJGL 3.4.2 set
+this project ships was not compiled here. It was taken from a prebuilt
+HarmonyOS application that runs this game, which is what makes it a known-good
+pair for this platform — the jars and the natives are version-checked against
+each other by `prep_lwjgl.py`, and every file is pinned by SHA-1 there. They are
+LWJGL's own released binaries; what the other application contributed is the
+evidence that they work here, not a modification.
+
 ## Not in this repository
 
-The Mindustry jar, the JDK and the Arc natives are **not committed**
-(see `.gitignore`). They are supplied by whoever builds the project, or shipped
-as Release assets. That reduces the size of the repository but does **not**
-remove any of the obligations above — Release assets are still redistribution.
+Neither the payload nor the inputs it is assembled from are committed (see
+`.gitignore`): the Mindustry jar, the JDK, and the LWJGL and Arc natives. They
+are supplied by whoever builds the project — `payload-src/README.md` says which
+files and where they come from — or shipped as Release assets.
+
+That reduces the size of the repository but does **not** remove any of the
+obligations above: **a Release asset is redistribution too**, so a published HAP
+or payload zip carries every licence and source obligation listed here exactly as
+a clone would. `RELEASE.md` covers what may be published at all.
 
 ## Attribution
 

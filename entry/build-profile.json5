@@ -60,7 +60,16 @@
   ],
   "targets": [
     {
-      "name": "default"
+      "name": "default",
+      "output": {
+        // Gives entry-default-signed.hap a name that says what it is.
+        //
+        // Bump this together with versionName in AppScope/app.json5 and HAP_BASE
+        // in deploy.sh. verify_hap.py asserts that all three agree, because a
+        // download whose file name says one version and whose contents say
+        // another is worse than one with no version in the name at all.
+        "artifactName": "MindustryArk-v1.0.0"
+      }
     },
   ]
 }

@@ -43,25 +43,44 @@ the Download folder.
 
 ## Building
 
-The payload is **not** in this repository (see `.gitignore` for why). You must
-supply it before the project will build, because the HAP embeds all of it.
+The payload is **not** in this repository (see `.gitignore` for why), and neither
+are the inputs it is assembled from. You must supply the inputs before the
+project will build, because the HAP embeds all of the payload.
 
-### 1. Get the payload into `entry/libs/arm64-v8a/`
+### 1. Put the inputs in `payload-src/`
 
-| Path in the repo | What it is | Where it comes from |
-|---|---|---|
-| `jdk21/` | An OpenJDK 21 build for OpenHarmony (musl / aarch64). A desktop JDK will not work | The payload release, or a similar build obtained elsewhere |
-| `game/mindustry.so` | The Mindustry jar, renamed | An official Mindustry release jar |
-| `lwjgl/`, `lwjgl-java/` | LWJGL 3 natives and jars for this platform | An LWJGL build for OpenHarmony |
-| `arc/` | Arc's natives | Built from the Arc sources |
-| `libjvm.so`, `libcxxabi_shim.so` | Derived from the JDK | Produced by `prep_vendor.py` |
-| `launcher/` | A one-class helper jar | Built by `prep_helper.py` from `helper-src/` |
+`payload-src/README.md` lists them — three jars, two LWJGL natives and two files
+out of the JDK — with where each comes from. Nothing there is committed.
 
-The scripts in `scripts/` do the derivation, and each one checks its input's hash
-before writing anything, so a stale or wrong input fails loudly instead of
-producing a jar that silently differs from the one that was tested.
+Every path the toolchain uses is in **`scripts/config.py`**, overridable from the
+environment with `ARK_*` variables, so a different machine does not have to edit
+any script. To see what it resolves to:
 
-### 2. Build
+```bash
+python scripts/config.py          # each path, and whether it exists
+```
+
+### 2. Assemble the payload into `entry/libs/arm64-v8a/`
+
+```bash
+python scripts/prep_jdklib.py     # the JDK pieces that are read by name
+python scripts/prep_lwjgl.py      # LWJGL -- jars renamed, natives in place
+python scripts/prep_arc.py        # Arc's natives, taken from the pinned jar
+python scripts/prep_freetype.py   # Arc's freetype, from Arc's Android build
+python scripts/prep_game.py       # the game jar itself
+python scripts/prep_helper.py     # compiles and packs the helper jar
+```
+
+Each script checks its input's hash before writing anything and re-reads what it
+wrote, so a stale or wrong input fails loudly instead of producing a jar that
+silently differs from the one that was tested. Any of them takes `--check` to
+report without writing.
+
+The JDK and the two derived libraries (`libjvm.so`, `libcxxabi_shim.so`) come
+from `prep_vendor.py` and `make_cxxabi_real.py` — see the notes at the top of
+each; the former is part of the build, the latter is not.
+
+### 3. Build
 
 ```bash
 bash build.sh assembleHap        # just compile
@@ -76,6 +95,12 @@ Signing must be configured once: DevEco Studio → File → Project Structure �
 Signing Configs → Automatically generate signature. `deploy.sh` installs the
 signed HAP that hvigor produces; there is no ACL re-signing step, because this
 app needs no restricted permissions (see below).
+
+⚠️ **That signature is for your own machine.** DevEco's automatically generated
+profile is a *debug* profile, which names the device UDIDs it is valid for, and
+the HAP it produces embeds that list — plus your developer id and the name on
+your certificate. Build with it, install with it, do not publish the result.
+What to publish instead is in **[RELEASE.md](RELEASE.md)**.
 
 ---
 
@@ -114,9 +139,12 @@ The reasoning behind each of those is in the source comments where the code is, 
 | `entry/src/main/cpp/myapp.c` | The launcher: sandbox setup, JVM options, game launch, exit handshake |
 | `entry/src/main/cpp/SDL/` | SDL3, with patches for OpenHarmony input, windowing and audio |
 | `entry/src/main/ets/` | ArkTS: the XComponent page and key handling, and the ability |
-| `entry/libs/` | The payload (not in git -- see `.gitignore`) |
-| `scripts/` | The build-time toolchain: payload assembly from its inputs, rebuilding the patched jar, and the packaging checks |
+| `payload-src/` | The build's **inputs** (not in git) — see its `README.md` |
+| `entry/libs/` | The **assembled payload** (not in git -- see `.gitignore`) |
+| `scripts/config.py` | Every path the toolchain uses, in one place |
+| `scripts/` | Payload assembly from those inputs, rebuilding the patched jar, and the packaging checks |
 | `deploy.sh`, `build.sh` | Build and deploy, with gates |
+| `RELEASE.md` | What to publish and what must not be published |
 
 ## Licence
 

@@ -1,22 +1,37 @@
 #!/bin/bash
-# 从 git-bash 跑 hvigor 构建。
+# Run hvigor from git-bash.
 #
-# 为什么要这个脚本：hvigorw.bat 的路径含空格，git-bash 里直接调会被引号问题坑
-# （这项目里已经因为"路径含空格"栽过好几次）。这里改成直接调 node + hvigorw.js，
-# 并用【数组】传参 —— 数组是 bash 处理含空格路径唯一可靠的方式。
+# WHY THIS SCRIPT EXISTS
+#   hvigorw.bat lives under a path containing spaces, and calling it directly
+#   from git-bash keeps tripping over quoting -- "a path with a space in it" has
+#   cost this project several rounds already. So: call node and hvigorw.js
+#   directly, and pass arguments as an ARRAY, which is the only way bash handles
+#   space-containing paths reliably.
 #
-# 用法:
+# PATHS
+#   Overridable, so a different machine does not have to edit this file. The
+#   same variables are read by scripts/config.py, so one export covers both.
+#
+#     ARK_DEVECO_STUDIO   default: E:/Program Files/DevEco Studio
+#     DEVECO_SDK_HOME     default: $ARK_DEVECO_STUDIO/sdk
+#     ARK_NODE, ARK_HVIGOR
+#
+# Usage:
 #   bash build.sh assembleHap --mode module -p product=default -p buildMode=debug --no-daemon
 set -o pipefail
 
 cd "$(dirname "$0")" || exit 1
 
-export DEVECO_SDK_HOME="E:/Program Files/DevEco Studio/sdk"
+STUDIO="${ARK_DEVECO_STUDIO:-E:/Program Files/DevEco Studio}"
+export DEVECO_SDK_HOME="${DEVECO_SDK_HOME:-$STUDIO/sdk}"
 
-NODE=("E:/Program Files/DevEco Studio/tools/node/node.exe")
-HVI=("E:/Program Files/DevEco Studio/tools/hvigor/bin/hvigorw.js")
+# Arrays, not plain strings: an unquoted $VAR holding "E:/Program Files/..."
+# gets word-split, the command fails, and the empty pipeline looks like a
+# legitimate "nothing matched" result rather than an error.
+NODE=("${ARK_NODE:-$STUDIO/tools/node/node.exe}")
+HVI=("${ARK_HVIGOR:-$STUDIO/tools/hvigor/bin/hvigorw.js}")
 
-if [ ! -f "${NODE[0]}" ]; then echo "找不到 node: ${NODE[0]}" >&2; exit 1; fi
-if [ ! -f "${HVI[0]}" ]; then echo "找不到 hvigorw.js: ${HVI[0]}" >&2; exit 1; fi
+if [ ! -f "${NODE[0]}" ]; then echo "node not found: ${NODE[0]}" >&2; exit 1; fi
+if [ ! -f "${HVI[0]}" ]; then echo "hvigorw.js not found: ${HVI[0]}" >&2; exit 1; fi
 
 exec "${NODE[@]}" "${HVI[@]}" "$@"

@@ -11,6 +11,10 @@
 **/.test
 /.appanalyzer
 
+# Python bytecode from running the scripts in scripts/
+__pycache__/
+*.py[cod]
+
 # ---------------------------------------------------------------------------
 # The payload -- NOT in git, on purpose.
 #
@@ -28,6 +32,14 @@
 # instead -- those do not count toward repository size.
 # ---------------------------------------------------------------------------
 entry/libs/
+
+# The INPUTS those scripts assemble entry/libs/ from: the upstream and patched
+# game jars, the LWJGL jars and natives, and two files out of the trimmed JDK.
+# Same reasoning as entry/libs/ -- large, mostly reproducible, and the parts that
+# are not reproducible travel in the payload release instead. The README stays,
+# because it is what says which files belong here and which hashes they must have.
+payload-src/*
+!payload-src/README.md
 
 # Scratch from our own diagnostic runs
 *.jpeg

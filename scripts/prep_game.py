@@ -35,11 +35,14 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-# This file lives in scripts/, so the project root is one level up.
-HERE = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(HERE)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import config
 
-SRC = r"E:\User\Desktop\mindustry-ohos\mindustry-1.0-audio.jar"
+PROJECT_ROOT = config.PROJECT_ROOT
+
+# Where the pinned build comes from is configurable (ARK_GAME_JAR) so that a
+# different machine can point at its own copy without editing this script.
+SRC = config.GAME_JAR
 
 # The pinned variant: the audio-fixed build (SDL3/OHAudio backend, providerall GL
 # dispatch) PLUS the OpenGL ES profile request in Arc's SDL backend, which

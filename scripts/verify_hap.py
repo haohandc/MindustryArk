@@ -30,26 +30,98 @@ import zipfile
 
 sys.stdout.reconfigure(encoding="utf-8")
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import config
+
 HERE = os.path.dirname(os.path.abspath(__file__))
-# this file lives in scripts/, so the project root is one level up
-PROJECT_ROOT = os.path.dirname(HERE)
-SDK = r"E:\Program Files\DevEco Studio\sdk\default\openharmony\native"
-READELF = os.path.join(SDK, "llvm", "bin", "llvm-readelf.exe")
-NM = os.path.join(SDK, "llvm", "bin", "llvm-nm.exe")
+PROJECT_ROOT = config.PROJECT_ROOT
+READELF = config.READELF
+NM = os.path.join(config.LLVM_BIN, "llvm-nm.exe")
 
 DEVICE_JVM = "/data/storage/el1/bundle/libs/arm64/jdk21/lib/server/libjvm_real.so"
 TMP = os.path.join(PROJECT_ROOT, "_hapcheck")
 
 
 def find_hap():
+    """Pick the artifact to inspect, deterministically.
+
+    This used to take the newest .hap by mtime. Since setting artifactName in
+    entry/build-profile.json5, hvigor writes TWO packages with the same
+    timestamp -- <name>.hap (signed) and <name>-unsigned.hap -- so the newest
+    one is decided by directory order, which is not a decision. The unsigned
+    package is what gets verified: signing appends a signature block and does
+    not change the payload being checked here, and preferring it means the check
+    does not depend on which naming convention hvigor happens to be using.
+    """
     root = os.path.join(PROJECT_ROOT, "entry", "build", "default", "outputs", "default")
     hits = []
     for dp, _d, fs in os.walk(root):
         for f in fs:
             if f.endswith(".hap"):
                 hits.append(os.path.join(dp, f))
-    hits.sort(key=os.path.getmtime, reverse=True)
-    return hits[0] if hits else None
+    if not hits:
+        return None
+    unsigned = sorted(p for p in hits if p.endswith("-unsigned.hap"))
+    if unsigned:
+        return unsigned[0]
+    return sorted(hits)[0]
+
+
+def check_version_matches_name(hap, ok_ref):
+    """The file name, the artifactName and the packaged version must all agree.
+
+    A download whose name says one version and whose contents say another is
+    worse than one with no version in the name at all -- and the three places
+    that carry the version are edited at different times:
+
+        AppScope/app.json5                     versionName
+        entry/build-profile.json5              targets[].output.artifactName
+        deploy.sh                              HAP_BASE
+
+    so "I remember changing them together" is not a safe assumption. The
+    artifactName is read back out of pack.info rather than out of the build
+    profile, which is the difference between checking what was built and
+    checking what we intended to build.
+
+    String comparison throughout: a rename that is not also a version bump fails
+    too, because the file name is the only part of this a downloader can see.
+    """
+    print("== 0. version in the file name vs. in the package ==")
+    import json
+    import zipfile
+
+    name = os.path.basename(hap)
+    with zipfile.ZipFile(hap) as z:
+        info = json.loads(z.read("pack.info").decode("utf-8"))
+
+    ver = info["summary"]["app"]["version"]["name"]
+    packname = info["packages"][0]["name"]
+    ver_want = config.APP_VERSION
+    name_want = config.ARTIFACT_NAME
+
+    print("   file name       %s" % name)
+    print("   artifactName    %s   (in pack.info)" % packname)
+    print("   versionName     %s   (config: %s / %s)"
+          % (ver, ver_want, name_want))
+
+    problems = []
+    if packname != name_want:
+        problems.append("artifactName %r != config.ARTIFACT_NAME %r"
+                        % (packname, name_want))
+    if ver != ver_want:
+        problems.append("versionName %r != config.APP_VERSION %r"
+                        % (ver, ver_want))
+    if not name.startswith(name_want):
+        problems.append("file name %r does not start with %r" % (name, name_want))
+    if name not in (name_want + ".hap", name_want + "-unsigned.hap"):
+        problems.append("unexpected artifact name %r -- expected %r or %r"
+                        % (name, name_want + ".hap", name_want + "-unsigned.hap"))
+    for p in problems:
+        print("   MISMATCH  %s" % p)
+    print("   %s" % ("OK" if not problems else "FAIL"))
+    print()
+    if problems:
+        ok_ref[0] = False
 
 
 def run(tool, *args):
@@ -66,6 +138,12 @@ def main():
     print("HAP: %s" % hap.replace(HERE + os.sep, ""))
     print("     %d bytes" % os.path.getsize(hap))
     print()
+
+    # Collapsed into a list so the helper can flag a failure without being
+    # threaded through a return value. The check runs first because a name and a
+    # version that disagree makes everything below describe the wrong build.
+    ok_ref = [True]
+    check_version_matches_name(hap, ok_ref)
 
     os.makedirs(TMP, exist_ok=True)
     with zipfile.ZipFile(hap) as z:
@@ -214,13 +292,21 @@ def main():
     # different sources and would only fail at the first call, on the device.
     # ==================================================================
     print("== 7. LWJGL payload ==")
+    # lwjgl/libSDL3.so is deliberately ABSENT from this table, and from the HAP.
+    # There used to be a second SDL3 there, taken from a prebuilt HarmonyOS app,
+    # while this project builds its own from entry/src/main/cpp/SDL/ into the top
+    # of the bundle. org.lwjgl.librarypath lists the bundle first, and that was
+    # measured resolving to the bundle copy, so the lwjgl/ one was unreachable --
+    # two copies of one library in one process is a hazard this project has
+    # already been bitten by once. See prep_lwjgl.py. The top-level
+    # libs/arm64-v8a/libSDL3.so is checked for presence in step 1; its hash is
+    # not pinned because it is built here, so pinning it would fail on any
+    # legitimate rebuild rather than on a mistake.
     LWJGL = {
         "libs/arm64-v8a/lwjgl/liblwjgl.so":
             "663e5cab870ac3427cbfbe01f93facbc260fa504",
         "libs/arm64-v8a/lwjgl/liblwjgl_opengl.so":
             "f3661e892d4d2deb3aa574cab2e64c13b7ac6b4d",
-        "libs/arm64-v8a/lwjgl/libSDL3.so":
-            "3b0986dec22ee837f06e8ce62dd5f8283e52fc9a",
         "libs/arm64-v8a/lwjgl-java/lwjgl.so":
             "cd7dd7a13abce9a2764364f58e138c6f99f50a7f",
         "libs/arm64-v8a/lwjgl-java/lwjgl-opengl.so":
@@ -297,7 +383,7 @@ def main():
     print()
 
     ok = (got and has_create and not bad and got_shim == WANT_SHIM and dyn_ok
-          and game_ok and lwjgl_ok and helper_ok)
+          and game_ok and lwjgl_ok and helper_ok and ok_ref[0])
     print("RESULT: %s" % ("PASS" if ok else "FAIL"))
     return 0 if ok else 1
 
