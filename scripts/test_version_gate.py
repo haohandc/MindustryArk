@@ -37,11 +37,11 @@ import sys
 import zipfile
 
 # Derived from this file's own location, not written down. It used to be a
-# literal E:\User\DevEcoProj\MindustryArk, which is the one thing every other
-# script in here deliberately avoids (they all route through config.py, whose
-# paths are ARK_*-overridable defaults) -- so a checkout anywhere else failed
-# with a confusing ImportError, and the repository carried a path belonging to
-# one machine for no reason.
+# literal absolute path to one particular checkout, which is the one thing every
+# other script in here deliberately avoids -- they all route through config.py,
+# whose paths are ARK_*-overridable defaults. The literal meant a checkout
+# anywhere else failed with a confusing ImportError, and the repository carried
+# a path belonging to one machine for no reason.
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(HERE, "scripts"))
 os.chdir(HERE)
