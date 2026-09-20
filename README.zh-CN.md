@@ -30,6 +30,17 @@ Arc 的四个后端类被重新编译后写回 jar，因为平台相关的改造
 | 存档导入导出 | 可用，从「下载」目录往返 |
 | 桌面 / 移动模式切换 | **未实现** |
 
+## 怎么拿到它
+
+现成产物在 **[Releases 页面](https://github.com/haohandc/MindustryArk/releases)**：
+未签名的 HAP（应用本体）与一个载荷包（**只有要从源码构建才需要**）。
+
+未签名的 HAP 装不上 —— HarmonyOS 要求先签名。用你自己的证书签一次：
+用 DevEco Studio 打开本项目 → **File → Project Structure → Signing Configs →
+Automatically generate signature** → `bash deploy.sh`。
+**自动生成的证书就够了**，因为本应用**不申请任何受限权限**，不必去 AppGallery Connect 申请。
+更细的说明、以及**什么绝不能发布**，见 [RELEASE.md](RELEASE.md)。
+
 ## 环境要求
 
 - DevEco Studio 及 HarmonyOS SDK（`compatibleSdkVersion 6.1.1(24)`、`targetSdkVersion 26.0.0`）

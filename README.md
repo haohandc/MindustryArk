@@ -34,6 +34,20 @@ saves can be imported from the Download folder.
 | Save import/export | Works, from/to the Download folder |
 | Desktop/mobile mode switch | **Not implemented** |
 
+## Getting it
+
+Prebuilt artifacts are on the
+**[Releases page](https://github.com/haohandc/MindustryArk/releases)**:
+the unsigned HAP (the app) and a payload zip (only needed to build from source).
+
+An unsigned HAP will not install — HarmonyOS requires a signature. Sign it once
+with your own certificate: open the project in DevEco Studio, **File → Project
+Structure → Signing Configs → Automatically generate signature**, then
+`bash deploy.sh`. An automatically generated profile is enough, because this app
+requests **no restricted permission** — there is nothing to apply for from
+AppGallery Connect. More detail, including what must **not** be published, is in
+[RELEASE.md](RELEASE.md).
+
 ## Requirements
 
 - DevEco Studio with the HarmonyOS SDK (`compatibleSdkVersion 6.1.1(24)`,

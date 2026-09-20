@@ -294,24 +294,62 @@ PY
 The zip carries `entry/` at the top level and `README-PAYLOAD.txt` beside it, so
 unzipping into the repository root does the right thing.
 
-## Before pushing
+## Published state
 
-- [ ] Repository description and topics filled in (above)
-- [ ] Upload **only** the unsigned HAP and the payload zip — never the signed one
-- [ ] Confirm the uploaded HAP has no signature block:
-      `python -c "d=open('MindustryArk-v0.1.0-beta1-unsigned.hap','rb').read()[-400000:]; print(b'debug-info' in d)"`
-      should print `False`
-- [ ] Confirm the repository has no local paths left. The leading boundary group
+Released **2026-09-20** as a **pre-release**:
+
+| | |
+|---|---|
+| Repository | `https://github.com/haohandc/MindustryArk` (private at the time of writing) |
+| Tag | `v0.1.0-beta1` = `332192e` — lightweight, matching what GitHub creates on publish |
+| Release | `v0.1.0-beta1 — Mindustry v8 Build 160.4 on HarmonyOS`, **Set as a pre-release** |
+| Assets | the two below, plus GitHub's automatic `Source code (zip)` / `(tar.gz)` |
+
+| Asset | Size | sha256 |
+|---|---|---|
+| `MindustryArk-v0.1.0-beta1-unsigned.hap` | 272,616,859 B | `0e2a6c9086814a383a21b35ce7944f21fc588eb3df333efb1fed864822abc4f0` |
+| `MindustryArk-v0.1.0-beta1-payload.zip` | 146,836,356 B | `93db79ffd7974fb93859fc91b3e1de44d939a107c563e1399d430a8e36004adb` |
+
+**Both hashes were recomputed locally and match the ones GitHub displays**, which is
+what closes the last gap: the local unsigned HAP was checked for a signature block here,
+and equal hashes mean the uploaded bytes are those same bytes. A local check alone
+would only ever be evidence about the local file.
+
+The signed HAP is **not** among the assets. That was confirmed by reading the release
+page: four assets, two of them ours and two auto-generated.
+
+> ⚠️ **The tag was moved after this release was published.** The AMCL artifact paths
+> were rewritten out of history (see the repository's git log for why), which changed
+> every commit SHA, so `v0.1.0-beta1` was re-pointed from `fd6e021` to `332192e` and
+> force-pushed. **The tag's tree is byte-identical** (`59a49bf02784418e226d4cf4b11f6cfa6b93a166`),
+> so the source archives GitHub generates are unchanged — only the commit SHA in the
+> page header moved.
+
+## Pre-publication checklist
+
+All of these were run and passed before publishing. Kept as a record rather than a
+to-do list, because a checklist that has never been executed is a guess.
+
+- [x] Repository description and topics filled in (see the Topics section above).
+      The topic list was checked against what each topic actually contains; `hap`
+      turned out to mean HomeKit, and was dropped.
+- [x] Uploaded **only** the unsigned HAP and the payload zip — never the signed one.
+- [x] Confirmed the uploaded HAP has no signature block:
+      `python -c "d=open('MindustryArk-v0.1.0-beta1-unsigned.hap','rb').read()[-900000:]; print(b'debug-info' in d)"`
+      prints `False` — along with `device-ids`, `developer-id` and
+      `development-certificate`, and zero 64-hex strings that could be a UDID.
+- [x] Confirmed the repository has no local paths left. The leading boundary group
       is what keeps this from matching every `https://` in the docs:
       ```bash
-      git grep -nE '(^|[^A-Za-z0-9])[A-Za-z]:[\/\\]' -- . ':!entry/src/main/cpp/SDL' ':!LICENSE'
+      git grep -nE '(^|[^A-Za-z0-9])[A-Za-z]:[\/\\]' -- . ':!entry/src/main/cpp/SDL' ':!LICENSE' ':!RELEASE.md'
       ```
-      Expected: **only documented, overridable defaults** — `scripts/config.py`
-      (which holds every path the toolchain uses, each an `ARK_*`-overridable
-      default), the same values repeated in `build.sh` and `deploy.sh` for the
-      tools they invoke directly, and this file's own example above. Nothing
-      that would break for someone whose checkout is not at one particular
-      path, and no home directory outside those defaults.
+      Result: only documented, overridable defaults — `scripts/config.py` (every path
+      the toolchain uses, each an `ARK_*`-overridable default), the same values
+      repeated in `build.sh` and `deploy.sh` for the tools they invoke directly, and
+      this file's own example below.
+      **This check found a real defect**: `scripts/test_version_gate.py` had a
+      hard-coded absolute path to one particular checkout, which would have failed
+      with a confusing `ImportError` anywhere else. Fixed to derive from `__file__`.
 
       A control for the pattern itself — a quoted heredoc, because `printf`
       eats the backslashes:
@@ -323,5 +361,13 @@ unzipping into the repository root does the right thing.
       EOF
       # -> lines 2 and 3 only
       ```
-- [ ] Consider a line in the description lowering expectations:
+      (That heredoc warning was already in this file, and the lesson was still
+      learned the hard way while auditing history: a `printf`-built control did not
+      contain the string it was supposed to, so a working check looked broken.)
+- [x] Scanned every blob reachable from `master` — not just the working tree —
+      for device UDIDs, the developer id, the app identifier, the profile UUID, the
+      name on the certificate, the account's real email address, and any
+      key/certificate file. None present. A file deleted in a later commit still
+      lives in the earlier commit's objects, and going public exposes all of it.
+- [x] Considered a line in the description lowering expectations:
       "未在真机上广泛测试，欢迎提 issue"
