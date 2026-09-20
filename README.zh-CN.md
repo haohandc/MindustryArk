@@ -113,6 +113,21 @@ JDK 在 HAP 里，沙箱只存数据 —— 而**正是因为没有它，别人�
 - **目前验证了两台设备**：**MatePad Pro 12.2" 2025** 平板与 **Mate 80 Pro** 手机，均为 HarmonyOS 7 / API 26。
   其他设备**未测试** —— 本项目依赖平台对「可执行内存」的策略，
   若某设备在这点上做法不同，出错方式我们无法预判。
+- ⚠️ **每次正常退出时，`hiview/AppKilledReporter` 都会打一条 `reason: CppCrash`。
+  它不是崩溃，也归不到本应用头上 —— 你看到的就是这行，不必惊慌。**
+  游戏内点 Quit 正常退出时实测，同一个 5 毫秒窗口内：
+
+  | 组件 | 结论（带归属信息） |
+  |---|---|
+  | `AppMS` | `Kill Reason: app exit`，`pid=… processName=com.haohandc.mindustryark` |
+  | `sceneboard` | `onProcessDied, uid: …, bundleName: com.haohandc.mindustryark, pid: …` |
+  | `aidataservice` | `process died, bundleName: com.haohandc.mindustryark` |
+  | `hiview` | `uid: 0`、`bundleName:` **空**、`reason: CppCrash` |
+
+  **唯一没有归属的那个在喊崩溃，而它被另外三个反驳。** 而且没有任何产物：
+  没有 `faultlog`、没有 `cppcrash` 目录、没有转储、没有非零退出信号，
+  启动器**真遇到**致命信号时才写的 `crash.txt` 一直是空的。
+  产生那三条有归属记录的退出握手在 `EntryAbility.ets` 里。
 
 以上各条背后的原因写在**对应代码的注释里**，而不在这份文档里 —— 入口是 `entry/src/main/cpp/myapp.c`。
 

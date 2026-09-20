@@ -131,6 +131,24 @@ build without a special signing profile.
   untested — the platform's policy on executable memory is what this depends on,
   and a device that enforces it differently would fail in ways this project has
   no way to predict.
+- **`hiview/AppKilledReporter` logs `reason: CppCrash` every time the app exits
+  normally. It is not a crash, and it is not attributable to this app.** Measured
+  on a normal in-game Quit, in one 5 ms window:
+
+  | Component | Verdict, with attribution |
+  |---|---|
+  | `AppMS` | `Kill Reason: app exit`, `pid=… processName=com.haohandc.mindustryark` |
+  | `sceneboard` | `onProcessDied, uid: …, bundleName: com.haohandc.mindustryark, pid: …` |
+  | `aidataservice` | `process died, bundleName: com.haohandc.mindustryark` |
+  | `hiview` | `uid: 0, bundleName: ` **empty**, `reason: CppCrash` |
+
+  The one component with no attribution is the one calling it a crash, and it is
+  contradicted by the other three. Nothing is produced for it either: no
+  `faultlog`, no `cppcrash` directory, no core dump, no non-zero exit signal, and
+  `crash.txt` (which the launcher writes when it *does* see a fatal signal) stays
+  empty. If you are reading `hiview` lines and wondering, that is what you are
+  looking at. See `EntryAbility.ets` for the exit handshake that produces the
+  three attributed lines.
 
 The reasoning behind each of those is in the source comments where the code is, rather than here -- `entry/src/main/cpp/myapp.c` is the place to start.
 
