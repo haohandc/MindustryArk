@@ -31,16 +31,18 @@ import zipfile
 sys.stdout.reconfigure(encoding="utf-8")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# this file lives in scripts/, so the project root is one level up
+PROJECT_ROOT = os.path.dirname(HERE)
 SDK = r"E:\Program Files\DevEco Studio\sdk\default\openharmony\native"
 READELF = os.path.join(SDK, "llvm", "bin", "llvm-readelf.exe")
 NM = os.path.join(SDK, "llvm", "bin", "llvm-nm.exe")
 
 DEVICE_JVM = "/data/storage/el1/bundle/libs/arm64/jdk21/lib/server/libjvm_real.so"
-TMP = os.path.join(HERE, "_hapcheck")
+TMP = os.path.join(PROJECT_ROOT, "_hapcheck")
 
 
 def find_hap():
-    root = os.path.join(HERE, "entry", "build", "default", "outputs", "default")
+    root = os.path.join(PROJECT_ROOT, "entry", "build", "default", "outputs", "default")
     hits = []
     for dp, _d, fs in os.walk(root):
         for f in fs:

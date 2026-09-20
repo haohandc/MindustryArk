@@ -36,7 +36,9 @@ import sys
 sys.stdout.reconfigure(encoding="utf-8")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CPP = os.path.join(HERE, "entry", "src", "main", "cpp")
+# this file lives in scripts/, so the project root is one level up
+PROJECT_ROOT = os.path.dirname(HERE)
+CPP = os.path.join(PROJECT_ROOT, "entry", "src", "main", "cpp")
 
 # source: the original shim as it ships in the JDK
 SRC = os.environ.get(
@@ -50,7 +52,7 @@ NEW = b"libcxxabi_real.so\x00"
 
 # entry/libs/arm64-v8a/ must NOT keep the original name, otherwise it would
 # shadow the replacement our build produces.
-STALE = os.path.join(HERE, "entry", "libs", "arm64-v8a", "libcxxabi_shim.so")
+STALE = os.path.join(PROJECT_ROOT, "entry", "libs", "arm64-v8a", "libcxxabi_shim.so")
 
 
 def main():

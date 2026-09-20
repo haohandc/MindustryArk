@@ -42,8 +42,10 @@ import zipfile
 sys.stdout.reconfigure(encoding="utf-8")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# this file lives in scripts/, so the project root is one level up
+PROJECT_ROOT = os.path.dirname(HERE)
 JAR = r"E:\User\Desktop\mindustry-ohos\mindustry-1.0-audio.jar"
-DEST_DIR = os.path.join(HERE, "entry", "libs", "arm64-v8a", "arc")
+DEST_DIR = os.path.join(PROJECT_ROOT, "entry", "libs", "arm64-v8a", "arc")
 
 # name inside the jar -> sha1
 #

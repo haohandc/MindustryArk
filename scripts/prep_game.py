@@ -35,6 +35,10 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
 
+# This file lives in scripts/, so the project root is one level up.
+HERE = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(HERE)
+
 SRC = r"E:\User\Desktop\mindustry-ohos\mindustry-1.0-audio.jar"
 
 # The pinned variant: the audio-fixed build (SDL3/OHAudio backend, providerall GL
@@ -44,7 +48,7 @@ SRC = r"E:\User\Desktop\mindustry-ohos\mindustry-1.0-audio.jar"
 # refuses to run on a stale input.
 SRC_SHA1 = "732ead5a45fa4d4d4a595e23e65ba952d86cbed3"
 
-DEST = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+DEST = os.path.join(PROJECT_ROOT,
                     "entry", "libs", "arm64-v8a", "game", "mindustry.so")
 
 

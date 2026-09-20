@@ -52,7 +52,7 @@ Arc 的四个后端类被重新编译后写回 jar，因为平台相关的改造
 | `libjvm.so`、`libcxxabi_shim.so` | 由 JDK 派生 | 由 `prep_vendor.py` 生成 |
 | `launcher/` | 只有一个类的 helper jar | 由 `prep_helper.py` 从 `helper-src/` 编译 |
 
-`prep_*.py` 系列脚本负责这些派生工作，**每个脚本都会先校验输入的哈希**再动手写文件。
+`scripts/` 下的脚本负责这些派生工作，**每个都会先校验输入的哈希**再动手写文件。
 所以输入陈旧或不对时会**直接报错退出**，而不会悄悄产出与测试过的版本不一致的产物。
 
 ### 二、构建
@@ -101,11 +101,8 @@ JDK 在 HAP 里，沙箱只存数据 —— 而**正是因为没有它，别人�
 | `entry/src/main/cpp/SDL/` | SDL3，含 OpenHarmony 输入/窗口/音频的改造 |
 | `entry/src/main/ets/` | ArkTS：XComponent 页面与按键处理、ability |
 | `entry/libs/` | 载荷（**不在 git 里**，见 `.gitignore`） |
-| `prep_*.py` | 从输入生成载荷 |
-| `tools/` | 重建打过补丁的游戏 jar（把 Arc 补丁应用到上游 jar） |
+| `scripts/` | 构建期工具链：从输入组装载荷、重建打过补丁的 jar、打包校验 |
 | `deploy.sh`、`build.sh` | 构建与部署，带闸门 |
-| `esc_ab.sh`、`quit_timing.sh` | 用于定位输入与退出问题的测量脚本 |
-| `verify_hap.py`、`scan_needed.py` | 回读打包后的 HAP，核对里面的字节 |
 
 ## 许可证
 
@@ -126,7 +123,7 @@ HAP 是**单一可安装单元**，其唯一目的就是运行该游戏 ⇒ 属�
 
 ⚠️ **第三方文件保留各自许可证。** `entry/src/main/cpp/SDL/` 是 **Zlib 许可的 SDL3 加上本地修改**；
 它**不会**因本项目的 GPL 而改许可，且 Zlib 要求**修改版不得冒充原版**。
-LWJGL 载荷与 `tools/` 引用的 Arc 源码同理。逐组件义务见 [THIRD-PARTY.md](THIRD-PARTY.md)。
+LWJGL 载荷与 `scripts/` 引用的 Arc 源码同理。逐组件义务见 [THIRD-PARTY.md](THIRD-PARTY.md)。
 
 ## 致谢
 

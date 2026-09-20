@@ -54,7 +54,9 @@ SRC = (r"C:\Users\Haohandc\Arc\natives\natives-freetype-android"
        r"\libs\arm64-v8a\libarc-freetype.so")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEST = os.path.join(HERE, "entry", "libs", "arm64-v8a", "arc",
+# this file lives in scripts/, so the project root is one level up
+PROJECT_ROOT = os.path.dirname(HERE)
+DEST = os.path.join(PROJECT_ROOT, "entry", "libs", "arm64-v8a", "arc",
                     "libarc-freetypearm64.so")
 
 READELF = (r"E:\Program Files\DevEco Studio\sdk\default\openharmony\native"

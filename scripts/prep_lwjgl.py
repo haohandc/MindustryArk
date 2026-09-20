@@ -48,7 +48,9 @@ SRC_HAP = r"<path to the prebuilt lwjgl-ohos bundle>"
 JAR_DIR = r"<path to the lwjgl-ohos source dir>"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-LIBS = os.path.join(HERE, "entry", "libs", "arm64-v8a")
+# this file lives in scripts/, so the project root is one level up
+PROJECT_ROOT = os.path.dirname(HERE)
+LIBS = os.path.join(PROJECT_ROOT, "entry", "libs", "arm64-v8a")
 NATIVE_DEST = os.path.join(LIBS, "lwjgl")        # real .so, executable area
 JAVA_DEST = os.path.join(LIBS, "lwjgl-java")     # jars, renamed to .so
 

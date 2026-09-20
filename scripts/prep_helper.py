@@ -34,9 +34,11 @@ import zipfile
 sys.stdout.reconfigure(encoding="utf-8")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SRC_DIR = os.path.join(HERE, "helper-src")
+# this file lives in scripts/, so the project root is one level up
+PROJECT_ROOT = os.path.dirname(HERE)
+SRC_DIR = os.path.join(PROJECT_ROOT, "helper-src")
 ENTRY = "com/haohandc/launcher/NativeLoader.class"
-DEST_DIR = os.path.join(HERE, "entry", "libs", "arm64-v8a", "launcher")
+DEST_DIR = os.path.join(PROJECT_ROOT, "entry", "libs", "arm64-v8a", "launcher")
 DEST = os.path.join(DEST_DIR, "helper.so")
 
 JAVAC = r"C:\Program Files\Java\jdk-17\bin\javac.exe"

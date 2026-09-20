@@ -56,7 +56,7 @@ files vendored inside it:
   Zlib condition 2 requires that altered versions be **plainly marked as such**
   and not misrepresented as the original, so do not describe this tree as plain
   SDL3.
-- Vendored Arc sources referenced by `tools/` — Apache-2.0, unchanged in
+- Vendored Arc sources referenced by `scripts/` — Apache-2.0, unchanged in
   licence by being built against.
 - The LWJGL payload — BSD-3-Clause.
 
@@ -76,7 +76,7 @@ obligation depends on it:
 
 | Part of the jar | State |
 |---|---|
-| `mindustry/**` (the game itself) | **Unmodified.** `tools/patch_mindustry.py` does not rewrite these; it only *asserts* that `mindustry/desktop/DesktopLauncher.class` and `mindustry/Vars.class` are still present, so that a jar that is not what it claims to be fails loudly |
+| `mindustry/**` (the game itself) | **Unmodified.** `scripts/patch_mindustry.py` does not rewrite these; it only *asserts* that `mindustry/desktop/DesktopLauncher.class` and `mindustry/Vars.class` are still present, so that a jar that is not what it claims to be fails loudly |
 | `arc/backend/sdl/**` and `arc/graphics/gl/**` (the framework) | **Replaced** with builds from patched sources — see the Arc section |
 | `arc/backend/sdl/jni/**` | Preserved deliberately: Mindustry's own classes still reference them |
 
@@ -99,8 +99,8 @@ Keep the licence text with any redistribution.
 
 ### Arc — Apache-2.0
 
-**Arc's source is modified by this project.** `tools/build_arc_patch.py`
-recompiles three classes from patched sources and `tools/patch_mindustry.py`
+**Arc's source is modified by this project.** `scripts/build_arc_patch.py`
+recompiles three classes from patched sources and `scripts/patch_mindustry.py`
 writes them into the jar:
 
 | Class | What was changed |

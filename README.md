@@ -57,7 +57,7 @@ supply it before the project will build, because the HAP embeds all of it.
 | `libjvm.so`, `libcxxabi_shim.so` | Derived from the JDK | Produced by `prep_vendor.py` |
 | `launcher/` | A one-class helper jar | Built by `prep_helper.py` from `helper-src/` |
 
-The `prep_*.py` scripts do the derivation and each one checks its input's hash
+The scripts in `scripts/` do the derivation, and each one checks its input's hash
 before writing anything, so a stale or wrong input fails loudly instead of
 producing a jar that silently differs from the one that was tested.
 
@@ -115,11 +115,8 @@ The reasoning behind each of those is in the source comments where the code is, 
 | `entry/src/main/cpp/SDL/` | SDL3, with patches for OpenHarmony input, windowing and audio |
 | `entry/src/main/ets/` | ArkTS: the XComponent page and key handling, and the ability |
 | `entry/libs/` | The payload (not in git -- see `.gitignore`) |
-| `prep_*.py` | Produce the payload from its inputs |
-| `tools/` | Rebuild the patched game jar (Arc patches applied to an upstream jar) |
+| `scripts/` | The build-time toolchain: payload assembly from its inputs, rebuilding the patched jar, and the packaging checks |
 | `deploy.sh`, `build.sh` | Build and deploy, with gates |
-| `esc_ab.sh`, `quit_timing.sh` | The measurement harnesses used to fix input and shutdown |
-| `verify_hap.py`, `scan_needed.py` | Read the packaged HAP back and check the bytes |
 
 ## Licence
 
@@ -145,7 +142,7 @@ each component, are in [THIRD-PARTY.md](THIRD-PARTY.md).
 Zlib-licensed SDL3 with local modifications; it is not relicensed by this
 project's GPL, and Zlib requires that modified copies not be presented as the
 original. The same applies to the LWJGL payload and to the vendored Arc sources
-referenced by `tools/`.
+referenced by `scripts/`.
 
 ## Credits
 

@@ -49,8 +49,10 @@ import sys
 sys.stdout.reconfigure(encoding="utf-8")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CPP = os.path.join(HERE, "entry", "src", "main", "cpp")
-LIBS = os.path.join(HERE, "entry", "libs", "arm64-v8a")
+# this file lives in scripts/, so the project root is one level up
+PROJECT_ROOT = os.path.dirname(HERE)
+CPP = os.path.join(PROJECT_ROOT, "entry", "src", "main", "cpp")
+LIBS = os.path.join(PROJECT_ROOT, "entry", "libs", "arm64-v8a")
 JDK_SERVER = os.path.join(LIBS, "jdk21", "lib", "server")
 PAD_DIR = os.path.join(HERE, "_anchorpad")          # host-only scratch, not shipped
 

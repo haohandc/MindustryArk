@@ -106,8 +106,8 @@ fi
 
 echo
 echo "############ 2/4 verify packaging ############"
-PYTHONIOENCODING=utf-8 "${PY[@]}" verify_hap.py || exit 1
-PYTHONIOENCODING=utf-8 "${PY[@]}" scan_needed.py || exit 1
+PYTHONIOENCODING=utf-8 "${PY[@]}" scripts/verify_hap.py || exit 1
+PYTHONIOENCODING=utf-8 "${PY[@]}" scripts/scan_needed.py || exit 1
 
 echo
 echo "############ 3/4 install ############"

@@ -41,3 +41,12 @@ clean_perms.py
 # Signing config with real key paths/passwords. Never commit this: it is
 # machine-specific, and the password blobs do not belong in a public repository.
 build-profile.local.json5
+
+# Diagnostic / measurement harnesses used while developing. They are specific to
+# this machine's device ids and paths, and they are not needed to build or run --
+# so they stay local. The reasoning they were used for is preserved in the source
+# comments, which is where it is useful to anyone else.
+esc_ab.sh
+quit_timing.sh
+jvmrun.sh
+tryopts.sh
