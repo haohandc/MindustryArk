@@ -29,7 +29,7 @@ saves can be imported from the Download folder.
 | Graphics | OpenGL ES via SDL3 |
 | Audio | OHAudio, through a self-built `libarcarm64.so` with an SDL3 backend |
 | Touch | Works, including two-finger pinch zoom |
-| Keyboard | Works (physical keyboard; WASD and ESC) |
+| Keyboard | Works (physical keyboard; WASD and ESC). Typing into game text fields uses an on-screen field with full input-method support — see limitations |
 | Gamepad / mouse | Mouse works. Gamepad untested |
 | Save import/export | Works, from/to the Download folder |
 | Desktop/mobile mode switch | **Not implemented** |
@@ -132,6 +132,28 @@ build without a special signing profile.
 
 ## Known limitations
 
+- **Text entry, and what each route can do.** Touch a text field inside the game
+  (a save name, a schematic name, the export filename) and the app puts up its
+  own text field, wired to the system input method — so the on-screen keyboard
+  appears and composed input works, Chinese included. A physical keyboard works
+  too, and what it can type depends on where the focus is:
+    - while the app's field is up, the keyboard goes through the system input
+      method as well, so Chinese works from a physical keyboard too;
+    - when it is not up, the keyboard goes straight to the game through SDL's
+      key-to-character path, which has no input method behind it — ASCII only.
+  Focus is singular, so those are the only two states there can be.
+  - **Both routes exist because SDL's own IME path cannot work here.** This
+    process maps `libSDL3.so` twice, ArkTS hands the IME controller to the copy
+    that is *not* running the game, and a `napi_ref` cannot be moved between
+    them — so SDL can never show a keyboard. What replaced it: the app watches
+    for the game asking for text (a file), shows an ArkUI `TextInput`, and feeds
+    what the user types back into SDL's text event queue. The code is in
+    `SDL_openharmony.c`, `SDL_openharmonyevents.c` and `ets/pages/Index.ets`.
+  - **One rough edge, stated plainly:** the app cannot read the game field's
+    cursor, so it sends the *difference* from what it believes the field holds.
+    Typing and backspacing at the end of a name are exact. Inserting or editing
+    in the *middle* is repaired by retracting and resending — the result is
+    correct, but that text is retyped on screen.
 - **Desktop/mobile mode cannot be switched at runtime.** The mode is fixed at
   launch. Mindustry has an in-game "mouse + keyboard control" toggle that covers
   most of the same ground.
