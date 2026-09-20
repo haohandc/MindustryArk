@@ -20,7 +20,7 @@ Arc 的四个后端类被重新编译后写回 jar，因为平台相关的改造
 
 | 项目 | 状态 |
 |---|---|
-| JVM 启动 | 可用（本平台**必须**加 `-XX:UseSVE=0`，见下文） |
+| JVM 启动 | 可用 —— 但启动器**必须**传 `-XX:UseSVE=0`，否则 JIT 会生成本设备无法执行的 SVE 指令，进程直接 SIGILL |
 | 图形 | OpenGL ES，经 SDL3 |
 | 音频 | OHAudio，经自编的 `libarcarm64.so`（含 SDL3 后端） |
 | 触屏 | 可用，**含双指捏合缩放** |
@@ -44,7 +44,7 @@ Arc 的四个后端类被重新编译后写回 jar，因为平台相关的改造
 
 | 仓库内路径 | 是什么 | 从哪来 |
 |---|---|---|
-| `jdk21/` | 面向 OpenHarmony 的 OpenJDK 21 | 见下文「关于 JDK」 |
+| `jdk21/` | 面向 OpenHarmony 的 OpenJDK 21（musl / aarch64）。**桌面版 JDK 用不了** | 载荷发布包，或自行获取同类构建 |
 | `game/mindustry.so` | Mindustry 的 jar，改了文件名 | 官方 Mindustry 发行版 jar |
 | `lwjgl/`、`lwjgl-java/` | 本平台的 LWJGL 3 原生库与 jar | 面向 OpenHarmony 的 LWJGL 构建 |
 | `arc/` | Arc 的原生库 | 从 Arc 源码构建 |
@@ -70,45 +70,6 @@ Automatically generate signature。`deploy.sh` 安装的是 hvigor 产出的**�
 
 ---
 
-## 工作原理
-
-```
-ArkTS（EntryAbility、Index）
-   |  向 SDL 提供它需要的对象；轮询 native 写的退出标记
-   v
-libmain.so（myapp.c）—— 启动器
-   |  把 JDK 载荷拷进沙箱，然后
-   |  以手工拼装的选项表调用 JNI_CreateJavaVM(...)
-   v
-libjvm_real.so（HotSpot，在 HAP 内）
-   |  加载游戏
-   v
-Mindustry → Arc → LWJGL → libSDL3.so → XComponent
-```
-
-以下是**花了真功夫**、且不知情者一定会踩的点：
-
-**JVM 必须被告知 `-XX:UseSVE=0`。** 否则 JIT 会生成本设备无法执行的 SVE 指令，进程直接 SIGILL。
-启动器无条件设置这一项。
-
-**`libSDL3.so` 在一个进程里可能出现两份。** ArkTS 为它的 XComponent 加载 HAP 根目录那份；
-LWJGL 则加载库搜索路径先找到的那份。**两份独立映射 = 两套静态变量**，
-于是「窗口」（属于其中一份）与「输入回调」（投递给另一份）落在了不同副本里。
-所以启动器把 bundle 目录放在 LWJGL 库路径的**最前面**，
-并让**创建窗口的那份接管 XComponent 回调**。
-
-**JDK 不能按常规方式加载。** OpenHarmony **禁止把「文件」映射为可执行**，而这正是 `dlopen` 的机制。
-JDK 放在 HAP 的 lib 区（平台允许），而 JVM 需要当作**数据**读取的部分（模块镜像）则拷进应用沙箱。
-运行期分配的可执行内存是**匿名**的 —— 这是允许的，也是 JIT 在这里能跑起来的根本原因。
-
-**打包只看文件名。** hvigor 把 `entry/libs/**` 里的文件拷进 HAP 的**唯一**条件是：
-文件名以 `.so` 结尾。所以游戏 jar、LWJGL 的 jar、模块镜像都顶着 `.so` 的名字 ——
-这不是取巧，而是**唯一可用的投递机制**。
-
-**退出是一次握手。** native 代码无法关闭 ArkTS 的 ability，所以当游戏的 `main` 返回时，
-启动器写一个标记文件、短暂等待；若 ArkTS 没有在这期间调用 `terminateSelf()`，它再自己退出。
-**没有这一步，框架会把这次退出归类为崩溃。**
-
 ## 权限
 
 只申请 `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY`，用于从「下载」目录导入存档与游戏数据包。
@@ -126,6 +87,8 @@ JDK 在 HAP 里，沙箱只存数据 —— 而**正是因为没有它，别人�
 - **导入游戏数据后游戏会主动退出**（`Core.app.exit()`），以便用新数据重启。
   **这看起来像崩溃，但不是。**
 - **只在一台设备上测过**（MatePad Pro，HarmonyOS 7）。其他设备**未测试**。
+
+以上各条背后的原因写在**对应代码的注释里**，而不在这份文档里 —— 入口是 `entry/src/main/cpp/myapp.c`。
 
 ## 仓库结构
 

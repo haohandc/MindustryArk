@@ -24,7 +24,7 @@ both work, and saves can be imported from the Download folder.
 
 | Area | State |
 |---|---|
-| JVM startup | Works (`-XX:UseSVE=0` is required on this platform -- see below) |
+| JVM startup | Works — the launcher must pass `-XX:UseSVE=0`. Without it the JIT emits SVE instructions this device cannot execute and the process dies with SIGILL |
 | Graphics | OpenGL ES via SDL3 |
 | Audio | OHAudio, through a self-built `libarcarm64.so` with an SDL3 backend |
 | Touch | Works, including two-finger pinch zoom |
@@ -49,7 +49,7 @@ supply it before the project will build, because the HAP embeds all of it.
 
 | Path in the repo | What it is | Where it comes from |
 |---|---|---|
-| `jdk21/` | An OpenJDK 21 build for OpenHarmony | See "The JDK" below |
+| `jdk21/` | An OpenJDK 21 build for OpenHarmony (musl / aarch64). A desktop JDK will not work | The payload release, or a similar build obtained elsewhere |
 | `game/mindustry.so` | The Mindustry jar, renamed | An official Mindustry release jar |
 | `lwjgl/`, `lwjgl-java/` | LWJGL 3 natives and jars for this platform | An LWJGL build for OpenHarmony |
 | `arc/` | Arc's natives | Built from the Arc sources |
@@ -78,53 +78,6 @@ app needs no restricted permissions (see below).
 
 ---
 
-## How it works
-
-```
-ArkTS (EntryAbility, Index)
-   |  provides objects SDL needs; watches for the native exit marker
-   v
-libmain.so (myapp.c)  -- the launcher
-   |  copies the JDK payload into the sandbox, then
-   |  JNI_CreateJavaVM(...) with a hand-built option list
-   v
-libjvm_real.so (HotSpot, inside the HAP)
-   |  loads the game
-   v
-Mindustry -> Arc -> LWJGL -> libSDL3.so -> XComponent
-```
-
-Points that took real work, and that a reader will otherwise trip over:
-
-**The JVM must be told `-XX:UseSVE=0`.** Otherwise the JIT emits SVE
-instructions this device cannot execute and the process dies with SIGILL. The
-launcher sets it unconditionally.
-
-**`libSDL3.so` can exist twice in one process.** ArkTS loads the copy in the HAP
-root for its XComponent; LWJGL loads whichever copy the library path finds
-first. Two independent mappings means two sets of static variables, so the
-window (owned by one) and the input callbacks (delivered to the other) end up in
-different copies. The launcher therefore puts the bundle directory first on
-LWJGL's library path, and the copy that creates the window takes over the
-XComponent callbacks.
-
-**The JDK cannot be loaded the normal way.** OpenHarmony blocks mapping a *file*
-as executable, which is how `dlopen` works. The JDK ships inside the HAP's lib
-area, which the platform does allow, and everything derived from it that the JVM
-needs as *data* (the module image) is copied into the app sandbox. Executable
-memory allocated at runtime is anonymous, and that is permitted -- which is why
-the JIT works here at all.
-
-**Only the HAP's file name decides what gets packaged.** hvigor copies files
-from `entry/libs/**` into the HAP if, and only if, the name ends in `.so`. That
-is why the game jar, the LWJGL jars and the module image all ship under `.so`
-names; it is not a hack, it is the only delivery mechanism available.
-
-**Quitting is a handshake.** Native code cannot close an ArkTS ability, so when
-the game's `main` returns the launcher writes a marker file, waits briefly, and
-exits itself if ArkTS has not called `terminateSelf()` in the meantime. Without
-this the framework classifies the exit as a crash.
-
 ## Permissions
 
 Only `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY`, so the player can import
@@ -148,6 +101,8 @@ build without a special signing profile.
   that it restarts with the new data. This looks like a crash and is not one.
 - Tested on exactly one device (MatePad Pro, HarmonyOS 7). Other devices are
   untested.
+
+The reasoning behind each of those is in the source comments where the code is, rather than here -- `entry/src/main/cpp/myapp.c` is the place to start.
 
 ## Repository layout
 
