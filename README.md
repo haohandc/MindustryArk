@@ -18,10 +18,10 @@ where the platform-specific work lives.
 
 ## Status
 
-Working on HarmonyOS 7 / API 26 devices — a MatePad Pro tablet and an SGT-AL50
-phone. The main menu renders, the mobile layout is used, audio plays through
-OHAudio, touch and physical keyboard both work, and saves can be imported from
-the Download folder.
+Working on HarmonyOS 7 / API 26 devices — a HUAWEI MatePad Pro 12.2" 2025 tablet
+and a HUAWEI Mate 80 Pro phone. The main menu renders, the mobile layout is
+used, audio plays through OHAudio, touch and physical keyboard both work, and
+saves can be imported from the Download folder.
 
 | Area | State |
 |---|---|
@@ -126,10 +126,11 @@ build without a special signing profile.
   browser path had to be redirected to Download.
 - Importing game data makes the game exit on purpose (`Core.app.exit()`), so
   that it restarts with the new data. This looks like a crash and is not one.
-- Verified on two devices so far: a MatePad Pro tablet and an SGT-AL50 phone,
-  both HarmonyOS 7 / API 26. Anything else is untested — the platform's policy
-  on executable memory is what this depends on, and a device that enforces it
-  differently would fail in ways this project has no way to predict.
+- Verified on two devices so far: a HUAWEI MatePad Pro 12.2" 2025 tablet and a
+  HUAWEI Mate 80 Pro phone, both HarmonyOS 7 / API 26. Anything else is
+  untested — the platform's policy on executable memory is what this depends on,
+  and a device that enforces it differently would fail in ways this project has
+  no way to predict.
 
 The reasoning behind each of those is in the source comments where the code is, rather than here -- `entry/src/main/cpp/myapp.c` is the place to start.
 
