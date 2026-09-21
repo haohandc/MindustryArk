@@ -2,15 +2,15 @@
   "string": [
     {
       "name": "module_desc",
-      "value": "MindustryArk —— 鸿蒙上的 Mindustry 启动器"
+      "value": "Mindustry Ark —— 鸿蒙上的 Mindustry 启动器"
     },
     {
       "name": "EntryAbility_desc",
-      "value": "MindustryArk —— 鸿蒙上的 Mindustry 启动器"
+      "value": "Mindustry Ark —— 鸿蒙上的 Mindustry 启动器"
     },
     {
       "name": "EntryAbility_label",
-      "value": "MindustryArk"
+      "value": "Mindustry Ark"
     },
     {
       "name": "perm_reason_MICROPHONE",

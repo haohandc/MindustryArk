@@ -2,15 +2,15 @@
   "string": [
     {
       "name": "module_desc",
-      "value": "MindustryArk - a Mindustry launcher for HarmonyOS"
+      "value": "Mindustry Ark - a Mindustry launcher for HarmonyOS"
     },
     {
       "name": "EntryAbility_desc",
-      "value": "MindustryArk - a Mindustry launcher for HarmonyOS"
+      "value": "Mindustry Ark - a Mindustry launcher for HarmonyOS"
     },
     {
       "name": "EntryAbility_label",
-      "value": "MindustryArk"
+      "value": "Mindustry Ark"
     },
     {
       "name": "perm_reason_MICROPHONE",
