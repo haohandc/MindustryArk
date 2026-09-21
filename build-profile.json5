@@ -16,8 +16,17 @@
     //   DevEco Studio -> File -> Project Structure -> Signing Configs ->
     //   "Automatically generate signature". That fills this block back in.
     //
-    //   No restricted ACL permissions are needed, so the generated profile is
-    //   enough -- there is nothing to request from AGC. See module.json5 for the
+    //   ONE RESTRICTED PERMISSION DOES HAVE TO BE REQUESTED, and this paragraph
+    //   used to say the opposite. `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY`
+    //   is level `normal` since API 12, but Huawei requires it to keep going
+    //   through the restricted/ACL route for compatibility. AppGallery's
+    //   admission check compares what the package declares against the ACL list
+    //   in the Profile: a declaration with no matching ACL entry is a failure,
+    //   and the package is not what gets changed -- the Profile is regenerated.
+    //
+    //   So for AppGallery: request that ACL in AGC, then build the Release
+    //   profile from the result. For local installs nothing is needed, because a
+    //   debug profile is not checked this way. See module.json5 for the
     //   permission that was removed and the measurement behind that decision.
     //
     // KEEPING A LOCAL COPY OUT OF GIT
