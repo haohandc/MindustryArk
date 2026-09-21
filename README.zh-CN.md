@@ -65,6 +65,7 @@ Automatically generate signature** → `bash deploy.sh`。
 | **[docs/LIMITATIONS.md](docs/LIMITATIONS.md)** | 想报 bug 之前，先确认是不是已知行为 |
 | **[docs/BUILDING.md](docs/BUILDING.md)** | 要自己从源码构建 |
 | **[docs/PERMISSIONS.md](docs/PERMISSIONS.md)** | 想知道这应用要什么权限 |
+| **[PRIVACY.md](PRIVACY.md)** | 想知道它收集什么数据（答案：什么都不收集）|
 | **[docs/LAYOUT.md](docs/LAYOUT.md)** | 刚克隆下来，不知道东西在哪 |
 | [RELEASE.md](RELEASE.md) | 下载了构建，想知道该下哪个、怎么装、验证过什么 |
 | [RELEASE-MAINTENANCE.md](RELEASE-MAINTENANCE.md) | 要发下一个版本 |

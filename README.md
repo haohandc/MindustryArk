@@ -73,6 +73,7 @@ Chinese section first, then English, in the same file.**
 | **[docs/LIMITATIONS.md](docs/LIMITATIONS.md)** | Before reporting a bug: is this known? |
 | **[docs/BUILDING.md](docs/BUILDING.md)** | You want to build it from source |
 | **[docs/PERMISSIONS.md](docs/PERMISSIONS.md)** | You want to know what it asks for |
+| **[PRIVACY.md](PRIVACY.md)** | You want to know what data it collects (answer: none) |
 | **[docs/LAYOUT.md](docs/LAYOUT.md)** | You just cloned it and can't find things |
 | [RELEASE.md](RELEASE.md) | You downloaded a build: which file, how to install, what's verified |
 | [RELEASE-MAINTENANCE.md](RELEASE-MAINTENANCE.md) | You're cutting a release |

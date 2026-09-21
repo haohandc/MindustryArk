@@ -18,6 +18,7 @@
 | `docs/` | 这一组说明文档 |
 | `RELEASE.md` | 该发布什么、什么**绝不能**发布 |
 | `RELEASE-MAINTENANCE.md` | 版本对照表、事故记录、发布前检查清单 |
+| `PRIVACY.md` | 隐私政策（声明不收集任何个人信息）|
 | `THIRD-PARTY.md` | 逐组件的许可证与再分发义务 |
 
 ---
@@ -36,4 +37,5 @@
 | `docs/` | This set of documents |
 | `RELEASE.md` | What to publish and what must not be published |
 | `RELEASE-MAINTENANCE.md` | Version ledger, incident records, the pre-release checklist |
+| `PRIVACY.md` | Privacy policy (declares that nothing personal is collected) |
 | `THIRD-PARTY.md` | Per-component licences and redistribution obligations |

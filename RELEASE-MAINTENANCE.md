@@ -106,6 +106,7 @@ showable.
 |---|---|---|---|---|
 | **10001** | `0.1.0-beta1` ⚠️ see 2.2 | **`v0.1.0-beta.1` = `332192e`** | [v0.1.0-beta.1](../../releases/tag/v0.1.0-beta.1) | 2026-09-20 |
 | **20001** | `0.2.0-beta.1` | **`v0.2.0-beta.1` = `878e370`** | [v0.2.0-beta.1](../../releases/tag/v0.2.0-beta.1) | 2026-09-21 |
+| **20002** | `0.2.0-beta.2` | ⏳ **tag not created yet** | ⏳ **not released yet** | 2026-09-21 |
 
 | versionCode | Asset | Size | sha256 |
 |---|---|---|---|
@@ -113,6 +114,21 @@ showable.
 | 10001 | `MindustryArk-v0.1.0-beta.1-payload.zip` | 146,836,356 B | `93db79ffd7974fb93859fc91b3e1de44d939a107c563e1399d430a8e36004adb` |
 | 20001 | `MindustryArk-v0.2.0-beta.1-unsigned.hap` | 272,561,064 B | `9b9f7d19e15845ccc9567c7f93a120fdc3b05b1e2af4c9807fcec478483ee51c` |
 | 20001 | `MindustryArk-v0.2.0-beta.1-payload.zip` | 146,836,398 B | `f7b08a7e577913c1540e502efb6f26846d48efea08e80d165b7cebb456e3e26a` |
+| ⏳ 20002 | `MindustryArk-v0.2.0-beta.2-unsigned.hap` | 272,563,636 B | `f6b86bf7a7d0c54cefad02e5d45fb8d1717f456cfa6ab656380f5e932d7ac676` |
+| ⏳ 20002 | `MindustryArk-v0.2.0-beta.2-payload.zip` | 146,836,397 B | `137fac42220f660e9d3d4a9eee99b08373f0e68fce2d5b6b63cc59fc3ed08529` |
+
+⚠️ **The `⏳` rows are the LOCAL build's hashes, not yet upload-verified.** They become ledger
+entries only after the release exists and both assets have been **downloaded back and re-hashed**
+— a local hash proves nothing about what somebody else downloads. Replace `⏳` with the release
+id and the verified hashes at that point.
+
+Signature check on these two candidates (the documented one, last 900 KB, with the signed build
+as the control):
+
+| candidate | markers | 64-hex | |
+|---|---|---|---|
+| `…-beta.2-unsigned.hap` | **0/4** | **0** | publishable |
+| `…-beta.2.hap` (signed) | **4/4** | **6** | ⛔ never publish — the control lit up, so the check proved something |
 
 ### Verified as published — v0.2.0-beta.1, 2026-09-21
 
