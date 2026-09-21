@@ -104,9 +104,9 @@ showable.
 
 | versionCode | versionName | Git tag | Release | Date |
 |---|---|---|---|---|
-| **10001** | `0.1.0-beta1` ⚠️ see 2.2 | **`v0.1.0-beta.1` = `332192e`** | [v0.1.0-beta.1](../../releases/tag/v0.1.0-beta.1) | 2026-09-20 |
+| **10001** | `0.1.0-beta1` ⚠️ see 2.5 | **`v0.1.0-beta.1` = `332192e`** | [v0.1.0-beta.1](../../releases/tag/v0.1.0-beta.1) | 2026-09-20 |
 | **20001** | `0.2.0-beta.1` | **`v0.2.0-beta.1` = `878e370`** | [v0.2.0-beta.1](../../releases/tag/v0.2.0-beta.1) | 2026-09-21 |
-| **20002** | `0.2.0-beta.2` | ⏳ **tag not created yet** | ⏳ **not released yet** | 2026-09-21 |
+| **20002** | `0.2.0.2` — renamed from `0.2.0-beta.2`, same code (see 2.1) | ⏳ **tag not created yet** | ⏳ **not released yet** | 2026-09-21 |
 
 | versionCode | Asset | Size | sha256 |
 |---|---|---|---|
@@ -114,21 +114,109 @@ showable.
 | 10001 | `MindustryArk-v0.1.0-beta.1-payload.zip` | 146,836,356 B | `93db79ffd7974fb93859fc91b3e1de44d939a107c563e1399d430a8e36004adb` |
 | 20001 | `MindustryArk-v0.2.0-beta.1-unsigned.hap` | 272,561,064 B | `9b9f7d19e15845ccc9567c7f93a120fdc3b05b1e2af4c9807fcec478483ee51c` |
 | 20001 | `MindustryArk-v0.2.0-beta.1-payload.zip` | 146,836,398 B | `f7b08a7e577913c1540e502efb6f26846d48efea08e80d165b7cebb456e3e26a` |
-| ⏳ 20002 | `MindustryArk-v0.2.0-beta.2-unsigned.hap` | 272,563,636 B | `f6b86bf7a7d0c54cefad02e5d45fb8d1717f456cfa6ab656380f5e932d7ac676` |
-| ⏳ 20002 | `MindustryArk-v0.2.0-beta.2-payload.zip` | 146,836,397 B | `137fac42220f660e9d3d4a9eee99b08373f0e68fce2d5b6b63cc59fc3ed08529` |
+| ⏳ 20002 | `MindustryArk-v0.2.0.2-unsigned.hap` (release `buildMode`, release `product`) | 261,007,438 B | `f3944aa4957ba34e17f44a256140b62e1c53acad50152df0064bb4fb707833c7` |
+| ⏳ 20002 | `MindustryArk-release-signed.app` — **AppGallery upload only, never on the releases page** | 153,000,164 B | `3a12635c73f4a7871c1dfd66623c69b356f1adb121aa5bf2f00d6084ff95668a` |
+| ⏳ 20002 | `MindustryArk-release-unsigned.app` | 152,985,434 B | `f3c24b6a2e081fa293b4cccb5b32c0c9d8d3b380cbff8853a2d47624118287a3` |
 
 ⚠️ **The `⏳` rows are the LOCAL build's hashes, not yet upload-verified.** They become ledger
 entries only after the release exists and both assets have been **downloaded back and re-hashed**
 — a local hash proves nothing about what somebody else downloads. Replace `⏳` with the release
 id and the verified hashes at that point.
 
-Signature check on these two candidates (the documented one, last 900 KB, with the signed build
-as the control):
+⚠️ **The HAP payload zip has no 20002 row yet**: it is unchanged in content but named after the
+version, so it is regenerated together with the GitHub release, not with the store build. The
+`0.2.0-beta.2` rows that used to sit here are gone rather than kept: those files were never
+published, and this version was renamed before it was, so there is no download anywhere whose
+name is `…-beta.2-unsigned.hap`.
 
-| candidate | markers | 64-hex | |
-|---|---|---|---|
-| `…-beta.2-unsigned.hap` | **0/4** | **0** | publishable |
-| `…-beta.2.hap` (signed) | **4/4** | **6** | ⛔ never publish — the control lit up, so the check proved something |
+### 2.1 Why `0.2.0-beta.2` had to be renamed to `0.2.0.2`
+
+**Constraint.** AppGallery's 鸿蒙生态准入检测 requires `versionName` to be **at most 127 bytes and
+composed only of digits and dots**, recommending `A.B.C.D`. The letters and the hyphen in
+`0.2.0-beta.2` fail it outright.
+
+**Measured, not read off a document** — the same `.app` that passed everything else came back:
+
+```
+鸿蒙生态准入检测 / 版本名称规范性检测 … 不通过 (55 分)
+请修改版本名称重新上传。版本名称需要符合以下要求：
+长度不超过127字节的字符串，仅由数字和点构成，推荐采用"A.B.C.D"四段式的形式。
+```
+
+⚠️ **There is no way around it.** It is not an advisory: the upload stops at this check — asked
+directly whether the test-only submission route could proceed with the check failing, the answer
+was no.
+
+**What changed.** Version name only. `versionCode` stays **20002**, because the fourth segment and
+the pre-release number occupy the same slot — they both answer "which build of this version":
+
+| spelling | versionCode | where it is used |
+|---|---|---|
+| `0.2.0-beta.2` | 20002 | **retired** — still parses, so the already-tagged name does not become a hard failure |
+| `0.2.0.2` | 20002 | ✅ the name from here on, everywhere |
+
+⇒ **The GitHub release for this version is also `v0.2.0.2`**, and its HAP carries
+`versionName 0.2.0.2`. There is one version name, not one per distribution channel — the name is
+baked into the app by `AppScope/app.json5`, which is app-level and cannot vary by product.
+
+⛔ **Do not "fix" this by letting a build tool pad a three-segment name.** `0.2.0` derives to
+**20099**, the *final-release* slot; a name padded to `0.2.0.0` would have to be rejected, and
+`version_code_for()` raises on a fourth segment of `0` for exactly that reason.
+
+### 2.2 A store package will FAIL `verify_hap.py`, and that is correct
+
+**Measured, as a control pair — same gate, two packages, opposite results:**
+
+| build | shim SHA-1 | `libjvm_real.so` | `.symtab` | gate |
+|---|---|---|---|---|
+| `product=default` **`buildMode=debug`** | `b605f586…` = **the pin** | 25,322,128 B | ✅ | **PASS** |
+| `product=release` **`buildMode=release`** | `ceff66f0…` | 20,108,408 B | ❌ | **FAIL** (exactly the 3 pinned natives) |
+
+**Why.** `buildOption.nativeLib.debugSymbol.strip: false` in `entry/build-profile.json5` is
+*real and effective* — but only for `buildMode=debug`. The `buildOptionSet` entry named
+`release` overrides it with `strip: true`, which is what a store package should do
+(smaller upload). `verify_hap.py` pins the **debug**-buildMode bytes, because that is what
+`deploy.sh` builds and what the device runs.
+
+⇒ **Do not "fix" the FAIL by re-pinning.** Three entries mismatch on a store package *by
+design*; re-pinning them to the stripped values would destroy the check that the shipped
+natives are the assembled ones. Confirmed the hard way: inferred "the pins are stale" from a
+run where **every** package on disk happened to be release-buildMode, and was two edits away
+from re-pinning a working gate. The build that settles it is the one you have not run yet.
+
+⚠️ **Open risk this exposes (🔶 not measured).** Every package that has ever been **run on a
+device** is `buildMode=debug`, i.e. **unstripped**. The store package is `buildMode=release`,
+i.e. **stripped**, and a release-signed `.app` cannot be sideloaded, so it has never been
+executed anywhere. Stripping was ruled out as a *cause* of the JVM crash during §「已排除」,
+which means both configurations were exercised — but not this exact package.
+
+### 2.3 The `.app` signature is checked differently from a HAP's
+
+The last-900-KB marker check in §1 is a **HAP** check, and it does **not** transfer to an `.app`.
+Measured on the release build: the inner HAP is **unsigned** (0/4 markers, 0 hex64) even though the
+`.app` wrapping it is signed — an `.app` carries the signature at its own level, not per HAP.
+
+So for an `.app` the useful checks are:
+
+| Check | How | Expected |
+|---|---|---|
+| signature present | `-----BEGIN CERTIFICATE-----` anywhere in the file | **True** |
+| no key material | `PRIVATE KEY` in the file | **False** |
+| **which** certificate | extract the PEM, `base64`-decode it, SHA-256 the DER; compare against the `.cer` | byte-identical to `KeyNprofile/Mindustry Ark Release.cer`'s **leaf**, and **not** the debug one |
+| debug markers | the 4-marker scan | 0/4 — but here that is **not** evidence of anything, because a release profile has no `debug-info`/`device-ids` to begin with |
+
+⚠️ **The PEM in the signature block escapes its newlines as a literal backslash + `n`**, so a
+naive `re.sub(rb"[^A-Za-z0-9+/=]", b"", body)` leaves the `n`s behind and every decode fails with
+`Incorrect padding`. Strip `\n` (bytes `5c 6e`) *first*. Cost: two rounds of decoding theories that
+a one-line byte histogram would have settled — `Counter(body)` shows `0x5c × 16` and `0x6e × 24`
+immediately.
+
+✅ **Verified 2026-09-21**: the rebuilt `.app`'s leaf is 713 B,
+`sha256=98afa3a7f4ae72d495c25d0313af3449632d226e50af899906d5d9abde29c18e`, subject
+`CN=…\,Release` — byte-identical to the release `.cer`'s leaf and different from the debug
+`.cer`'s (717 B, `E2:26:8D…`, subject `…\,Development`). ⭐ The two `.cer` files share their two
+CA certificates, so **only the leaf distinguishes them** — comparing "certificates in common"
+would have said yes to both.
 
 ### Verified as published — v0.2.0-beta.1, 2026-09-21
 
@@ -155,7 +243,7 @@ alone would only ever be evidence about the local file.
 "recent commits" list was stale and stopped at `94a7fee`, the commit before the
 documentation split. Selecting `master` instead gave `878e370`, which is what the tag
 wants — safe here because we were not going to push again before publishing. **The
-lesson from 2.3 applies: check what the target actually resolved to, do not assume the
+lesson from 2.6 applies: check what the target actually resolved to, do not assume the
 picker is current.**
 
 ⚠️ **After uploading, recompute the hash and compare it with what GitHub displays.** Equal
@@ -168,7 +256,7 @@ content — `verify_hap.py` passes on both and every payload sha1 matches. Zip t
 and entry order are not stable, so **bytes are not reproducible; content is.** Record the
 hash of the file that is actually uploaded, not the first one built.
 
-### 2.1 Why a ledger is needed — two independent reasons
+### 2.4 Why a ledger is needed — two independent reasons
 
 **GPLv3 §6.** Distributing a binary carries the Corresponding Source obligation, and the
 repository moves on: `master` stops being the Corresponding Source for an older binary the
@@ -206,7 +294,7 @@ base = major*1000000 + minor*10000 + patch*100          pre-release +1..98, fina
 authority for the rule is `scripts/config.py`; this table is a readable copy, and every
 number in it was checked against `version_code_for()` after being written.
 
-### 2.2 The published 10001: one version, two spellings
+### 2.5 The published 10001: one version, two spellings
 
 That build predates the move to a dotted pre-release, so the same version is written two
 ways in three places:
@@ -222,7 +310,7 @@ from **`versionCode` (10001, unchanged)**, not from the spelling. ⭐ **So do no
 this version to make the three agree.** If someone reports the mismatch, this table is the
 answer. From `0.2.0-beta.1` onward the three agree by construction.
 
-### 2.3 A tag that pointed at the wrong commit (2026-09-21, fixed)
+### 2.6 A tag that pointed at the wrong commit (2026-09-21, fixed)
 
 Renaming the tag from `v0.1.0-beta1` to `v0.1.0-beta.1`, **GitHub resolved the new tag to
 the default branch as it stood** — `bba382e`, eleven commits *after* the commit that
@@ -253,7 +341,7 @@ reconstruct them.
 Both are correct, nothing depends on removing the old one, and it is the only remaining
 record that the release was ever published under the undotted name.
 
-### 2.4 That tag had already been moved once before, deliberately
+### 2.7 That tag had already been moved once before, deliberately
 
 The reference-launcher's artifact paths were rewritten out of history (the repository's git
 log says why), which changed **every commit SHA**. So `v0.1.0-beta1` was re-pointed from
@@ -402,5 +490,36 @@ Doing only the first two ships a package named after the previous version.
       ⭐ This check has caught real defects twice, including a hard-coded absolute path in
       `scripts/test_version_gate.py` that would have failed with a confusing `ImportError`
       in any other checkout.
+- [ ] **No local absolute paths in the BINARIES either.** The `git grep` above only sees
+      text files, so it cannot see the four native libraries — and they carry `__FILE__`
+      strings in `.rodata`, which **stripping does not remove** (it deletes `.debug_*` and
+      `.symtab`, not loadable data):
+      ```bash
+      python - <<'EOF'
+      import re, sys, zipfile, glob
+      # The boundary group and the two required separators are both load-bearing.
+      # Without the boundary, "https://x" matches on its "s:/" and every JDK
+      # conf/security file (which mentions real Windows paths in its comments)
+      # reports as a leak -- measured: 160 lines of noise, 4 real hits. A check
+      # that always prints FAIL is not a check.
+      pat = re.compile(rb"(?:^|[^A-Za-z0-9])[A-Za-z]:[\/][ -~]{0,120}?[\/][ -~]{0,120}?[\/]")
+      bad = 0
+      for z in sorted(glob.glob("entry/build/**/*.hap", recursive=True)) + sorted(glob.glob("dist/*.zip")):
+          with zipfile.ZipFile(z) as f:
+              for n in f.namelist():
+                  hits = pat.findall(f.read(n))
+                  if hits:
+                      print("  %s :: %s  (%d)" % (z, n, len(hits))); bad += 1
+      print("FAIL" if bad else "OK")
+      EOF
+      ```
+      Measured against the 0.2.0.2 HAP: **394 hits in exactly 4 files** — `libSDL3.so` 372,
+      `libmain.so` 9, `libarcarm64.so` 7, `libcxxabi_shim.so` 6 — and nothing else.
+      ⚠️ Measured 2026-09-21: `libmain.so` (`…/MindustryArk/entry/src/main/cpp/launcher.c`),
+      `libSDL3.so` (177 paths), `libarcarm64.so` (`…/Temp/soloud-src/…`) and
+      `libcxxabi_shim.so` (`…/DevEcoProj/sdl-template/…`). Low sensitivity — a Windows
+      username and a project location, no credentials — but fixable by adding
+      `-ffile-prefix-map=<prefix>=.` to the compile. **Deferred by decision to the build
+      before the next release.**
 - [ ] **Signed HAP is not attached.**
 - [ ] Tag target pinned to a commit, not the default branch.

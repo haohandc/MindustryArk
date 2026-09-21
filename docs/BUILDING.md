@@ -60,7 +60,32 @@ bash deploy.sh                   # 构建 + 校验 + 安装 + 启动 + 收日志
 
 签名需要配置一次：DevEco Studio → File → Project Structure → Signing Configs →
 Automatically generate signature。`deploy.sh` 安装的是 hvigor 产出的**已签名** HAP。
-**没有 ACL 重签名这一步**，因为本应用不需要任何受限权限（见 [PERMISSIONS.md](PERMISSIONS.md)）。
+
+#### 上架用的包（`.app`）是另一条命令
+
+```bash
+bash build.sh assembleApp --mode project -p product=release -p buildMode=release
+```
+
+⭐ **`assembleApp` 只在 `--mode project` 下存在**；写 `--mode module` 会报
+`Task [ 'assembleApp' ] was not found`。产物在 `build/outputs/release/`，
+**product 名是路径的一部分**（`build/outputs/<product>/`）—— 早先曾在
+`entry/build/default/` 里找一个其实在 `entry/build/release/` 的包。
+
+写 `.app` 而非 `.hap`：应用市场只收 `.app`，`.hap` 是单模块包、用于本地安装。
+
+#### ACL（受限权限）—— 只有上架会碰到
+
+`ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY` 的权限级别在 API 12 变更为
+`normal`，但官方要求**「为保证兼容性，在当前版本请继续采用受限权限申请方式」**
+⇒ 走 ACL 路线。**AppGallery 的准入检测会逐条比对**包里的声明与 Profile 里的
+ACL 列表，**少一条就不通过**，而且**改不了包、只能改 Profile**：
+
+1. AGC → 申请该 ACL
+2. **重新生成 Release Profile**（带 ACL 的那份）
+3. 重新签名、重新上传
+
+⚠️ 日常本地部署（产品 `default` + 调试证书）**不需要**这一步 —— 调试 profile 不查这个。
 
 ⚠️ **这个签名只属于你自己的机器。** DevEco 自动生成的是**调试 profile**，
 它指定了允许安装的**设备 UDID 列表**，而产出的 HAP 里**内嵌了这份列表** ——
