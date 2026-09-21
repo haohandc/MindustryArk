@@ -85,6 +85,96 @@ const IME_CMD_FILE = '/data/storage/el2/base/files/ime_cmd';
 const IME_RECT_FILE = '/data/storage/el2/base/files/ime_rect';
 
 /*
+ * Which control scheme the player chose, read by the launcher before the JVM
+ * starts.
+ *
+ * Written next to user_dirs.txt deliberately: both are files this side writes in
+ * filesDir and the native side reads at startup, and filesDir is the HAP-level
+ * directory, NOT the application-level one the IME bridge uses above. Those two
+ * directories look similar and are not interchangeable -- a file written to the
+ * wrong one is simply never seen, with no error anywhere.
+ */
+const CONTROL_MODE_FILE_NAME = 'control_mode.txt';
+const CONTROL_MODE_MOBILE = 'mobile';
+const CONTROL_MODE_DESKTOP = 'desktop';
+
+/*
+ * The floating ball. It exists to host several functions, of which the control
+ * scheme is the first, so it opens a menu rather than acting on tap.
+ *
+ * All sizes are vp. Touch coordinates arrive in vp too (TouchObject.windowX/Y are
+ * documented as vp), which is also what .position() takes -- so nothing here needs
+ * a px2vp conversion. The one place that does is the display size, which the
+ * platform reports in px.
+ */
+/*
+ * Ball size is derived from the window, not fixed.
+ *
+ * A fixed 44vp was measured as too small on this tablet. The size that is right
+ * depends on the screen, and the screen's own short edge is the honest input: the
+ * ball is a thumb target, and thumb targets scale with the device.
+ *
+ * Kept as a RATIO OF THE SHORT EDGE rather than a fraction of both dimensions, so a
+ * landscape window does not produce a ball wider than a portrait one.
+ *
+ * The floor is set at 48 rather than at the old 44: 44 is the value that was found
+ * too small, so the adaptive formula must never return to it. The ceiling stops a
+ * very large display from producing a ball that covers the game.
+ */
+const BALL_SIZE_FALLBACK_VP = 48;   /* before onAreaChange has reported anything */
+const BALL_SIZE_RATIO = 0.065;      /* of the window's short edge */
+const BALL_SIZE_MIN_VP = 48;
+const BALL_SIZE_MAX_VP = 76;
+/*
+ * How far the ball rests from the edge it has settled against.
+ *
+ * Applies on all four edges and on every path that settles it -- first placement, a
+ * drag, and a position restored from disk -- so the gap does not depend on how the
+ * ball got there. It was consulted only for the first placement once, which made a
+ * dragged ball sit tangent while an untouched one kept its gap.
+ */
+const BALL_MARGIN_VP = 8;
+/* How far a touch must travel before it counts as a drag rather than a tap. Without
+ * this, the slightest finger movement while tapping would be read as a drag and the
+ * menu would never open. */
+const BALL_DRAG_SLOP_VP = 8;
+const BALL_MENU_W_VP = 158;
+
+/*
+ * Auto half-hide.
+ *
+ * After the ball has settled against an edge it slides that much further outward so
+ * only the remainder is still on screen, and drops to a lower opacity -- it should
+ * stop competing with the game for attention while remaining findable.
+ *
+ * 0.6 hides about three fifths of the ball, as asked for, leaving the outer 40%.
+ * Around 26vp of the ~66vp ball is still on screen at this tablet's density.
+ *
+ * That strip is the whole of the target, so this is the value that trades visibility
+ * against being findable. It is workable because the tap that brings the ball back
+ * only has to LAND on the strip, not be aimed at it -- and because that first tap now
+ * only reveals (the menu needs a second tap), a mis-hit costs nothing but a repeat.
+ * Raise this to hide more; it is the knob.
+ */
+const BALL_HIDE_MS = 3000;
+const BALL_HIDE_FRACTION = 0.6;
+const BALL_OPACITY_HIDDEN = 0.45;
+
+/*
+ * Where the ball was last parked. One line, "x,y", absolute vp.
+ *
+ * Absolute rather than "which edge plus a fraction" because the position is clamped
+ * into the current window on restore, and a ball parked at the right edge of a wider
+ * window clamps back to the right edge of a narrower one -- so the common case of a
+ * changed window size corrects itself without storing anything extra.
+ *
+ * Lives beside control_mode.txt in the module filesDir. NOT the application-level
+ * directory the IME bridge uses: those two look alike and a file written to the wrong
+ * one is never seen, with no error anywhere.
+ */
+const BALL_POS_FILE_NAME = 'ball_pos.txt';
+
+/*
  * How long the game's request is ignored after the user puts the keyboard away.
  *
  * Long enough for the forwarded ESC to reach the game and for the game to close
@@ -146,6 +236,60 @@ struct Index {
   @State imeFieldH: number = 1;
   /* Held so the avoid-area listener can be removed when the page goes away. */
   private imeWindow: window.Window | undefined = undefined;
+  /* The control scheme currently recorded on disk. Shown on the switch so the
+   * player can tell which one is in force, since the change only takes effect
+   * on the next launch. */
+  @State controlMode: string = CONTROL_MODE_MOBILE;
+  /*
+   * Where the ball is, and whether its menu is open.
+   *
+   * ballPlaced exists because the ball cannot be positioned before the window size
+   * is known: it starts at the right edge, and until onAreaChange has reported a
+   * width that would put it at x=0. Placement happens once, on the first size
+   * report, and the player's chosen position is never overwritten afterwards.
+   */
+  @State ballX: number = 0;
+  @State ballY: number = 0;
+  @State ballPlaced: boolean = false;
+  @State ballMenu: boolean = false;
+  /*
+   * Ball diameter, recomputed from the window. A @State field rather than a getter
+   * because the render reads it: a plain field derived from winW/winH would change
+   * without the component ever being told to re-render.
+   */
+  @State ballSizeVp: number = BALL_SIZE_FALLBACK_VP;
+  /*
+   * Whether the ball is currently slid out past the edge.
+   *
+   * This is a RENDER-TIME offset only -- ballX/ballY always hold the revealed
+   * position. That is the load-bearing choice: dragging, clamping, snapping and
+   * persistence all keep working on one set of coordinates, and hiding cannot drift
+   * them. The alternative (moving ballX itself) would make every one of those
+   * features rediscover where the ball "really" is.
+   */
+  @State ballHidden: boolean = false;
+  /* Which edge it last snapped to, so the hide slides the right way. */
+  private ballEdge: string = 'right';
+  private ballHideTimer: number = -1;
+  /*
+   * A position read from disk, held until the window size is known.
+   *
+   * It cannot be applied at read time: the value has to be clamped against the
+   * window, and onAreaChange has not reported one yet. -1 means "nothing stored".
+   */
+  private ballRestoreX: number = -1;
+  private ballRestoreY: number = -1;
+  /* Whether the ball was half-hidden at the moment of touch-down. See onBallTouch. */
+  private ballWasHiddenOnDown: boolean = false;
+  private winW: number = 0;
+  private winH: number = 0;
+  /* Anchor for a drag: the ball's position and the finger's position when the touch
+   * began, so the ball does not jump to centre itself under the finger. */
+  private dragBallX: number = 0;
+  private dragBallY: number = 0;
+  private dragTouchX: number = 0;
+  private dragTouchY: number = 0;
+  private dragMoved: boolean = false;
 
   aboutToAppear(): void {
     const ctx = getContext(this) as common.UIAbilityContext;
@@ -158,6 +302,92 @@ struct Index {
      */
     this.imeTimer = setInterval(() => { this.pollImeWant(); }, 200);
     this.watchKeyboardHeight();
+    this.readControlMode();
+    /* Held, not applied: the value needs a window size to clamp against, and
+     * onAreaChange has not reported one yet. */
+    this.readBallPos();
+    this.enterImmersive();
+  }
+
+  /*
+   * Take the status bar and the navigation bar off the screen.
+   *
+   * WHY THIS IS A BUG FIX AND NOT A FLOURISH
+   *   The ball half-hides by sliding past the window edge. On the left and right that
+   *   is a real screen edge, so it works. On the top and bottom the ball only slides
+   *   into the strip the system bars occupy -- which is still visible, so the ball
+   *   stays on screen and the hiding visibly does nothing. Reported from the device.
+   *
+   *   With the bars gone, y=0 is the physical top of the display and sliding upward
+   *   really does take the ball off it.
+   *
+   * WHY THE BARS CAN JUST GO
+   *   They are the platform's chrome, not the game's. Mindustry draws its own
+   *   full-screen UI, this app has no controls of its own in that strip, and the bars
+   *   cost a band of the game at all times.
+   *
+   * WHAT IS DELIBERATELY NOT DONE
+   *   The system's back and home GESTURES are not suppressed. Hiding the bars must not
+   *   strand the player inside the app: not being able to get out is far worse than a
+   *   visible bar. Only the bars are removed.
+   *
+   * THE ONE WARNING THIS FILE ACCEPTS
+   *   setWindowSystemBarEnable([]) compiles to "This API is unavailable to 2in1", and
+   *   this app does declare 2in1 among its device types, so that warning is about a
+   *   real gap rather than noise -- on a PC these bars would stay put.
+   *
+   *   The per-bar form, setSpecificSystemBarEnabled, was tried first on the theory that
+   *   it would avoid the warning. It does not; it carries the same 2in1 restriction and
+   *   costs TWO warnings instead of one for the same coverage. So the one-call form is
+   *   kept, and the warning is accepted knowingly.
+   *
+   *   The 2in1 case is survivable: the call is guarded, so on a PC it fails quietly and
+   *   the layout below still goes full-screen. Tablet and phone -- what this is being
+   *   built and tested on -- are unaffected.
+   *
+   * WHY THE PAGE IS ALSO TOLD TO GO FULL-SCREEN
+   *   Hiding the bars alone leaves the layout still reserving their strip, so the ball
+   *   would have somewhere visible to hide into and the defect would remain. The two
+   *   jobs are separate and both are needed.
+   *
+   * FAILURE IS SURVIVABLE
+   *   Everything is guarded and a failure is logged rather than thrown. Not being
+   *   immersive is exactly the state this app shipped in until now, so there is
+   *   nothing here worth failing to start over.
+   */
+  async enterImmersive(): Promise<void> {
+    try {
+      const ctx: common.UIAbilityContext | undefined = this.ballCtx();
+      if (ctx === undefined) {
+        return;
+      }
+      const win: window.Window = await window.getLastWindow(ctx);
+      await win.setWindowSystemBarEnable([]);   /* an empty list means neither bar */
+      await win.setWindowLayoutFullScreen(true);
+      win.setImmersiveModeEnabledState(true);
+      hilog.info(DOMAIN, TAG, 'immersive: bars hidden, layout full-screen');
+    } catch (e) {
+      const err = e as BusinessError;
+      hilog.warn(DOMAIN, TAG,
+                 'immersive: not available (%{public}s) -- keeping the bars', err.message);
+      return;
+    }
+    /*
+     * Read back separately, in its own guard: this is a measurement, and a throw here
+     * would be reported as "immersive unavailable" when the calls above succeeded.
+     */
+    try {
+      const ctx: common.UIAbilityContext | undefined = this.ballCtx();
+      if (ctx === undefined) {
+        return;
+      }
+      const win: window.Window = await window.getLastWindow(ctx);
+      hilog.info(DOMAIN, TAG, 'immersive: read back = %{public}s',
+                 win.getImmersiveModeEnabledState() ? 'on' : 'off');
+    } catch (e) {
+      const err = e as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'immersive: read-back failed: %{public}s', err.message);
+    }
   }
 
   /*
@@ -207,6 +437,7 @@ struct Index {
       clearInterval(this.imeTimer);
       this.imeTimer = -1;
     }
+    this.cancelBallHide();
     if (this.imeWindow !== undefined) {
       this.imeWindow.off('avoidAreaChange');
       this.imeWindow = undefined;
@@ -353,6 +584,417 @@ struct Index {
      * extra height is what buys the margin; it costs a few more pixels of the
      * game being pushed off the top while the keyboard is up. */
     this.imeFieldH = hvp + IME_FIELD_MARGIN_VP;
+  }
+
+  /*
+   * Read the recorded control scheme.
+   *
+   * An unreadable or empty file means mobile, matching what the launcher did
+   * before this setting existed -- so the button shows the truth for a fresh
+   * install rather than claiming a choice nobody made.
+   */
+  readControlMode(): void {
+    try {
+      const ctx = getContext(this) as common.UIAbilityContext;
+      const text: string = fs.readTextSync(ctx.filesDir + '/' + CONTROL_MODE_FILE_NAME);
+      this.controlMode = text.trim() === CONTROL_MODE_DESKTOP
+        ? CONTROL_MODE_DESKTOP : CONTROL_MODE_MOBILE;
+    } catch (e) {
+      this.controlMode = CONTROL_MODE_MOBILE;   /* absent: the default */
+    }
+  }
+
+  /*
+   * Record the other scheme and tell the player it needs a restart.
+   *
+   * The restart is not laziness. Mindustry derives its entire input layer and UI
+   * from one bit, Vars.mobile, and that bit is written exactly once, in
+   * Vars.init() -- before the game exists. Its own in-game switch changes only
+   * the input handler and leaves the bit alone, which is why that switch gives
+   * desktop controls on a mobile UI. So the answer has to be on disk before the
+   * JVM starts, and the honest thing to do is say so rather than change nothing
+   * visible and let the player think the button is broken.
+   */
+  toggleControlMode(): void {
+    const next: string = this.controlMode === CONTROL_MODE_MOBILE
+      ? CONTROL_MODE_DESKTOP : CONTROL_MODE_MOBILE;
+    try {
+      const ctx = getContext(this) as common.UIAbilityContext;
+      const f: fs.File = fs.openSync(ctx.filesDir + '/' + CONTROL_MODE_FILE_NAME,
+        fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
+      fs.writeSync(f.fd, next);
+      fs.closeSync(f);
+      this.controlMode = next;
+      hilog.info(DOMAIN, TAG, 'control mode set to %{public}s (restart to apply)', next);
+    } catch (e) {
+      const err = e as BusinessError;
+      hilog.error(DOMAIN, TAG, 'writing control mode failed: %{public}s', err.message);
+      return;                                   /* do not claim a change that did not stick */
+    }
+    /*
+     * Tell the player, in its own try.
+     *
+     * The write above already succeeded, so a toast that throws must not make a
+     * successful switch look like a failed one -- and showToast is declared as
+     * throwing, which is what the compiler warns about when it is left bare.
+     *
+     * Through the UIContext rather than the global `promptAction`: the global form
+     * is deprecated, and this file has enough deprecation warnings already.
+     */
+    try {
+      this.getUIContext().getPromptAction().showToast({
+        message: next === CONTROL_MODE_DESKTOP
+          ? '已切换为 PC 模式，重启游戏后生效'
+          : '已切换为触屏模式，重启游戏后生效',
+        duration: 2600
+      });
+    } catch (e) {
+      const err = e as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'toast failed (the switch itself did apply): %{public}s', err.message);
+    }
+  }
+
+  /*
+   * Record the window size, and put the ball at the right edge the first time we
+   * hear it.
+   *
+   * The size comes from the component rather than from the display: a window is not
+   * always the whole screen, and clamping the ball against the wrong rectangle would
+   * let it sit off-screen. display.getDefaultDisplaySync() is not used at all for
+   * that reason.
+   */
+  onWindowSize(w: number, h: number): void {
+    if (w <= 0 || h <= 0) {
+      return;
+    }
+    this.winW = w;
+    this.winH = h;
+    /* Recomputed on every report; the size follows the window. */
+    this.ballSizeVp = Math.round(
+      Math.min(Math.max(Math.min(w, h) * BALL_SIZE_RATIO, BALL_SIZE_MIN_VP), BALL_SIZE_MAX_VP));
+    if (this.ballPlaced) {
+      /*
+       * Position is deliberately NOT re-clamped on later reports.
+       *
+       * onAreaChange also fires while the framework pushes the page up to clear the
+       * keyboard. Clamping there would drag the ball upward and leave it there once
+       * the keyboard closed -- a permanent, baffling move caused by an unrelated
+       * feature. A resize that leaves the ball slightly proud of an edge is a much
+       * smaller problem: the stored position is clamped on the next launch, and a
+       * drag fixes it immediately.
+       */
+      return;
+    }
+    const s: number = this.ballSizeVp;
+    if (this.ballRestoreX >= 0 && this.ballRestoreY >= 0) {
+      /*
+       * Clamped to the resting band, not merely into the window.
+       *
+       * Lower bound: an older build wrote flush positions, and without this a ball
+       * restored from one would sit tangent to the edge until the player happened to
+       * drag it -- the same inconsistency this change exists to remove.
+       * Upper bound: a position stored on a wider screen must not put the ball past
+       * the edge of a narrower one.
+       * Math.max on the upper bound keeps the band non-inverted on a tiny window.
+       */
+      this.ballX = Math.min(Math.max(this.ballRestoreX, BALL_MARGIN_VP),
+                            Math.max(BALL_MARGIN_VP, w - s - BALL_MARGIN_VP));
+      this.ballY = Math.min(Math.max(this.ballRestoreY, BALL_MARGIN_VP),
+                            Math.max(BALL_MARGIN_VP, h - s - BALL_MARGIN_VP));
+    } else {
+      this.ballX = w - s - BALL_MARGIN_VP;
+      this.ballY = Math.round(h / 3);
+    }
+    this.ballEdge = this.nearestEdge();
+    this.ballPlaced = true;
+    hilog.info(DOMAIN, TAG, 'ball: %{public}dvp on a %{public}dvp x %{public}dvp window',
+               s, w, h);
+    this.scheduleBallHide();
+  }
+
+  onBallTouch(e: TouchEvent): void {
+    const t: TouchObject = e.touches[0];
+    if (e.type === TouchType.Down) {
+      /*
+       * Reveal FIRST, and without animation.
+       *
+       * The half-hidden ball sits somewhere the revealed ball is not, so a drag
+       * anchored against the hidden coordinates would fling it out from under the
+       * finger -- the reported "jumps out of the half ball". Revealing on touch-down
+       * also means a tap brings the whole ball back at once, which is what was asked
+       * for, rather than only on release.
+       *
+       * The previous hidden state is captured here because the release handler needs
+       * it and cannot recover it afterwards: this line is what destroys it.
+       */
+      this.ballWasHiddenOnDown = this.ballHidden;
+      this.cancelBallHide();
+      this.ballHidden = false;
+      this.dragBallX = this.ballX;
+      this.dragBallY = this.ballY;
+      this.dragTouchX = t.windowX;
+      this.dragTouchY = t.windowY;
+      this.dragMoved = false;
+      return;
+    }
+
+    if (e.type === TouchType.Move) {
+      const dx: number = t.windowX - this.dragTouchX;
+      const dy: number = t.windowY - this.dragTouchY;
+      if (!this.dragMoved && Math.abs(dx) < BALL_DRAG_SLOP_VP && Math.abs(dy) < BALL_DRAG_SLOP_VP) {
+        return;   /* still within tap tolerance -- do not move yet */
+      }
+      this.dragMoved = true;
+      this.ballMenu = false;   /* dragging closes the menu */
+      const s: number = this.ballSizeVp;
+      /* Clamped to the window, so the ball cannot be pushed off the edge and lost. */
+      this.ballX = Math.min(Math.max(this.dragBallX + dx, 0), Math.max(0, this.winW - s));
+      this.ballY = Math.min(Math.max(this.dragBallY + dy, 0), Math.max(0, this.winH - s));
+      return;
+    }
+
+    if (e.type === TouchType.Up || e.type === TouchType.Cancel) {
+      if (this.dragMoved) {
+        this.snapBallToEdge();
+        this.saveBallPos();
+        this.scheduleBallHide();
+      } else if (this.ballWasHiddenOnDown) {
+        /*
+         * The first tap only brings the ball back; the menu needs a second one.
+         *
+         * Without this split, tapping the half-hidden ball does two things at once:
+         * it restores the ball AND opens the menu, so a player who only wanted to see
+         * where the ball had gone gets a menu they did not ask for -- and has to
+         * dismiss it before doing anything else. Separating the two makes the reveal
+         * its own, undoable, action.
+         *
+         * The countdown restarts: otherwise the ball would stay out for good after
+         * one tap, and the half-hide would stop being the resting state.
+         */
+        this.scheduleBallHide();
+      } else {
+        this.ballMenu = !this.ballMenu;
+        /*
+         * A hidden ball with an open menu would be a menu floating beside nothing, and
+         * the player is mid-interaction anyway -- so the countdown restarts only once
+         * the menu is dismissed.
+         */
+        if (!this.ballMenu) {
+          this.scheduleBallHide();
+        }
+      }
+      this.dragMoved = false;
+    }
+  }
+
+  /*
+   * Which edge the ball is closest to.
+   *
+   * Shared with the hide direction on purpose: if the snap and the hide each worked
+   * it out separately they could disagree, and the ball would slide off the wrong
+   * side of the screen -- visible, but well away from where anyone would look.
+   */
+  nearestEdge(): string {
+    const s: number = this.ballSizeVp;
+    const cx: number = this.ballX + s / 2;
+    const cy: number = this.ballY + s / 2;
+    const dLeft: number = cx;
+    const dRight: number = this.winW - cx;
+    const dTop: number = cy;
+    const dBottom: number = this.winH - cy;
+    const m: number = Math.min(dLeft, dRight, dTop, dBottom);
+    if (m === dLeft) {
+      return 'left';
+    }
+    if (m === dRight) {
+      return 'right';
+    }
+    if (m === dTop) {
+      return 'top';
+    }
+    return 'bottom';
+  }
+
+  /*
+   * Send the ball to whichever edge is nearest.
+   *
+   * All four, not just left and right: the ball is small and the player may want it
+   * along the top or bottom, where a left/right-only snap would fight them.
+   *
+   * Animated rather than jumped -- an object this size teleporting across the screen
+   * reads as a glitch. animateTo closes over the assignment, so the position is set
+   * once inside the callback rather than before it.
+   */
+  snapBallToEdge(): void {
+    if (this.winW <= 0 || this.winH <= 0) {
+      return;
+    }
+    const s: number = this.ballSizeVp;
+    const edge: string = this.nearestEdge();
+    /*
+     * Stopped at BALL_MARGIN_VP short of the edge, not flush against it.
+     *
+     * Flush was the original behaviour and it disagreed with where a freshly placed
+     * ball sits, which is the margin in from the edge. So a ball the player had never
+     * touched kept its gap, and a ball dragged once lost it permanently. Reported from
+     * the device.
+     *
+     * The margin is now the resting inset on every edge, for both paths.
+     */
+    let x: number = this.ballX;
+    let y: number = this.ballY;
+    if (edge === 'left') {
+      x = BALL_MARGIN_VP;
+    } else if (edge === 'right') {
+      x = this.winW - s - BALL_MARGIN_VP;
+    } else if (edge === 'top') {
+      y = BALL_MARGIN_VP;
+    } else {
+      y = this.winH - s - BALL_MARGIN_VP;
+    }
+    this.ballEdge = edge;
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.Friction }, () => {
+      this.ballX = x;
+      this.ballY = y;
+    });
+  }
+
+  /*
+   * How far the ball is slid past its edge while hidden, as a render-time offset.
+   *
+   * 0 while revealed, which is the important part: ballX/ballY are the only
+   * coordinates anything writes, so hiding can never be mistaken for a move.
+   *
+   * BALL_MARGIN_VP IS PART OF THE OFFSET, not an accident. The ball now rests a
+   * margin in from the edge, so sliding by the ball's own fraction alone would leave
+   * that margin on screen as well -- 40% of the ball plus 8vp, i.e. hiding noticeably
+   * less than the three fifths that were asked for. Adding the margin back pins the
+   * hidden position to the SCREEN edge, which is what "leave 40% visible" means.
+   */
+  ballHideDx(): number {
+    if (!this.ballHidden) {
+      return 0;
+    }
+    const off: number = this.ballSizeVp * BALL_HIDE_FRACTION + BALL_MARGIN_VP;
+    if (this.ballEdge === 'left') {
+      return -off;
+    }
+    return this.ballEdge === 'right' ? off : 0;
+  }
+
+  ballHideDy(): number {
+    if (!this.ballHidden) {
+      return 0;
+    }
+    const off: number = this.ballSizeVp * BALL_HIDE_FRACTION + BALL_MARGIN_VP;
+    if (this.ballEdge === 'top') {
+      return -off;
+    }
+    return this.ballEdge === 'bottom' ? off : 0;
+  }
+
+  cancelBallHide(): void {
+    if (this.ballHideTimer >= 0) {
+      clearTimeout(this.ballHideTimer);
+      this.ballHideTimer = -1;
+    }
+  }
+
+  /* Start the countdown to half-hide. Called whenever the ball settles or is let go. */
+  scheduleBallHide(): void {
+    this.cancelBallHide();
+    if (this.ballMenu || !this.ballPlaced) {
+      return;
+    }
+    this.ballHideTimer = setTimeout(() => {
+      this.ballHideTimer = -1;
+      if (this.ballMenu) {
+        return;
+      }
+      this.getUIContext().animateTo({ duration: 260, curve: Curve.Friction }, () => {
+        this.ballHidden = true;
+      });
+    }, BALL_HIDE_MS);
+  }
+
+  /*
+   * The ability context, by the route that is not deprecated.
+   *
+   * getContext() still works and is what the older code here uses, but it is
+   * deprecated and this file is already carrying a warning for every call. New code
+   * should not add more. getHostContext() can return undefined, so it is checked
+   * rather than assumed -- and "no context" means the file cannot be reached, which
+   * is what both callers already do nothing about.
+   *
+   * Only these two call sites use it. The other four calls are left alone on purpose:
+   * they fetch the context to reach permissions and the keyboard, where a change that
+   * behaved even slightly differently would cost far more than a warning line.
+   */
+  ballCtx(): common.UIAbilityContext | undefined {
+    return this.getUIContext().getHostContext() as common.UIAbilityContext | undefined;
+  }
+
+  /* Where the ball was parked, so the next launch can put it back. */
+  saveBallPos(): void {
+    try {
+      const ctx: common.UIAbilityContext | undefined = this.ballCtx();
+      if (ctx === undefined) {
+        return;
+      }
+      const f: fs.File = fs.openSync(ctx.filesDir + '/' + BALL_POS_FILE_NAME,
+        fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
+      fs.writeSync(f.fd, Math.round(this.ballX) + ',' + Math.round(this.ballY));
+      fs.closeSync(f);
+    } catch (e) {
+      const err = e as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'ball: saving the position failed: %{public}s', err.message);
+    }
+  }
+
+  /*
+   * Read the stored position into ballRestoreX/Y. It is NOT applied here: applying it
+   * needs a window size to clamp against, and onAreaChange has not reported one yet.
+   *
+   * Junk is rejected rather than clamped. A corrupt line would otherwise park the ball
+   * in a corner with no explanation, and the default position is a perfectly good
+   * answer for a file that cannot be read.
+   */
+  readBallPos(): void {
+    try {
+      const ctx: common.UIAbilityContext | undefined = this.ballCtx();
+      if (ctx === undefined) {
+        return;
+      }
+      const text: string = fs.readTextSync(ctx.filesDir + '/' + BALL_POS_FILE_NAME);
+      const parts: string[] = text.trim().split(',');
+      if (parts.length !== 2) {
+        return;
+      }
+      const x: number = Number(parts[0]);
+      const y: number = Number(parts[1]);
+      if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) {
+        return;
+      }
+      this.ballRestoreX = x;
+      this.ballRestoreY = y;
+    } catch (e) {
+      /* No file on a first run, which is the normal case, not an error. */
+    }
+  }
+
+  /* Where the menu goes: beside the ball, opening inward. */
+  ballMenuX(): number {
+    const right: number = this.ballX + this.ballSizeVp + 8;
+    if (right + BALL_MENU_W_VP > this.winW) {
+      return Math.max(0, this.ballX - BALL_MENU_W_VP - 8);
+    }
+    return right;
+  }
+
+  /* Vertically aligned with the ball, but never past the window edge. */
+  ballMenuY(): number {
+    const below: number = this.ballY + this.ballSizeVp - 40;
+    return Math.min(Math.max(below, 0), Math.max(0, this.winH - 64));
   }
 
   appendCmd(text: string): void {
@@ -557,7 +1199,106 @@ struct Index {
             this.dismissIme();
           })
       }
+
+      /*
+       * The floating ball, and the menu it opens.
+       *
+       * It is a ball rather than a labelled button for a practical reason: it has to
+       * sit on top of a game, and a small circle is the least it can possibly cover.
+       * A fixed button in a corner would either be in the way or too small to hit.
+       *
+       * It opens a menu rather than acting on tap because it is meant to carry
+       * several functions; the control scheme is the first, so the tap has to mean
+       * "show me what you can do" rather than "do the one thing".
+       *
+       * WHY focusable(false) -- this is load-bearing, not cosmetic. ArkUI delivers
+       * key events to the focused component only, and the XComponent needs that focus
+       * or SDL never sees a keystroke and the keyboard stops working entirely. A
+       * focusable ball in this Stack would take it. Click and touch still work
+       * without focus; only keyboard focus is withheld.
+       *
+       * Drawn as a bordered circle rather than with the Circle shape component so the
+       * label can live inside it without a second layout pass.
+       */
+      Stack() {
+        /*
+         * The game's own turret, not a glyph.
+         *
+         * A gear was tried and rendered -- but it is a font character, so its weight
+         * and its teeth depend on whichever font the device happens to supply, and it
+         * reads as "settings" for what is really a menu of several functions.
+         *
+         * This is the same 32x32 turret the app icon is built from, so the ball
+         * matches the icon the player tapped to get here. It is a bitmap, so it also
+         * stops depending on the device's fonts at all.
+         *
+         * Interpolation.None is what keeps it from going soft: the source is an exact
+         * integer multiple of the sprite's own 34px, and nearest-neighbour scaling is
+         * what keeps pixel art looking drawn rather than blurred.
+         *
+         * draggable(false): the ball's drag is handled by the Stack's onTouch. A
+         * draggable image inside it would start its own drag and fight that.
+         */
+        Image($r('app.media.ball_icon'))
+          .width(Math.round(this.ballSizeVp * 0.62))
+          .height(Math.round(this.ballSizeVp * 0.62))
+          .interpolation(ImageInterpolation.None)
+          .draggable(false)
+      }
+      .width(this.ballSizeVp)
+      .height(this.ballSizeVp)
+      .borderRadius(this.ballSizeVp / 2)
+      .backgroundColor(this.ballMenu ? '#cc1d2733' : '#99101820')
+      .borderWidth(1)
+      .borderColor('#66ffffff')
+      /*
+       * The half-hide lives HERE and nowhere else. ballX/ballY keep holding the
+       * revealed position, so dragging, clamping, snapping and the saved file all
+       * agree on one set of coordinates -- moving ballX instead would make every one
+       * of them have to reason about how hidden the ball currently is.
+       */
+      .position({ x: this.ballX + this.ballHideDx(), y: this.ballY + this.ballHideDy() })
+      .opacity(this.ballHidden ? BALL_OPACITY_HIDDEN : 1)
+      .focusable(false)
+      .onTouch((e: TouchEvent) => { this.onBallTouch(e); })
+
+      if (this.ballMenu) {
+        Column() {
+          /*
+           * Entry: which control scheme is in force, and the switch.
+           *
+           * A real choice has to be made before the game starts: Mindustry derives
+           * its entire input layer AND its UI from one bit, Vars.mobile, written once
+           * in Vars.init(). Its own in-game switch changes only the input handler, so
+           * it gives desktop controls on a mobile UI -- measured on the tablet, and
+           * confirmed in the bytecode. Hence the restart, which is stated plainly
+           * rather than hidden.
+           */
+          Row() {
+            Text(this.controlMode === CONTROL_MODE_DESKTOP ? 'PC 模式' : '触屏模式')
+              .fontSize(14)
+              .fontColor('#eef2f9')
+            Blank()
+            Text('切换').fontSize(13).fontColor('#8fb4ff')
+          }
+          .width('100%')
+          .onClick(() => { this.toggleControlMode(); })
+        }
+        .width(BALL_MENU_W_VP)
+        .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+        .backgroundColor('#e6161c26')
+        .borderRadius(10)
+        .borderWidth(1)
+        .borderColor('#44ffffff')
+        .position({ x: this.ballMenuX(), y: this.ballMenuY() })
+        .focusable(false)
+      }
     }
+    /* The only job of this modifier is to learn the window size, once, so the ball
+     * can be placed and clamped against the right rectangle. */
+    .onAreaChange((_o: Area, n: Area) => {
+      this.onWindowSize(Number(n.width), Number(n.height));
+    })
     /*
      * ESC, at the Stack: the common ancestor of the game surface and our field,
      * and therefore the only node that sees the key whichever of the two is

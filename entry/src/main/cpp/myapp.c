@@ -309,6 +309,50 @@ static int read_user_dir(const char *key, char *out, size_t outlen)
     return found;
 }
 
+/*
+ * Which control scheme the player picked, persisted across launches.
+ *
+ * Mindustry decides its ENTIRE input layer and UI from one bit:
+ *
+ *     Vars.mobile = Core.app.isMobile() || Vars.testMobile;
+ *
+ * and its own in-game switch does not touch that bit -- it only calls
+ * control.setInput(...), so the input handler changes while the UI stays mobile.
+ * Measured on the tablet by the user, and confirmed in the bytecode: Vars.mobile
+ * has exactly one writer, that line in Vars.init().
+ *
+ * So to give the player a real choice, the bit has to be set before Vars.init()
+ * runs -- before the JVM starts -- which means the answer must already be on disk
+ * by then. ArkTS writes this file when the player taps the button; nothing native
+ * ever writes it, so a plain read at startup is all that is needed.
+ *
+ * An absent file means mobile: that is what this launcher hardcoded before the
+ * setting existed, so an install that never touches the button behaves exactly as
+ * it always did.
+ */
+#define CONTROL_MODE_FILE "/data/storage/el2/base/haps/entry/files/control_mode.txt"
+
+static int read_control_mode_mobile(void)
+{
+    FILE *f = fopen(CONTROL_MODE_FILE, "r");
+    if (!f) {
+        return 1;                       /* nothing recorded: stay mobile */
+    }
+    int mobile = 1;
+    char line[32];
+    if (fgets(line, (int) sizeof(line), f)) {
+        /* "desktop" is the only value that turns it off. Anything else -- the
+         * word "mobile", an empty file, a truncated write -- leaves the default
+         * alone, so a corrupt or half-written file cannot silently swap the
+         * player's controls out from under them. */
+        if (strncmp(line, "desktop", 7) == 0) {
+            mobile = 0;
+        }
+    }
+    fclose(f);
+    return mobile;
+}
+
 static void probe_user_dirs(void)
 {
     FILE *f = fopen(USER_DIRS_FILE, "r");
@@ -2195,7 +2239,10 @@ static int start_jvm(void)
     SDL_snprintf(opt_userhome, sizeof(opt_userhome), "-Duser.home=%s", DEST_ROOT);
     SDL_snprintf(opt_userdir,  sizeof(opt_userdir),  "-Duser.dir=%s",  DEST_ROOT);
     SDL_strlcpy(opt_gles, "-Darc.sdl.glEs=true", sizeof(opt_gles));
-    SDL_strlcpy(opt_mobile, "-Darc.sdl.mobile=true", sizeof(opt_mobile));
+    /* Ask the file, not a constant: the player may have switched to the desktop
+     * control scheme since the last launch. See read_control_mode_mobile(). */
+    SDL_snprintf(opt_mobile, sizeof(opt_mobile), "-Darc.sdl.mobile=%s",
+                 read_control_mode_mobile() ? "true" : "false");
 
     {
         /* Read the platform's own answer rather than guessing a path. Empty
