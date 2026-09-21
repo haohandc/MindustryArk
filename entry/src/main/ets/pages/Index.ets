@@ -1008,6 +1008,41 @@ struct Index {
     }
   }
 
+  /*
+   * The system Back gesture goes up one level inside the game. It never leaves the app.
+   *
+   * Mindustry's "back" is ESC -- it closes the current dialog or menu and returns to the
+   * previous screen -- so the gesture is forwarded as ESC through the same file channel
+   * the on-screen keyboard already uses. That channel is read every frame with no guard,
+   * so it works whether or not a text field is up.
+   *
+   * Returning true means "this page handled it": the default return logic does not run
+   * and the app stays on screen. So a Back that used to close the app now closes a menu.
+   *
+   * LEAVING THE APP IS THE GAME'S OWN EXIT, NOT OURS
+   *   Quitting is done from the game's main menu. That path already ends cleanly: the
+   *   native side drops the exit marker and this page's poll closes the ability, which
+   *   is the arrangement verified earlier to be a clean exit rather than a crash.
+   *
+   *   A double-press-to-exit was built first and taken back out. Telling "the player is
+   *   at the main menu" from "the player is three dialogs deep" needs the game's UI
+   *   state, and there is no channel for it -- so the rule would have been a timing
+   *   window standing in for information we do not have, exiting early from anywhere
+   *   deep in the UI. A time-based guess about intent is the wrong kind of thing to
+   *   ship. The game has a real exit; use that.
+   *
+   * ⚠️ The cost, accepted: at the main menu Back does nothing, because ESC has nowhere
+   *   to go there. Escape hatches are unaffected -- the system Home gesture and the
+   *   recents menu are untouched, and neither is suppressed anywhere in this project.
+   */
+  onBackPress(): boolean {
+    /* 'E' is the whole ESC command; the native side consumes whole lines, so the
+     * newline is part of it, not decoration. */
+    this.appendCmd('E\n');
+    hilog.info(DOMAIN, TAG, 'back: forwarded as ESC (one level up)');
+    return true;
+  }
+
   sendDelta(next: string): void {
     const prev: string = this.imeSent;
     if (next === prev) {
