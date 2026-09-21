@@ -2,8 +2,8 @@
   "app": {
     "bundleName": "com.haohandc.mindustryark",
     "vendor": "example",
-    "versionCode": 10001,
-    "versionName": "0.1.0-beta1",
+    "versionCode": 20001,
+    "versionName": "0.2.0-beta1",
     "buildVersion": "1",
     "icon": "$media:layered_image",
     "label": "$string:app_name"
