@@ -338,15 +338,15 @@ unzipping into the repository root does the right thing.
 
 | versionCode | versionName（设备/商店显示） | Git tag | Release | 日期 |
 |---|---|---|---|---|
-| **10001** | `0.1.0-beta1` | `v0.1.0-beta1` = `332192e` | [v0.1.0-beta1](../../releases/tag/v0.1.0-beta1) | 2026-09-20 |
+| **10001** | `0.1.0-beta1` ⚠️ 见下 | **`v0.1.0-beta.1` = `332192e`** | [v0.1.0-beta.1](../../releases/tag/v0.1.0-beta.1) | 2026-09-20 |
 | **20001** | `0.2.0-beta.1` | `v0.2.0-beta.1` ← **待建** | 待发布 | 2026-09-21 |
 
 **产物与其 sha256**（发布后须用 GitHub 显示的 hash 复核，见下"Published state"）：
 
 | versionCode | 产物 | 大小 | sha256 |
 |---|---|---|---|
-| 10001 | `MindustryArk-v0.1.0-beta1-unsigned.hap` | 272,616,859 B | `0e2a6c9086814a383a21b35ce7944f21fc588eb3df333efb1fed864822abc4f0` |
-| 10001 | `MindustryArk-v0.1.0-beta1-payload.zip` | 146,836,356 B | `93db79ffd7974fb93859fc91b3e1de44d939a107c563e1399d430a8e36004adb` |
+| 10001 | `MindustryArk-v0.1.0-beta.1-unsigned.hap` | 272,616,859 B | `0e2a6c9086814a383a21b35ce7944f21fc588eb3df333efb1fed864822abc4f0` |
+| 10001 | `MindustryArk-v0.1.0-beta.1-payload.zip` | 146,836,356 B | `93db79ffd7974fb93859fc91b3e1de44d939a107c563e1399d430a8e36004adb` |
 | 20001 | `MindustryArk-v0.2.0-beta.1-unsigned.hap` | 272,557,304 B | `7a246386d66b18af6b63fa8661f38a23a32ef1f204aac4273e59f51bf52e74c4` |
 | 20001 | `MindustryArk-v0.2.0-beta.1-payload.zip` | 146,836,398 B | `f7b08a7e577913c1540e502efb6f26846d48efea08e80d165b7cebb456e3e26a` |
 
@@ -402,6 +402,43 @@ base = major*1000000 + minor*10000 + patch*100      预发布 +1..98   正式版
 ⚠️ 但 **AGC 上传时会不会另有格式校验，未验证**。
 ⇒ 真被拒的话，**加一行映射**（商店写 `0.2.0.1` ↔ tag 写 `v0.2.0-beta.1`）即可，
 **不要预先就分叉成两套版本名** —— 那会**制造出**这张表本要消除的对应问题。
+
+### ⚠️ 已发布的 10001 那一版：三处两个拼写（**记录在案，不要"修"**）
+
+这一版是在**改成带点命名之前**构建、之后才改的名，于是同一个版本在三个地方有两种写法：
+
+| 位置 | 写着 |
+|---|---|
+| Git tag / 文件名 / release 标题 | `v0.1.0-beta.1`（**带点**，事后改的）|
+| ⚠️ **包内部** `versionName` | **`0.1.0-beta1`**（**不带点**，构建时写死的）|
+
+⚠️ **无法修正**：重传资产会改字节 ⇒ 换掉已记录的 sha256。而且**也不值得修**。
+
+✅ **无害，理由**：平台判断"能否覆盖升级"用的是 **`versionCode`（10001，未变）**，
+**与版本名的拼写无关**。拼写差异只影响人眼阅读。
+
+⇒ ⭐ **所以：不要为了让三处一致而重传这一版。** 若有人报告这个不一致，**这张表就是答案**。
+新版本从 `0.2.0-beta.1` 起三处天然一致。
+
+### ⚠️ 一次**tag 指错**的事故记录（2026-09-21，已修）
+
+在把 tag 从 `v0.1.0-beta1` 改名成 `v0.1.0-beta.1` 时，**GitHub 把新 tag 的 target 解析成了
+"当时的默认分支"**（`bba382e`，比发布时**晚 11 个提交**），而不是原来那个提交 `332192e`。
+
+⇒ ⚠️ **后果**：release 页面自动生成的 `Source code (zip)` / `(tar.gz)` 一度给出
+**没能产出那份二进制的源码** —— 正是本表要防的失配。
+
+⇒ **修法**（**别在 release 编辑页重输 tag 名**，那正是触发这个解析的动作）：
+
+```bash
+git push origin :refs/tags/v0.1.0-beta.1          # 删掉指错的
+git push origin 332192e:refs/tags/v0.1.0-beta.1   # 用正确的提交重建
+git ls-remote --tags origin                        # 核实
+```
+
+⭐ **教训**：⚠️ **在 GitHub 上改 tag 名时，target 必须【显式指定提交】** ——
+它默认给的是**分支**，而分支会动。**默认值在这里恰好是错的那个。**
+这跟"标识符一律运行时取全值、不手抄"是同一条：**别用默认/推断，要显式钉死。**
 
 ## Published state
 
