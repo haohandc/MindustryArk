@@ -11,7 +11,7 @@ THE PROBLEM
         Error loading shared library ...: Invalid argument
 
     The same library loads without complaint from the read-only bundle area --
-    the probe in myapp.c measures exactly this, with two libraries across six
+    the probe in launcher.c measures exactly this, with two libraries across six
     candidate directories and a bundle control that passes. So the executable
     area is the one place it can live.
 

@@ -117,7 +117,7 @@ if [ "$1" != "--no-build" ]; then
     rm -f "$UNSIGNED" "$SIGNED"
 
     # No "|| true" and no grep-away of the exit status: if the build fails, stop.
-    # Swallowing the status is how 3 compile errors in myapp.c went unnoticed
+    # Swallowing the status is how 3 compile errors in launcher.c went unnoticed
     # while the deploy reported success and installed a stale HAP.
     build_log="$(mktemp)"
     if ! ./build.sh assembleHap >"$build_log" 2>&1; then

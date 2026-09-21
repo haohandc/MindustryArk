@@ -202,13 +202,13 @@ build without a special signing profile.
   looking at. See `EntryAbility.ets` for the exit handshake that produces the
   three attributed lines.
 
-The reasoning behind each of those is in the source comments where the code is, rather than here -- `entry/src/main/cpp/myapp.c` is the place to start.
+The reasoning behind each of those is in the source comments where the code is, rather than here -- `entry/src/main/cpp/launcher.c` is the place to start.
 
 ## Repository layout
 
 | Path | What |
 |---|---|
-| `entry/src/main/cpp/myapp.c` | The launcher: sandbox setup, JVM options, game launch, exit handshake |
+| `entry/src/main/cpp/launcher.c` | The launcher: sandbox setup, JVM options, game launch, exit handshake |
 | `entry/src/main/cpp/SDL/` | SDL3, with patches for OpenHarmony input, windowing and audio |
 | `entry/src/main/ets/` | ArkTS: the XComponent page and key handling, and the ability |
 | `payload-src/` | The build's **inputs** (not in git) — see its `README.md` |

@@ -41,7 +41,7 @@ WHY THERE IS NO libSDL3.so HERE
     application. That made two SDL3 libraries in one HAP: that copy under lwjgl/,
     and the one this project builds from entry/src/main/cpp/SDL/ at the top level
     of the bundle. org.lwjgl.librarypath lists the bundle before lwjgl/ (see
-    opt_lwjglpath in myapp.c), and it was measured resolving to the bundle copy --
+    opt_lwjglpath in launcher.c), and it was measured resolving to the bundle copy --
     "SAME instance as the launcher's" -- so the lwjgl/ copy was already
     unreachable by the loader and is not shipped any more. The two places that
     still mention lwjgl/libSDL3.so are diagnostics that stat or dlopen it and

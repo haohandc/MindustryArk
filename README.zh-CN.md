@@ -170,13 +170,13 @@ JDK 在 HAP 里，沙箱只存数据 —— 而**正是因为没有它，别人�
   启动器**真遇到**致命信号时才写的 `crash.txt` 一直是空的。
   产生那三条有归属记录的退出握手在 `EntryAbility.ets` 里。
 
-以上各条背后的原因写在**对应代码的注释里**，而不在这份文档里 —— 入口是 `entry/src/main/cpp/myapp.c`。
+以上各条背后的原因写在**对应代码的注释里**，而不在这份文档里 —— 入口是 `entry/src/main/cpp/launcher.c`。
 
 ## 仓库结构
 
 | 路径 | 内容 |
 |---|---|
-| `entry/src/main/cpp/myapp.c` | 启动器：沙箱准备、JVM 选项、启动游戏、退出握手 |
+| `entry/src/main/cpp/launcher.c` | 启动器：沙箱准备、JVM 选项、启动游戏、退出握手 |
 | `entry/src/main/cpp/SDL/` | SDL3，含 OpenHarmony 输入/窗口/音频的改造 |
 | `entry/src/main/ets/` | ArkTS：XComponent 页面与按键处理、ability |
 | `payload-src/` | 构建的**输入**（不在 git 里）—— 见其 `README.md` |

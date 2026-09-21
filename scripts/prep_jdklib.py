@@ -9,7 +9,7 @@ WHY THIS IS NEEDED
         modules     the module image; renamed in place to jimg.so by
                     patch_libjvm.py, so it already travels. java.home is then
                     pointed at a sandbox directory holding a copy named
-                    "modules" -- see prepare_java_home() in myapp.c.
+                    "modules" -- see prepare_java_home() in launcher.c.
         tzdb.dat    the time-zone database. java.base opens
                     $java.home/lib/tzdb.dat while initialising
                     sun.util.calendar.ZoneInfoFile, which happens the first time

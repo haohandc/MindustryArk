@@ -68,5 +68,5 @@ include_directories(${NATIVEAPP_ROOT_PATH}
 # ../../../../../prep_vendor.py -- see that file for why they exist.
 
 # This is libmain.so -- the library name must be "main"
-add_library(main SHARED myapp.c)
+add_library(main SHARED launcher.c)
 target_link_libraries(main PUBLIC SDL3::SDL3 dl)
