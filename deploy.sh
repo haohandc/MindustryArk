@@ -56,6 +56,42 @@ SDK_HOME="${DEVECO_SDK_HOME:-$STUDIO/sdk}"
 HDC=("$SDK_HOME/default/openharmony/toolchains/hdc.exe")
 PY=("${ARK_PYTHON:-python}")
 
+# ---------------------------------------------------------------------------
+# WHICH DEVICE
+#
+# Bare `hdc` calls pick a device themselves when more than one is attached, and
+# this script runs `uninstall` -- so guessing can erase the save data of a device
+# nobody meant to touch. The target is therefore resolved once, here, and every
+# call below goes through hdc() which states it.
+#
+# With one device attached nothing changes. With several, or none, this stops and
+# says which ones it can see rather than choosing.
+#
+# Override with ARK_HDC_TARGET=<id from 'hdc list targets'>.
+# ---------------------------------------------------------------------------
+HDC_TARGET="${ARK_HDC_TARGET:-}"
+if [ -z "$HDC_TARGET" ]; then
+    TARGETS="$("${HDC[@]}" list targets 2>/dev/null | tr -d '\r' \
+               | grep -v '^\[Empty\]$' | grep -v '^[[:space:]]*$')"
+    TARGET_N="$(printf '%s\n' "$TARGETS" | grep -c .)"
+    if [ "$TARGET_N" -eq 0 ]; then
+        echo "!! no device attached -- check the cable, then 'hdc list targets'" >&2
+        exit 1
+    elif [ "$TARGET_N" -gt 1 ]; then
+        echo "!! $TARGET_N devices attached, and this script will not guess:" >&2
+        printf '     %s\n' $TARGETS >&2
+        echo "!! it runs 'uninstall', so picking wrong wipes the wrong device's data." >&2
+        echo "!! choose one:   ARK_HDC_TARGET=<id> bash deploy.sh" >&2
+        exit 1
+    fi
+    HDC_TARGET="$TARGETS"
+fi
+echo "device: $HDC_TARGET"
+
+# Every device call goes through this, so the target is stated exactly once.
+hdc() { "${HDC[@]}" -t "$HDC_TARGET" "$@"; }
+
+
 OUT_DIR="entry/build/default/outputs/default"
 # Matches targets[].output.artifactName in entry/build-profile.json5 -- bump the
 # two together, with versionName in AppScope/app.json5. verify_hap.py checks
@@ -69,15 +105,29 @@ OUT_DIR="entry/build/default/outputs/default"
 # The signed one is for THIS machine only (see the top of this file) and is not
 # a release artifact. What gets published is the unsigned HAP, plus the payload
 # zip -- see RELEASE.md.
-HAP_BASE="MindustryArk-v0.1.0-beta1"
-UNSIGNED="$OUT_DIR/$HAP_BASE-unsigned.hap"
-SIGNED="$OUT_DIR/$HAP_BASE.hap"
-
 for f in "${HDC[0]}"; do
     [ -f "$f" ] || { echo "missing: $f" >&2; exit 1; }
 done
 command -v "${PY[0]}" >/dev/null 2>&1 || [ -f "${PY[0]}" ] || {
     echo "python not found: ${PY[0]} (set ARK_PYTHON)" >&2; exit 1; }
+
+# The HAP's name is ASKED FOR, not written down here.
+#
+# It used to be a fourth hand-kept copy of the version, and it went stale exactly
+# as that predicts: at the v0.1.0-beta1 -> v0.2.0-beta.1 bump this line was not
+# touched, so the script looked for a file that no longer existed and stopped at
+# "no unsigned hap". verify_hap.py's docstring already names this file as one of
+# the places that carry the version, but nothing ever checked it.
+#
+# scripts/config.py derives the name (ARTIFACT_NAME), so deriving it here removes
+# the copy instead of remembering to update it. `|| exit` and the emptiness test
+# are both load-bearing: an empty HAP_BASE would become a search for
+# "-unsigned.hap", which reads as a missing build rather than as this failure.
+HAP_BASE="$("${PY[@]}" -c 'import sys; sys.path.insert(0, "scripts"); import config; sys.stdout.write(config.ARTIFACT_NAME)')" || exit 1
+[ -n "$HAP_BASE" ] || {
+    echo "!! could not read ARTIFACT_NAME from scripts/config.py" >&2; exit 1; }
+UNSIGNED="$OUT_DIR/$HAP_BASE-unsigned.hap"
+SIGNED="$OUT_DIR/$HAP_BASE.hap"
 
 if [ "$1" != "--no-build" ]; then
     echo "############ 0/4 check inputs ############"
@@ -165,7 +215,7 @@ if [ ! -f "$SIGNED" ]; then
     echo "!! Signing Configs -> Automatically generate signature" >&2
     exit 1
 fi
-"${HDC[@]}" uninstall "$BUNDLE" >/dev/null 2>&1
+hdc uninstall "$BUNDLE" >/dev/null 2>&1
 # Install, and actually check that it happened.
 #
 # The previous form was `install -r "$SIGNED" 2>&1 | tail -3`, which masked a
@@ -179,7 +229,7 @@ fi
 # cannot tell a failed install from an hdc that printed nothing at all. The exact
 # wording is what this hdc emits; a different one would show up as a loud refusal
 # rather than as a silent stale install, which is the trade we want.
-INSTALL_OUT="$("${HDC[@]}" install -r "$SIGNED" 2>&1)"
+INSTALL_OUT="$(hdc install -r "$SIGNED" 2>&1)"
 printf '%s\n' "$INSTALL_OUT" | tail -3
 if ! printf '%s' "$INSTALL_OUT" | grep -q "install bundle successfully"; then
     echo "!! install did not report success -- refusing to launch" >&2
@@ -198,10 +248,10 @@ echo "############ 4/4 launch + collect ############"
 # here. stdout.log is truncated by the app itself at startup; stderr.log is not,
 # so treat it as append-only across runs when reading it after this.
 LOG="/data/app/el2/100/base/$BUNDLE/files/stderr.log"
-"${HDC[@]}" shell hilog -r >/dev/null 2>&1
-"${HDC[@]}" shell "aa force-stop $BUNDLE" >/dev/null 2>&1
+hdc shell hilog -r >/dev/null 2>&1
+hdc shell "aa force-stop $BUNDLE" >/dev/null 2>&1
 sleep 2
-START_OUT="$("${HDC[@]}" shell "aa start -a $ABILITY -b $BUNDLE" 2>&1)"
+START_OUT="$(hdc shell "aa start -a $ABILITY -b $BUNDLE" 2>&1)"
 printf '%s\n' "$START_OUT" | tail -2
 # Same masking as the install above. A failed launch here used to be discovered
 # only by noticing that the logs below were empty -- which reads as "the app
@@ -214,7 +264,7 @@ echo "waiting 30 s ..."
 sleep 30
 echo
 echo "===== stderr.log ====="
-"${HDC[@]}" shell "cat $LOG 2>/dev/null" || true
+hdc shell "cat $LOG 2>/dev/null" || true
 echo
 echo "===== crash.txt ====="
-"${HDC[@]}" shell "cat /data/app/el2/100/base/$BUNDLE/files/crash.txt 2>/dev/null" || true
+hdc shell "cat /data/app/el2/100/base/$BUNDLE/files/crash.txt 2>/dev/null" || true

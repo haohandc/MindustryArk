@@ -76,12 +76,18 @@ def check_version_matches_name(hap, ok_ref):
 
         AppScope/app.json5                     versionName
         entry/build-profile.json5              targets[].output.artifactName
-        deploy.sh                              HAP_BASE
 
     so "I remember changing them together" is not a safe assumption. The
     artifactName is read back out of pack.info rather than out of the build
     profile, which is the difference between checking what was built and
     checking what we intended to build.
+
+    deploy.sh used to keep a third hand-written copy as HAP_BASE. It is no longer
+    listed here because it no longer exists: that copy went stale at the
+    v0.1.0-beta1 -> v0.2.0-beta.1 bump -- this docstring named it, nothing checked
+    it, and the script ended up looking for a HAP that had been renamed -- so
+    deploy.sh now asks config.ARTIFACT_NAME for the name instead. Two copies that
+    both get checked beat three where one is only mentioned.
 
     String comparison throughout: a rename that is not also a version bump fails
     too, because the file name is the only part of this a downloader can see.
