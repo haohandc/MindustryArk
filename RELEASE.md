@@ -331,6 +331,78 @@ PY
 The zip carries `entry/` at the top level and `README-PAYLOAD.txt` beside it, so
 unzipping into the repository root does the right thing.
 
+## 版本对照表 / Version ledger
+
+**每个发布过的二进制，对应哪一个 tag、哪一个 versionCode。**
+*Which tag and which versionCode each shipped binary belongs to.*
+
+| versionCode | versionName（设备/商店显示） | Git tag | Release | 日期 |
+|---|---|---|---|---|
+| **10001** | `0.1.0-beta1` | `v0.1.0-beta1` = `332192e` | [v0.1.0-beta1](../../releases/tag/v0.1.0-beta1) | 2026-09-20 |
+| **20001** | `0.2.0-beta.1` | `v0.2.0-beta.1` ← **待建** | 待发布 | 2026-09-21 |
+
+**产物与其 sha256**（发布后须用 GitHub 显示的 hash 复核，见下"Published state"）：
+
+| versionCode | 产物 | 大小 | sha256 |
+|---|---|---|---|
+| 10001 | `MindustryArk-v0.1.0-beta1-unsigned.hap` | 272,616,859 B | `0e2a6c9086814a383a21b35ce7944f21fc588eb3df333efb1fed864822abc4f0` |
+| 10001 | `MindustryArk-v0.1.0-beta1-payload.zip` | 146,836,356 B | `93db79ffd7974fb93859fc91b3e1de44d939a107c563e1399d430a8e36004adb` |
+| 20001 | `MindustryArk-v0.2.0-beta.1-unsigned.hap` | 272,557,304 B | `7a246386d66b18af6b63fa8661f38a23a32ef1f204aac4273e59f51bf52e74c4` |
+| 20001 | `MindustryArk-v0.2.0-beta.1-payload.zip` | 146,836,398 B | `f7b08a7e577913c1540e502efb6f26846d48efea08e80d165b7cebb456e3e26a` |
+
+### 为什么需要这张表 —— 两条**各自独立**的原因
+
+**① GPLv3 §6：二进制必须能对应到源码**
+
+分发二进制时，受让方有权拿到 **Corresponding Source**。而**仓库会一直往前走** ——
+一旦走远，`master` 就不再是旧那份二进制的对应源码了。
+**一个发布配一个 tag**，是让「这份二进制对应哪份源码」**可验证**的唯一办法。
+
+⚠️ **准确说法**（别把它讲成比实际更硬的要求）：§6 要求的是**源码可得**，
+**不是**字面上的"必须打 tag"。但**没有 tag 就无法证明对应关系** —— 证明不了，等于没履行。
+
+⚠️ **更要紧的一点**：我们分发的是**被修改过的** Mindustry，
+所以必须提供**我们施加的那些修改**。本项目的做法是**补丁脚本**
+（`build_arc_patch.py` / `patch_mindustry.py` / `build_variants.py`）+ **精确的上游版本标识** ——
+这正是各 Linux 发行版的做法，而**它只有在"上游版本被钉死"时才成立**
+⇒ 这就是为什么连游戏 jar 的 sha1 都要记下来，而不是只写版本号。
+
+**② 本项目的 versionCode 是**非直觉的派生值** —— 光看版本名判断不出大小**
+
+```
+base = major*1000000 + minor*10000 + patch*100      预发布 +1..98   正式版 +99
+```
+
+| 版本名 | versionCode | |
+|---|---|---|
+| `0.1.0-beta1` | **10001** | |
+| `0.1.0-beta2` | 10002 | |
+| `0.1.0`（正式） | **10099** | ⚠️ 比 `0.1.1-beta1` **小** |
+| `0.1.1-beta1` | **10101** | ⚠️ 比 `0.1.0` **大** |
+| `0.2.0-beta.1` | **20001** | |
+| `1.0.0` | **1000099** | |
+
+⇒ ⚠️ **`0.1.0` 与 `0.1.1-beta1` 的大小关系，从版本名根本看不出来** ⇒ **必须能查表。**
+（规则本身在 `scripts/config.py`，那里是权威；这里是给人看的副本。）
+
+### ⚠️ 两条**发布时必须遵守**的规矩
+
+1. ⭐⭐ **tag 必须指向【产出那份二进制的那个提交】**
+   ⇒ 顺序是：**先 push，再建 release**。tag 打在一个还不存在的提交上，或者打在版本号改动**之前**的提交上，
+   都会让源码与二进制**对不上** —— 而这是 §6 那条线的整个意义所在。
+2. ⚠️ **上游 Mindustry 的版本号不进 `versionName`**
+   （游戏是 **`v8 Build 160.4`**，与本项目的版本是**两套体系**，见下文发布正文里的说明）。
+   要写就写在**商店的更新说明**里，或 AGC 的 **`buildVersion`** 字段
+   （✅ 该字段确实存在：`buildVersion O String` —— "构建版本号，用于区分同一主版本下的不同测试子版本"）。
+
+### ❓ 一处**待验证**（别当成已解决）
+
+`versionName` 用**带连字符的预发布形式**（`0.2.0-beta.1`）是**本机构建实测通过**的
+（`AppScope/app.json5` 的 schema 允许，且 `verify_hap.py` 四处一致 → PASS）。
+⚠️ 但 **AGC 上传时会不会另有格式校验，未验证**。
+⇒ 真被拒的话，**加一行映射**（商店写 `0.2.0.1` ↔ tag 写 `v0.2.0-beta.1`）即可，
+**不要预先就分叉成两套版本名** —— 那会**制造出**这张表本要消除的对应问题。
+
 ## Published state
 
 Released **2026-09-20** as a **pre-release**:
