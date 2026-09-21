@@ -184,10 +184,27 @@ const BALL_POS_FILE_NAME = 'ball_pos.txt';
 const IME_DISMISS_MS = 1500;
 
 /*
- * Extra height given to the invisible field, over and above the game's own field.
- * This is the margin knob for the whole approach: the framework pushes the page up
+ * Extra height given to the invisible field, over and above the game's own field,
+ * added ABOVE it so that the two share a bottom edge.
+ *
+ * Two jobs, and the direction is what makes them compatible.
+ *
+ * It is the margin knob for the whole approach: the framework pushes the page up
  * only until the focused field is visible, so this is the only lever for keeping
  * the game's field from ending up flush against the keyboard's top edge.
+ *
+ * And it is where the box stops short of covering things the player has to tap.
+ * It used to grow DOWNWARD -- top-left anchored, height increased -- which put it
+ * over whatever Mindustry draws under a text field. That is where its Cancel and
+ * OK buttons are, so with the keyboard hidden a tap aimed at Cancel landed on our
+ * box instead: it took the focus back, the keyboard returned, and Cancel never
+ * saw the tap. Reported on the export dialog, which has Cancel directly below the
+ * filename field.
+ *
+ * Growing upward moves the overhang onto the label above the field, which is text
+ * and not interactive, so nothing the player needs is covered either way. The
+ * bottom edge is unchanged, and the bottom edge is what the framework's avoidance
+ * actually has to clear for a keyboard at the bottom of the screen.
  */
 const IME_FIELD_MARGIN_VP = 24;
 
@@ -585,13 +602,12 @@ struct Index {
     this.imeFieldX = xvp;
     this.imeFieldY = yvp;
     this.imeFieldW = wvp;
-    /* Deliberately a little taller than the field itself. The framework only
-     * guarantees that a focused field is VISIBLE, not that it clears the keyboard
-     * by any margin, so a field sitting exactly on the keyboard's top edge is an
-     * acceptable outcome for the framework and a cramped one for the player. The
-     * extra height is what buys the margin; it costs a few more pixels of the
-     * game being pushed off the top while the keyboard is up. */
-    this.imeFieldH = hvp + IME_FIELD_MARGIN_VP;
+    /* The game's field, unmodified. IME_FIELD_MARGIN_VP is applied where the
+     * invisible box is placed instead of here, so that this stays a truthful
+     * reading of the file -- it is what the hilog line below prints, and a value
+     * that secretly includes a layout decision is a value nobody can compare
+     * against a measurement. */
+    this.imeFieldH = hvp;
   }
 
   /*
@@ -1191,19 +1207,25 @@ struct Index {
          * ever refuses to appear for a zero-opacity field, this is the line to
          * revisit: give it opacity 0.01 instead.
          *
-         * It sits exactly over the GAME's field, rather than at the top of the
-         * screen as it used to. That placement is the entire mechanism: the
-         * framework's keyboard avoidance moves the page only until this focused
-         * field is visible, so putting it where the player is actually looking
-         * makes the framework move the game by precisely the amount that reveals
-         * that spot. Anchored at the top it asked for nothing, so nothing moved and
-         * the keyboard covered the field.
+         * It sits over the GAME's field and IME_FIELD_MARGIN_VP above it, rather
+         * than at the top of the screen as it used to. That placement is the
+         * entire mechanism: the framework's keyboard avoidance moves the page only
+         * until this focused field is visible, so putting it where the player is
+         * actually looking makes the framework move the game by precisely the
+         * amount that reveals that spot. Anchored at the top it asked for nothing,
+         * so nothing moved and the keyboard covered the field.
          */
         TextInput()
           .id('ime_ui_field')
-          .position({ x: this.imeFieldX, y: this.imeFieldY })
+          /* Shifted up by the margin so the added height goes above the game's
+           * field rather than over what sits below it; see IME_FIELD_MARGIN_VP.
+           * The clamp only matters for a field within 24vp of the top of the
+           * screen, where a keyboard cannot be covering it anyway -- and a
+           * negative position is a worse thing to hand the layout than a box that
+           * happens to extend a little further down in that one case. */
+          .position({ x: this.imeFieldX, y: Math.max(0, this.imeFieldY - IME_FIELD_MARGIN_VP) })
           .width(this.imeFieldW)
-          .height(this.imeFieldH)
+          .height(this.imeFieldH + IME_FIELD_MARGIN_VP)
           .opacity(0)
           .onChange((v: string) => {
             this.sendDelta(v.replace(/[\r\n]/g, ''));
