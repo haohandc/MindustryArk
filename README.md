@@ -40,13 +40,29 @@ Prebuilt artifacts are on the
 **[Releases page](https://github.com/haohandc/MindustryArk/releases)**:
 the unsigned HAP (the app) and a payload zip (only needed to build from source).
 
-An unsigned HAP will not install — HarmonyOS requires a signature. Sign it once
-with your own certificate: open the project in DevEco Studio, **File → Project
-Structure → Signing Configs → Automatically generate signature**, then
-`bash deploy.sh`. An automatically generated profile is enough, because this app
-requests **no restricted permission** — there is nothing to apply for from
-AppGallery Connect. More detail, including what must **not** be published, is in
-[RELEASE.md](RELEASE.md).
+An unsigned HAP will not install — HarmonyOS requires a signature. Either:
+
+**① An installer tool (no dev environment needed, recommended)**
+
+| Tool | What it does |
+|---|---|
+| [小白调试助手 (Auto-Installer)](https://github.com/likuai2010/auto-installer/releases/latest) | Free cross-platform HarmonyOS debugging tool — **signing and installing in one step** |
+| [HoKit](https://github.com/yabi-zzh/HoKit/releases/latest) | **One-click re-signing**, device mirroring, perf monitoring, file management. Windows / macOS / Linux |
+
+This project is also listed in
+[Zitann/HarmonyOS-Haps](https://github.com/Zitann/HarmonyOS-Haps), a HarmonyOS Next HAP collection.
+
+**② Sign it yourself with DevEco Studio**
+
+Open the project, **File → Project Structure → Signing Configs → Automatically
+generate signature**, then `bash deploy.sh`. An automatically generated profile is
+enough, because this app requests **no restricted permission** — there is nothing
+to apply for from AppGallery Connect.
+
+> Install only, without building: drop the downloaded HAP into
+> `entry/build/default/outputs/default/` and run `bash deploy.sh`.
+
+More detail, including what must **not** be published, is in [RELEASE.md](RELEASE.md).
 
 ## Requirements
 

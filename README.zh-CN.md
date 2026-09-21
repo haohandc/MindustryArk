@@ -35,10 +35,25 @@ Arc 的四个后端类被重新编译后写回 jar，因为平台相关的改造
 现成产物在 **[Releases 页面](https://github.com/haohandc/MindustryArk/releases)**：
 未签名的 HAP（应用本体）与一个载荷包（**只有要从源码构建才需要**）。
 
-未签名的 HAP 装不上 —— HarmonyOS 要求先签名。用你自己的证书签一次：
+未签名的 HAP 装不上 —— HarmonyOS 要求先签名。两条路选一条：
+
+**① 用安装工具（不需要开发环境，推荐）**
+
+| 工具 | 说明 |
+|---|---|
+| [小白调试助手](https://github.com/likuai2010/auto-installer/releases/latest) | 免费的跨平台鸿蒙调试工具，**签名 + 安装一步到位** |
+| [HoKit](https://github.com/yabi-zzh/HoKit/releases/latest) | **一键重签名**、设备投屏、性能监控、文件管理。支持 Windows / macOS / Linux |
+
+本项目也收录在 [Zitann/HarmonyOS-Haps](https://github.com/Zitann/HarmonyOS-Haps)（鸿蒙 Next HAP 安装包合集）中。
+
+**② 用 DevEco Studio 自己签名**
+
 用 DevEco Studio 打开本项目 → **File → Project Structure → Signing Configs →
 Automatically generate signature** → `bash deploy.sh`。
 **自动生成的证书就够了**，因为本应用**不申请任何受限权限**，不必去 AppGallery Connect 申请。
+
+> 只想装、不想构建：把下载的 HAP 放进 `entry/build/default/outputs/default/`，再跑 `bash deploy.sh`。
+
 更细的说明、以及**什么绝不能发布**，见 [RELEASE.md](RELEASE.md)。
 
 ## 环境要求
