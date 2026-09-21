@@ -318,6 +318,7 @@ struct Index {
   aboutToAppear(): void {
     const ctx = getContext(this) as common.UIAbilityContext;
     requestPerms(ctx);
+    this.clearStaleImeState();
     /*
      * Poll rather than be notified: the request is made by native code in the
      * other copy of libSDL3.so, which cannot call into this page. A file is the
@@ -453,6 +454,52 @@ struct Index {
     } catch (e) {
       const err = e as BusinessError;
       hilog.warn(DOMAIN, TAG, 'ime: keyboard measurement unavailable: %{public}s', err.message);
+    }
+  }
+
+  /*
+   * Delete the request left behind by the PREVIOUS run, before anything can read it.
+   *
+   * ime_want exists only while the game has a text field focused: native creates
+   * it in SDL_StartTextInput and removes it in SDL_StopTextInput. If the app is
+   * killed while that dialog is open, the file survives into the next launch --
+   * and the poll below reads it as a live request on its first tick, so the
+   * keyboard opens by itself over the main menu with nothing focused.
+   * Reported from the device: leave a text field up, kill the app, reopen it.
+   *
+   * Clearing at startup is sound because a request cannot be legitimate yet: this
+   * runs before the game has drawn anything, let alone focused a field, so any
+   * file present at this moment is by definition left over. The game asks again
+   * if it still wants text.
+   *
+   * ime_cmd goes with it. It carries the tail of the last session's typing for the
+   * other copy of libSDL3.so to drain, and that copy is not running yet -- so the
+   * same reasoning applies, and a stale command would be replayed into a field
+   * that is not there. It is truncated rather than deleted, because native opens
+   * it on the assumption that it exists... which is not true at this point, so
+   * deleting is the honest option; native creates it on demand.
+   *
+   * ime_rect is deliberately NOT touched. It is native's published reading, and
+   * leaving it lets readImeRect() fall back on the last known-good rectangle
+   * instead of on the 1x1 default.
+   */
+  clearStaleImeState(): void {
+    const stale: string[] = [IME_WANT_FILE, IME_CMD_FILE];
+    for (const path of stale) {
+      try {
+        /* accessSync returns a boolean; it does not throw for a missing file --
+         * see the note in pollImeWant. */
+        if (fs.accessSync(path)) {
+          fs.unlinkSync(path);
+          hilog.info(DOMAIN, TAG, 'ime: cleared a stale %{public}s from the previous run', path);
+        }
+      } catch (e) {
+        /* A leftover that cannot be removed is worth knowing about but is not
+         * worth failing the page for: the poll would open the keyboard, which is
+         * the behaviour without this call at all. */
+        const err = e as BusinessError;
+        hilog.warn(DOMAIN, TAG, 'ime: could not clear %{public}s: %{public}s', path, err.message);
+      }
     }
   }
 
