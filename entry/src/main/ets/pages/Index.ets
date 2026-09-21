@@ -184,13 +184,6 @@ const BALL_POS_FILE_NAME = 'ball_pos.txt';
 const IME_DISMISS_MS = 1500;
 
 /*
- * How long the field must have held focus before losing it counts as the user
- * dismissing the keyboard rather than something stealing the focus. Comfortably
- * longer than the poll interval, so a steal is always seen as a steal.
- */
-const IME_STABLE_MS = 800;
-
-/*
  * Extra height given to the invisible field, over and above the game's own field.
  * This is the margin knob for the whole approach: the framework pushes the page up
  * only until the focused field is visible, so this is the only lever for keeping
@@ -210,9 +203,17 @@ struct Index {
   private imeSent: string = '';
   private imeTimer: number = -1;
   private imeFieldFocused: boolean = false;
-  /* When the field last took focus, so a blur can tell a deliberate dismissal
-   * from a stolen focus. See the onBlur handler. */
-  private imeFieldFocusedAt: number = 0;
+  /*
+   * The user put the keyboard away, and it must stay away until they ask for it
+   * again -- even though the GAME is still asking for text the whole time.
+   *
+   * `ime_want` cannot answer this: it reports what the game wants, and the game
+   * never learns the user hid the keyboard, because its own field is still
+   * focused and SDL therefore never calls HideScreenKeyboard. So the poll has to
+   * carry the distinction itself. See the onBlur handler for how it is set and
+   * the `want` branch of pollImeWant for how it is cleared.
+   */
+  private imeUserHid: boolean = false;
   /*
    * Until when the game's request is ignored, having just been put away by the
    * user. Without it the game's continued request reopened what the user had
@@ -468,6 +469,9 @@ struct Index {
         this.dismissIme();
       }
       this.imeDismissedUntil = 0;
+      /* The game let the field go, so whatever the user did before is spent:
+       * the next text field must be able to raise the keyboard by itself. */
+      this.imeUserHid = false;
       return;
     }
     if (Date.now() < this.imeDismissedUntil) {
@@ -497,7 +501,7 @@ struct Index {
           focusControl.requestFocus('ime_ui_field');
         }
       }, 60);
-    } else if (!this.imeFieldFocused) {
+    } else if (!this.imeFieldFocused && !this.imeUserHid) {
       /*
        * The game still wants text and the field is up, but does not hold focus --
        * something took it. Re-take it.
@@ -508,9 +512,13 @@ struct Index {
        * every poll instead is both simpler and self-correcting, and it cannot run
        * away because a poll is every 200ms, not a loop.
        *
-       * It cannot reopen what the user closed either: a dismissal sets both
-       * showIme (so this branch is not reached) and imeDismissedUntil (so the
-       * branch above waits out the deadline).
+       * `imeUserHid` IS THE WHOLE REASON THIS IS SAFE. Without it this branch
+       * cannot tell "a steal to recover from" from "the user just hid the
+       * keyboard", because both are exactly "field up, no focus, game still
+       * asking" -- and it re-took the focus either way, which put the keyboard
+       * straight back after the user had dismissed it. The flag is what the user
+       * hiding the keyboard sets, and the comment on it above says why the
+       * game's own request cannot stand in for it.
        */
       focusControl.requestFocus('ime_ui_field');
     }
@@ -1202,32 +1210,43 @@ struct Index {
           })
           .onFocus(() => {
             this.imeFieldFocused = true;
-            this.imeFieldFocusedAt = Date.now();
+            /* The user asked for the keyboard -- by tapping this field, which is
+             * still on screen over the game's field precisely so that it can be
+             * tapped again. Whatever they did before is spent. */
+            this.imeUserHid = false;
           })
           .onBlur(() => {
             /*
-             * Hold off before taking the focus back -- but only when the blur
-             * looks deliberate. Two different things reach this handler:
+             * The keyboard was put away. Pressing the system keyboard's own hide
+             * button and tapping away from the field both land here, and both
+             * mean the same thing: it is not to come back on its own.
              *
-             *   the user put the keyboard away   -> respect it, wait the deadline
-             *   something stole the focus        -> take it back on the next poll
+             * WHY THE GAME'S REQUEST CANNOT DECIDE THIS
+             *   `ime_want` says what the GAME wants, and the game never learns
+             *   that the user hid the keyboard: its own field is still focused, so
+             *   SDL never calls HideScreenKeyboard and the request file stays on
+             *   disk. Measured symptom, before this flag existed: dismissing the
+             *   keyboard brought it straight back -- the poll saw "field up, no
+             *   focus, game still asking" and took the focus again.
              *
-             * Both used to be treated as the first, which turned a steal into a
-             * 1.5s dead window that read to the user as "the keyboard stopped
-             * responding". The field being visibly keyboard-holding for a while is
-             * what separates them: a steal lands right after we ask for focus,
-             * while a dismissal comes once the user has been typing.
+             * Our own dismissals never reach here: dismissIme() clears
+             * imeFieldFocused before the field is unmounted, so this test is
+             * false. That is what keeps the two paths apart.
              *
-             * Either way, the ordinary flow does not depend on this -- tapping
-             * away from the game's field makes the game stop asking, and that path
-             * goes through `want` instead.
+             * A stolen focus is indistinguishable from a hide and is now treated
+             * as one. That is recoverable rather than fatal, which is the reason
+             * it is acceptable: this field is still sitting over the game's field,
+             * so one tap raises the keyboard again, where the burst-of-five that
+             * this replaced could leave it permanently dead.
+             *
+             * Clearing is deliberately NOT time-based. The user is not asked to
+             * act within any window -- they can leave the keyboard down for as
+             * long as they like and a tap still brings it back.
              */
-            const had: boolean = this.imeFieldFocused;
-            const heldFor: number = Date.now() - this.imeFieldFocusedAt;
-            this.imeFieldFocused = false;
-            if (had && heldFor > IME_STABLE_MS) {
-              this.imeDismissedUntil = Date.now() + IME_DISMISS_MS;
+            if (this.imeFieldFocused) {
+              this.imeUserHid = true;
             }
+            this.imeFieldFocused = false;
           })
           .onSubmit(() => {
             /* Done on the keyboard: put the game back in charge of input. */
