@@ -174,13 +174,17 @@ web-sourced, and worth re-checking if it ever matters.
 ### Release title
 
 ```
-v0.1.0-beta1 — Mindustry v8 Build 160.4 on HarmonyOS
+v0.2.0-beta1 — Mindustry v8 Build 160.4 on HarmonyOS
 ```
 
 ### Release body
 
+Pasted verbatim from `dist/RELEASE-BODY-v0.2.0-beta1.md`, which is generated
+alongside the artifacts. Keep the two in step: this block is the copy of record,
+and the file in `dist/` is what gets pasted into the release form.
+
 ````markdown
-# Mindustry 鸿蒙移植 · v0.1.0-beta1
+# Mindustry 鸿蒙移植 · v0.2.0-beta1
 
 在 HarmonyOS / OpenHarmony 上用**自建启动器**运行 Mindustry ——
 内嵌 JDK、从 native 代码创建 JVM、把真正的 SDL3 窗口交给游戏，不套任何现成的模拟层。
@@ -190,12 +194,33 @@ JDK, a JVM created from native code, and a real SDL3 window handed to the game.
 No existing emulation layer involved.
 
 内嵌的游戏版本 / Embedded game: **Mindustry `v8 Build 160.4`**（游戏内显示 `release build 160.4`）
-⚠️ 这是 **Mindustry 自己的**版本号，和本项目的 `v0.1.0-beta1` 是两套体系 /
+⚠️ 这是 **Mindustry 自己的**版本号，和本项目的 `v0.2.0-beta1` 是两套体系 /
 that is the *game's* version, not this project's — the two move independently.
 
 > ⚠️ **非官方项目 / Unofficial.** 与 Mindustry 及 Anuken 无隶属关系 · Not affiliated with,
 > endorsed by, or supported by the Mindustry project or Anuken.
 > 以 **GPL-3.0** 分发（构建产物再分发了 GPL-3.0 的 Mindustry）/ licensed GPL-3.0.
+
+> ⚠️ **上个版本带 `v0.1.0-beta1` 的设备可以直接升级安装**（`versionCode` 10001 → **20001**）。
+> *Installs of `v0.1.0-beta1` can upgrade in place.*（但若你之前装的是从源码自行构建的包，`versionCode`
+> 可能不单调，那就得先卸载 / if you built from source with a different code, uninstall first.）
+
+---
+
+## ⭐ 这一版新增 / What is new in this release
+
+**上个 beta 之后有 14 个提交，以下是全部用户可见的变化。**
+*Fourteen commits since the last beta; these are all the user-visible changes.*
+
+| 新增 / Added | 说明 / Notes |
+|---|---|
+| ⌨️ **屏幕软键盘** | ⭐ 点进游戏里的输入框会**自动弹出**；打字、退格、ESC 关闭都可正常工作。此前**完全打不了字**。<br>An on-screen keyboard appears when you tap a text field in the game. Before this, text entry did not work at all. |
+| 🎈 **悬浮球** | 可以**拖动**、松手**吸附到最近的四条边**、**3 秒后自动半隐藏**（只露 40%），点击把它叫回来。它承载的第一项功能是**切换触屏 / PC 模式**。<br>A draggable ball that snaps to the nearest edge, half-hides after three seconds, and comes back on tap. Its first function is switching between touch and desktop control. |
+| 🖥️ **PC / 触屏模式切换** | 游戏内自带的那个开关**只换输入层、不换 UI**；这个开关会真正切到移动端或桌面端 UI。⚠️ **重启应用后生效。**<br>Mindustry's own toggle swaps the input handler but leaves the mobile UI; this one switches both. Takes effect on restart. |
+| 🖼️ **沉浸模式** | 隐藏状态栏和导航条，游戏铺满全屏。**系统手势未被抑制**，随时可以回桌面。<br>Hides the status and navigation bars. System gestures are left alone, so you can always leave the app. |
+| 🎨 **新的应用图标** | 蓝底 + Arc 炮塔，取代了模板占位图。<br>A blue plate with the Arc turret, replacing the template placeholder. |
+| 📛 **改名 `Mindustry Ark`** | 桌面显示的名字中间多了一个空格。⚠️ **下载的文件名仍是无空格的 `MindustryArk-v…`**（构建规则不允许空格）。<br>The launcher name now reads "Mindustry Ark". The downloaded filename keeps the unspaced form, which is a build-rule limit. |
+| 🐛 **触摸修复** | 触屏点进存档列表后，条目不再「高亮卡住、要点两次」。<br>Save-list entries no longer stay highlighted and need a second tap. |
 
 ---
 
@@ -203,8 +228,8 @@ that is the *game's* version, not this project's — the two move independently.
 
 | 文件 / File | 说明 / What it is |
 |---|---|
-| `MindustryArk-v0.1.0-beta1-unsigned.hap` | **应用本体。** 未签名，需自签一次（见下）<br>**This is the app.** Unsigned — sign it once yourself (below) |
-| `MindustryArk-v0.1.0-beta1-payload.zip` | 载荷包。**只有要从源码构建才需要**<br>Build inputs — **only needed to build from source** |
+| `MindustryArk-v0.2.0-beta1-unsigned.hap` | **应用本体。** 未签名，需自签一次（见下）<br>**This is the app.** Unsigned — sign it once yourself (below) |
+| `MindustryArk-v0.2.0-beta1-payload.zip` | 载荷包。**只有要从源码构建才需要**<br>Build inputs — **only needed to build from source** |
 
 ⚠️ **未签名的 HAP 装不上**（HarmonyOS 要求先签名）/ **An unsigned HAP will not install**
 (HarmonyOS requires a signature). 用你自己的证书签一次 / sign it once with your own certificate:
@@ -229,22 +254,36 @@ Verified on a HUAWEI MatePad Pro 12.2" 2025 tablet and a HUAWEI Mate 80 Pro phon
 | 主菜单与渲染 / menu and rendering | ✅ 正常，移动端布局 / works, mobile layout |
 | 音频 / audio | ✅ OHAudio |
 | 触屏 / touch | ✅ 点击、长按、**双指捏合缩放** / tap, long-press, **two-finger pinch zoom** |
-| 键盘 / keyboard | ✅ 物理键盘 WASD；ESC 打开菜单，**不被系统当成「返回」**<br>WASD; ESC opens the menu and is **not** treated as Back |
+| **软键盘 / on-screen keyboard** | ✅ **新** —— 点输入框自动弹出，打字/退格/ESC 关闭正常<br>**new** — appears on tap, typing, backspace and ESC all work |
+| 物理键盘 / physical keyboard | ✅ WASD；ESC 打开菜单，**不被系统当成「返回」**<br>WASD; ESC opens the menu and is **not** treated as Back |
 | 鼠标 / mouse | ✅ 全部按键 + 滚轮 / all buttons and the wheel |
+| **悬浮球 / floating ball** | ✅ **新** —— 拖动、吸附、半隐藏、点击恢复、位置持久化<br>**new** — drag, snap, half-hide, tap to restore, position remembered |
+| **沉浸模式 / immersive** | ✅ **新**（平板、手机）—— 全屏；⚠️ **2in1 上不生效**，见下<br>**new** on tablet and phone; ⚠️ not on 2in1, below |
+| **键盘不再遮挡输入框 / keyboard no longer covers the field** | ✅ **新** —— 键盘弹出时框架会把游戏输入框推到可见位置<br>**new** — the framework pushes the game's field clear of the keyboard |
 | 存档与数据导入导出 / save and data import | ✅ 从「下载」目录往返 / via the Download folder |
 | 退出 / quitting | ✅ 正常关闭，不被系统标记为崩溃 / clean exit, not flagged as a crash |
 
 ## 已知限制 / Known limitations
 
-- **桌面/移动模式无法运行期切换**（启动时固定）。游戏内自带「鼠标 + 键盘操控」开关可覆盖大部分需求。
-  *Desktop/mobile mode cannot be switched at runtime.* Mindustry's own in-game
-  "mouse + keyboard control" toggle covers most of what you would want it for.
-- 游戏内的文件浏览器用的是 Mindustry **自带**的兜底实现（Arc 的文件对话框库是 glibc 链接，鸿蒙加载不了）。
+- ⚠️ **软键盘只能输入 ASCII —— 打不了中文。** 游戏侧用的是自建的文本通道，没有接系统的输入法候选。
+  *The on-screen keyboard is **ASCII-only**; Chinese input does not work.* It goes through
+  a hand-rolled text path rather than the platform IME.
+- ⚠️ **PC / 触屏模式切换需要重启应用才生效**（不是缺陷，是刻意为之：游戏把输入层和 UI 都绑在一个
+  启动时写入的开关上，中途改会让两者不一致）。游戏内自带的「鼠标 + 键盘操控」开关可以即时切换操控方式。
+  *The desktop/touch switch needs a restart.* Mindustry derives both the input layer and the UI
+  from one value written at startup, so changing it midway would leave the two disagreeing.
+  Mindustry's own "mouse + keyboard control" toggle changes the controls immediately.
+- ⚠️ **2in1（PC）上沉浸模式不生效**，状态栏和导航条会留着。平板上正常。
+  *Immersive mode does not apply on 2in1*, where the bars stay. Tablet and phone are unaffected.
+- **游戏内的文件浏览器用的是 Mindustry 自带**的兜底实现（Arc 的文件对话框库是 glibc 链接，鸿蒙加载不了）。
   *The in-game file browser is Mindustry's own fallback* — Arc's file-dialog native
   is glibc-linked and cannot load here.
 - **导入游戏数据后游戏会主动退出** —— 这是 Mindustry 的设计（用新数据重启），**看起来像崩溃但不是**。
   *Importing game data makes the game exit on purpose*, so it restarts with the new
   data. It looks like a crash and is not one.
+- ⛔ **没有多人联机、没有成就、没有模组浏览器**（与桌面版相比）。网络需要额外的平台工作，尚未做。
+  *No multiplayer, achievements or mod browser* compared with the desktop release.
+  Networking needs platform work that has not been done.
 - 只在上面那两台设备上验证过，其他鸿蒙设备**未测试**。
   *Verified on those two devices only.* This depends on the platform's policy on
   executable memory, and a device that enforces it differently would fail in ways
@@ -254,7 +293,7 @@ Verified on a HUAWEI MatePad Pro 12.2" 2025 tablet and a HUAWEI Mate 80 Pro phon
 
 ```bash
 # 先准备载荷（见 payload-src/README.md），或解开载荷包
-unzip -o MindustryArk-v0.1.0-beta1-payload.zip
+unzip -o MindustryArk-v0.2.0-beta1-payload.zip
 # 配置签名（同上），然后 / then configure signing as above and run:
 bash deploy.sh          # 构建 + 校验 + 安装 + 启动 + 收日志
 ```
@@ -270,8 +309,6 @@ input and audio: **SDL3**；JNI 绑定 / bindings: **LWJGL**；运行时 / runti
 assistance（Claude via Cherry Studio，deepseek-flash v4.1）。
 ````
 
----
-
 ## Building the two artifacts
 
 ```bash
@@ -281,7 +318,7 @@ bash build.sh assembleHap                       # -> the HAPs, in entry/build/..
 # changes, or the published zip will disagree with the repository:
 python - <<'PY'
 import os, zipfile
-with zipfile.ZipFile("dist/MindustryArk-v0.1.0-beta1-payload.zip", "w",
+with zipfile.ZipFile("dist/MindustryArk-v0.2.0-beta1-payload.zip", "w",
                      zipfile.ZIP_DEFLATED, compresslevel=9) as z:
     z.write("dist/README-PAYLOAD.txt", "README-PAYLOAD.txt")
     for dp, _d, fs in os.walk("entry/libs"):
@@ -324,6 +361,27 @@ page: four assets, two of them ours and two auto-generated.
 > force-pushed. **The tag's tree is byte-identical** (`59a49bf02784418e226d4cf4b11f6cfa6b93a166`),
 > so the source archives GitHub generates are unchanged — only the commit SHA in the
 > page header moved.
+
+### v0.2.0-beta1 — prepared 2026-09-21, awaiting publication
+
+Assembled and checked locally. **Not published yet** — the release page is created by
+hand, so this records the bytes that were verified so they can be compared against
+whatever ends up uploaded.
+
+| Asset | Size | sha256 |
+|---|---|---|
+| `MindustryArk-v0.2.0-beta1-unsigned.hap` | 272557301 B | `1301c94d36fbb5798a9ef12fbbf50f9de180f9b6bf29063ebb09757565543879` |
+| `MindustryArk-v0.2.0-beta1-payload.zip` | 146836398 B | `f7b08a7e577913c1540e502efb6f26846d48efea08e80d165b7cebb456e3e26a` |
+
+**The unsigned HAP was checked for a signature block before this table was written.**
+The four markers (`debug-info`, `device-ids`, `developer-id`, `development-certificate`)
+are all absent and there are zero 64-hex strings that could be a device UDID —
+**and the same check run against the signed build finds all four and exactly six
+UDIDs**, which is what shows the check works rather than merely finding nothing.
+
+The payload was rebuilt for this version rather than reused: `entry/libs` changed
+since the last one (the game jar), and publishing a stale zip would make the download
+disagree with the repository.
 
 ## Pre-publication checklist
 
