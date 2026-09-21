@@ -27,7 +27,17 @@
 
 ⚠️ **未签名的 HAP 装不上** —— HarmonyOS 要求每个 `.hap` 先签名。
 
-用**你自己的**证书签一次：
+### 方法一：用安装工具（**不需要开发环境**，推荐）
+
+| 工具 | 说明 |
+|---|---|
+| [**小白调试助手**](https://github.com/likuai2010/auto-installer/releases/latest) | 免费的跨平台鸿蒙调试工具，**签名 + 安装一步到位** |
+| [**HoKit**](https://github.com/yabi-zzh/HoKit/releases/latest) | 一站式工具：**一键重签名**、设备投屏、性能监控、文件管理。支持 Windows / macOS / Linux |
+
+🔗 本项目也收录在 **[Zitann/HarmonyOS-Haps](https://github.com/Zitann/HarmonyOS-Haps)**
+（鸿蒙 Next HAP 安装包合集）的列表中。
+
+### 方法二：用 DevEco Studio 自己签名
 
 1. 用 DevEco Studio 打开本项目
 2. **File → Project Structure → Signing Configs → Automatically generate signature**
@@ -36,8 +46,9 @@
 ⭐ **本项目不申请任何受限权限**（没有需要向 AppGallery Connect 申请的 ACL 权限），
 所以**自动生成的证书就够了**，不必去申请任何东西。
 
-> 只安装、不自己构建也可以：把下载的 HAP 放进 `entry/build/default/outputs/default/`
-> 再跑 `bash deploy.sh`。
+### 只想装、不想构建
+
+把下载的 HAP 放进 `entry/build/default/outputs/default/`，再跑 `bash deploy.sh`。
 
 ## 已验证
 
@@ -49,8 +60,8 @@ HarmonyOS 7 / API 26 真机验证：**HUAWEI MatePad Pro 12.2" 2025** 平板、
 | 主菜单与渲染 | ✅ 移动端布局 |
 | 音频 | ✅ OHAudio |
 | 触屏 | ✅ 点击、长按、**双指捏合缩放** |
-| 软键盘 | ✅ 点输入框自动弹出；打字、退格、ESC 关闭正常 |
-| 物理键盘 | ✅ WASD；ESC 打开菜单，**不被系统当作「返回」** |
+| 软键盘 | ✅ 点游戏里的输入框自动弹出，**接系统输入法 ⇒ 中文可打**；打字、退格、ESC 关闭正常 |
+| 实体键盘 | ✅ WASD；ESC 打开菜单，**不被系统当作「返回」**；应用自己的输入框在屏幕上时**也能打中文** |
 | 鼠标 | ✅ 全部按键 + 滚轮 |
 | 悬浮球 | ✅ 拖动、吸附、半隐藏、点击恢复、位置持久化 |
 | 沉浸模式 | ✅ 全屏（平板 / 手机）|
@@ -60,7 +71,10 @@ HarmonyOS 7 / API 26 真机验证：**HUAWEI MatePad Pro 12.2" 2025** 平板、
 
 ## 已知限制
 
-- ⚠️ **软键盘只能输入 ASCII —— 打不了中文。** 游戏侧走的是自建文本通道，没有接系统输入法候选。
+- ⚠️ **实体键盘在「应用自己的输入框不在屏幕上」时只能打 ASCII。**
+  那条路是 SDL 的「按键→字符」通路，**背后没有输入法**。
+  ⇒ **点一下游戏里的输入框**，让应用自己的输入框弹出（它接系统输入法），实体键盘**也能打中文**。
+  焦点只有一个，所以只有这两种状态。
 - ⚠️ **PC / 触屏模式切换需要重启应用才生效。** 不是缺陷：Mindustry 的输入层和 UI 都派生自
   一个**启动时写入**的值，中途改会让两者不一致。游戏内自带的「鼠标 + 键盘操控」开关可即时切换操控方式。
 - ⚠️ **2in1（PC）上沉浸模式不生效**，状态栏和导航条会留着。平板和手机正常。
@@ -111,7 +125,17 @@ Embedded game version: **Mindustry `v8 Build 160.4`** (in-game: `release build 1
 
 ⚠️ **An unsigned HAP will not install** — HarmonyOS requires every `.hap` to be signed.
 
-Sign it once with **your own** certificate:
+### Option 1: an installer tool (**no dev environment needed**, recommended)
+
+| Tool | What it does |
+|---|---|
+| [**小白调试助手** (Auto-Installer)](https://github.com/likuai2010/auto-installer/releases/latest) | Free cross-platform HarmonyOS debugging tool — **signing and installing in one step** |
+| [**HoKit**](https://github.com/yabi-zzh/HoKit/releases/latest) | All-in-one: **one-click re-signing**, device mirroring, perf monitoring, file management. Windows / macOS / Linux |
+
+🔗 This project is also listed in **[Zitann/HarmonyOS-Haps](https://github.com/Zitann/HarmonyOS-Haps)**
+(a HarmonyOS Next HAP collection).
+
+### Option 2: sign it yourself with DevEco Studio
 
 1. Open this project in DevEco Studio
 2. **File → Project Structure → Signing Configs → Automatically generate signature**
@@ -121,8 +145,9 @@ Sign it once with **your own** certificate:
 AppGallery Connect application), so **an automatically generated certificate is
 sufficient**.
 
-> To install without building: drop the downloaded HAP into
-> `entry/build/default/outputs/default/` and run `bash deploy.sh`.
+### Install only, without building
+
+Drop the downloaded HAP into `entry/build/default/outputs/default/` and run `bash deploy.sh`.
 
 ## Verified
 
@@ -134,8 +159,8 @@ HarmonyOS 7 / API 26.
 | Menu and rendering | ✅ mobile layout |
 | Audio | ✅ OHAudio |
 | Touch | ✅ tap, long-press, **two-finger pinch zoom** |
-| On-screen keyboard | ✅ appears on tap; typing, backspace and ESC all work |
-| Physical keyboard | ✅ WASD; ESC opens the menu and is **not** treated as Back |
+| On-screen keyboard | ✅ appears on tapping a field in the game, **wired to the system input method ⇒ Chinese works**; backspace and ESC work |
+| Physical keyboard | ✅ WASD; ESC opens the menu and is **not** treated as Back; **Chinese too** while the app's own field is up |
 | Mouse | ✅ all buttons and the wheel |
 | Floating ball | ✅ drag, snap, half-hide, tap to restore, position remembered |
 | Immersive mode | ✅ full-screen (tablet and phone) |
@@ -145,8 +170,11 @@ HarmonyOS 7 / API 26.
 
 ## Known limitations
 
-- ⚠️ **The on-screen keyboard is ASCII-only** — Chinese input does not work. It goes through
-  a hand-rolled text path rather than the platform IME.
+- ⚠️ **A physical keyboard is ASCII-only while the app's own text field is NOT on screen.**
+  That route goes straight to the game through SDL's key-to-character path, which has **no
+  input method behind it**. ⇒ **Tap a text field in the game** so the app's own field comes
+  up (it is wired to the system input method) and the physical keyboard **types Chinese too**.
+  Focus is singular, so those are the only two states.
 - ⚠️ **The PC / touch mode switch needs an app restart.** Not a defect: Mindustry derives
   both its input layer and its UI from one value written at **startup**, and changing it
   midway would leave the two disagreeing. Mindustry's own "mouse + keyboard control" toggle
