@@ -71,6 +71,19 @@ PY=("${ARK_PYTHON:-python}")
 # ---------------------------------------------------------------------------
 HDC_TARGET="${ARK_HDC_TARGET:-}"
 if [ -z "$HDC_TARGET" ]; then
+    # The tool has to be checked BEFORE it is used, not after.
+    #
+    # `2>/dev/null` on the line below means "hdc could not be run" and "hdc ran
+    # and saw nothing" both arrive here as empty output -- and empty output is
+    # the no-device branch, whose message sends the reader to check a cable that
+    # was never the problem. The check for this file existed, but further down,
+    # so the misleading message came first. Reproduced by pointing HDC at a
+    # path that does not exist.
+    [ -f "${HDC[0]}" ] || {
+        echo "!! hdc not found: ${HDC[0]}" >&2
+        echo "!! set ARK_DEVECO_STUDIO, or DEVECO_SDK_HOME, to the right SDK" >&2
+        exit 1
+    }
     TARGETS="$("${HDC[@]}" list targets 2>/dev/null | tr -d '\r' \
                | grep -v '^\[Empty\]$' | grep -v '^[[:space:]]*$')"
     TARGET_N="$(printf '%s\n' "$TARGETS" | grep -c .)"
