@@ -185,26 +185,32 @@ const IME_DISMISS_MS = 1500;
 
 /*
  * Extra height given to the invisible field, over and above the game's own field,
- * added ABOVE it so that the two share a bottom edge.
+ * and ONLY while the keyboard is up.
  *
- * Two jobs, and the direction is what makes them compatible.
+ * Why it exists: the framework pushes the page up only until the focused field is
+ * visible, so this is the only lever for keeping the game's field from ending up
+ * flush against the keyboard's top edge.
  *
- * It is the margin knob for the whole approach: the framework pushes the page up
- * only until the focused field is visible, so this is the only lever for keeping
- * the game's field from ending up flush against the keyboard's top edge.
+ * Why it is conditional, which is the part that took two tries to get right.
  *
- * And it is where the box stops short of covering things the player has to tap.
- * It used to grow DOWNWARD -- top-left anchored, height increased -- which put it
- * over whatever Mindustry draws under a text field. That is where its Cancel and
- * OK buttons are, so with the keyboard hidden a tap aimed at Cancel landed on our
- * box instead: it took the focus back, the keyboard returned, and Cancel never
- * saw the tap. Reported on the export dialog, which has Cancel directly below the
- * filename field.
+ * The margin grows DOWNWARD -- the box is anchored top-left and simply made
+ * taller -- so it also covers whatever Mindustry draws below a text field, which
+ * on the export dialog is Cancel. Reaching Cancel therefore meant moving the focus
+ * away first: that made the game drop the field, which unmounted our box, and only
+ * then did the tap land on Cancel.
  *
- * Growing upward moves the overhang onto the label above the field, which is text
- * and not interactive, so nothing the player needs is covered either way. The
- * bottom edge is unchanged, and the bottom edge is what the framework's avoidance
- * actually has to clear for a keyboard at the bottom of the screen.
+ * Moving the overhang upward instead was tried and is WRONG, and it is worth
+ * recording why, because the mistake was arithmetic rather than judgement. With
+ * `y = fieldY - 24` and `h = fieldH + 24` the box's BOTTOM edge lands on
+ * `fieldY + fieldH`, not on `fieldY + fieldH + 24` -- it moves up by the margin.
+ * The bottom edge is exactly what the framework's avoidance has to clear, so the
+ * page was pushed 24vp too little and the keyboard covered Cancel and Enter.
+ *
+ * So the margin stays at the bottom, and is dropped only when the user has hidden
+ * the keyboard -- at which point there is nothing for the page to clear and the
+ * taller box is pure obstruction. With it dropped, the box is exactly the game's
+ * field: a tap on the field still raises the keyboard again, and a tap on Cancel
+ * reaches the game.
  */
 const IME_FIELD_MARGIN_VP = 24;
 
@@ -230,7 +236,7 @@ struct Index {
    * carry the distinction itself. See the onBlur handler for how it is set and
    * the `want` branch of pollImeWant for how it is cleared.
    */
-  private imeUserHid: boolean = false;
+  @State imeUserHid: boolean = false;
   /*
    * Until when the game's request is ignored, having just been put away by the
    * user. Without it the game's continued request reopened what the user had
@@ -1207,25 +1213,22 @@ struct Index {
          * ever refuses to appear for a zero-opacity field, this is the line to
          * revisit: give it opacity 0.01 instead.
          *
-         * It sits over the GAME's field and IME_FIELD_MARGIN_VP above it, rather
-         * than at the top of the screen as it used to. That placement is the
-         * entire mechanism: the framework's keyboard avoidance moves the page only
-         * until this focused field is visible, so putting it where the player is
-         * actually looking makes the framework move the game by precisely the
-         * amount that reveals that spot. Anchored at the top it asked for nothing,
-         * so nothing moved and the keyboard covered the field.
+         * It sits over the GAME's field, rather than at the top of the screen as
+         * it used to. That placement is the entire mechanism: the framework's
+         * keyboard avoidance moves the page only until this focused field is
+         * visible, so putting it where the player is actually looking makes the
+         * framework move the game by precisely the amount that reveals that spot.
+         * Anchored at the top it asked for nothing, so nothing moved and the
+         * keyboard covered the field.
          */
         TextInput()
           .id('ime_ui_field')
-          /* Shifted up by the margin so the added height goes above the game's
-           * field rather than over what sits below it; see IME_FIELD_MARGIN_VP.
-           * The clamp only matters for a field within 24vp of the top of the
-           * screen, where a keyboard cannot be covering it anyway -- and a
-           * negative position is a worse thing to hand the layout than a box that
-           * happens to extend a little further down in that one case. */
-          .position({ x: this.imeFieldX, y: Math.max(0, this.imeFieldY - IME_FIELD_MARGIN_VP) })
+          /* Anchored on the field's top-left, and taller than it only while the
+           * keyboard is actually up. See IME_FIELD_MARGIN_VP for why the margin
+           * exists and why a hidden keyboard must not have it. */
+          .position({ x: this.imeFieldX, y: this.imeFieldY })
           .width(this.imeFieldW)
-          .height(this.imeFieldH + IME_FIELD_MARGIN_VP)
+          .height(this.imeFieldH + (this.imeUserHid ? 0 : IME_FIELD_MARGIN_VP))
           .opacity(0)
           .onChange((v: string) => {
             this.sendDelta(v.replace(/[\r\n]/g, ''));
