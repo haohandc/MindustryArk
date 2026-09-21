@@ -138,7 +138,7 @@ APP_NAME = "MindustryArk"
 # So the leading "v" belongs to the release tag and the artifact name, never to
 # the version name, and the safe alphabet for both is digits, letters, dot,
 # underscore and hyphen.
-APP_VERSION = "0.2.0-beta1"
+APP_VERSION = "0.2.0-beta.1"
 
 # versionCode is the integer the platform actually orders installs by.
 #
@@ -152,6 +152,10 @@ APP_VERSION = "0.2.0-beta1"
 #   0.1.0-beta1 -> 10001        0.1.0-beta2 -> 10002        0.1.0 -> 10099
 #   0.1.1-beta1 -> 10101        0.2.0-beta1 -> 20001        1.0.0 -> 1000099
 #
+# The pre-release number may be written with or without a dot -- 0.2.0-beta1 and
+# 0.2.0-beta.1 both give 20001, since neither the spelling nor the letters enter
+# the arithmetic. This project moved to the dotted form at 0.2.0.
+#
 # version_code_for() below derives it, and the module checks its own constant
 # against the derivation, so a version bump that forgets the code fails on
 # import rather than shipping an install that cannot replace the previous one.
@@ -161,15 +165,27 @@ VERSION_CODE = 20001
 def version_code_for(version):
     """versionCode for a version string, per the rule above.
 
-    Handles the only shapes this project uses: M[.m[.p]][-preN]. Anything else
+    Handles the only shapes this project uses: M[.m[.p]][-pre[.]N]. Anything else
     raises rather than guessing -- a wrong versionCode is invisible until an
     install silently refuses to upgrade, which is a bad way to find out.
+
+    The dot before the pre-release number is OPTIONAL, and deliberately so. The
+    pre-release part is not read for the code -- only the digit after it is -- so
+    `beta.1` and `beta1` are the same version as far as install ordering goes and
+    both must parse. Making the dot required would have turned every older version
+    string, including ones already released, into a hard failure.
+
+    (The difference between the two spellings is real but not ours to enforce:
+    semver reads `beta.1` as two identifiers and `beta1` as one, and only
+    identifiers that are purely numeric compare numerically. That matters when a
+    project reaches `beta10`; it does not change the ordering here, which comes
+    from versionCode.)
     """
     import re
 
-    m = re.fullmatch(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([a-z]+)(\d+))?", version)
+    m = re.fullmatch(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([a-z]+)\.?(\d+))?", version)
     if not m:
-        raise ValueError("unrecognised version %r; expected M[.m[.p]][-preN]"
+        raise ValueError("unrecognised version %r; expected M[.m[.p]][-pre[.]N]"
                          % version)
     major = int(m.group(1))
     minor = int(m.group(2) or 0)

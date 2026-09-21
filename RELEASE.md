@@ -174,17 +174,17 @@ web-sourced, and worth re-checking if it ever matters.
 ### Release title
 
 ```
-v0.2.0-beta1 — Mindustry v8 Build 160.4 on HarmonyOS
+v0.2.0-beta.1 — Mindustry v8 Build 160.4 on HarmonyOS
 ```
 
 ### Release body
 
-Pasted verbatim from `dist/RELEASE-BODY-v0.2.0-beta1.md`, which is generated
+Pasted verbatim from `dist/RELEASE-BODY-v0.2.0-beta.1.md`, which is generated
 alongside the artifacts. Keep the two in step: this block is the copy of record,
 and the file in `dist/` is what gets pasted into the release form.
 
 ````markdown
-# Mindustry 鸿蒙移植 · v0.2.0-beta1
+# Mindustry 鸿蒙移植 · v0.2.0-beta.1
 
 在 HarmonyOS / OpenHarmony 上用**自建启动器**运行 Mindustry ——
 内嵌 JDK、从 native 代码创建 JVM、把真正的 SDL3 窗口交给游戏，不套任何现成的模拟层。
@@ -194,7 +194,7 @@ JDK, a JVM created from native code, and a real SDL3 window handed to the game.
 No existing emulation layer involved.
 
 内嵌的游戏版本 / Embedded game: **Mindustry `v8 Build 160.4`**（游戏内显示 `release build 160.4`）
-⚠️ 这是 **Mindustry 自己的**版本号，和本项目的 `v0.2.0-beta1` 是两套体系 /
+⚠️ 这是 **Mindustry 自己的**版本号，和本项目的 `v0.2.0-beta.1` 是两套体系 /
 that is the *game's* version, not this project's — the two move independently.
 
 > ⚠️ **非官方项目 / Unofficial.** 与 Mindustry 及 Anuken 无隶属关系 · Not affiliated with,
@@ -228,8 +228,8 @@ that is the *game's* version, not this project's — the two move independently.
 
 | 文件 / File | 说明 / What it is |
 |---|---|
-| `MindustryArk-v0.2.0-beta1-unsigned.hap` | **应用本体。** 未签名，需自签一次（见下）<br>**This is the app.** Unsigned — sign it once yourself (below) |
-| `MindustryArk-v0.2.0-beta1-payload.zip` | 载荷包。**只有要从源码构建才需要**<br>Build inputs — **only needed to build from source** |
+| `MindustryArk-v0.2.0-beta.1-unsigned.hap` | **应用本体。** 未签名，需自签一次（见下）<br>**This is the app.** Unsigned — sign it once yourself (below) |
+| `MindustryArk-v0.2.0-beta.1-payload.zip` | 载荷包。**只有要从源码构建才需要**<br>Build inputs — **only needed to build from source** |
 
 ⚠️ **未签名的 HAP 装不上**（HarmonyOS 要求先签名）/ **An unsigned HAP will not install**
 (HarmonyOS requires a signature). 用你自己的证书签一次 / sign it once with your own certificate:
@@ -293,7 +293,7 @@ Verified on a HUAWEI MatePad Pro 12.2" 2025 tablet and a HUAWEI Mate 80 Pro phon
 
 ```bash
 # 先准备载荷（见 payload-src/README.md），或解开载荷包
-unzip -o MindustryArk-v0.2.0-beta1-payload.zip
+unzip -o MindustryArk-v0.2.0-beta.1-payload.zip
 # 配置签名（同上），然后 / then configure signing as above and run:
 bash deploy.sh          # 构建 + 校验 + 安装 + 启动 + 收日志
 ```
@@ -318,7 +318,7 @@ bash build.sh assembleHap                       # -> the HAPs, in entry/build/..
 # changes, or the published zip will disagree with the repository:
 python - <<'PY'
 import os, zipfile
-with zipfile.ZipFile("dist/MindustryArk-v0.2.0-beta1-payload.zip", "w",
+with zipfile.ZipFile("dist/MindustryArk-v0.2.0-beta.1-payload.zip", "w",
                      zipfile.ZIP_DEFLATED, compresslevel=9) as z:
     z.write("dist/README-PAYLOAD.txt", "README-PAYLOAD.txt")
     for dp, _d, fs in os.walk("entry/libs"):
@@ -362,7 +362,7 @@ page: four assets, two of them ours and two auto-generated.
 > so the source archives GitHub generates are unchanged — only the commit SHA in the
 > page header moved.
 
-### v0.2.0-beta1 — prepared 2026-09-21, awaiting publication
+### v0.2.0-beta.1 — prepared 2026-09-21, awaiting publication
 
 Assembled and checked locally. **Not published yet** — the release page is created by
 hand, so this records the bytes that were verified so they can be compared against
@@ -370,8 +370,8 @@ whatever ends up uploaded.
 
 | Asset | Size | sha256 |
 |---|---|---|
-| `MindustryArk-v0.2.0-beta1-unsigned.hap` | 272557301 B | `1301c94d36fbb5798a9ef12fbbf50f9de180f9b6bf29063ebb09757565543879` |
-| `MindustryArk-v0.2.0-beta1-payload.zip` | 146836398 B | `f7b08a7e577913c1540e502efb6f26846d48efea08e80d165b7cebb456e3e26a` |
+| `MindustryArk-v0.2.0-beta.1-unsigned.hap` | 272557304 B | `7a246386d66b18af6b63fa8661f38a23a32ef1f204aac4273e59f51bf52e74c4` |
+| `MindustryArk-v0.2.0-beta.1-payload.zip` | 146836398 B | `f7b08a7e577913c1540e502efb6f26846d48efea08e80d165b7cebb456e3e26a` |
 
 **The unsigned HAP was checked for a signature block before this table was written.**
 The four markers (`debug-info`, `device-ids`, `developer-id`, `development-certificate`)
