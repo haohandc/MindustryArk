@@ -105,7 +105,7 @@ showable.
 | versionCode | versionName | Git tag | Release | Date |
 |---|---|---|---|---|
 | **10001** | `0.1.0-beta1` ⚠️ see 2.2 | **`v0.1.0-beta.1` = `332192e`** | [v0.1.0-beta.1](../../releases/tag/v0.1.0-beta.1) | 2026-09-20 |
-| **20001** | `0.2.0-beta.1` | **`v0.2.0-beta.1`** ← to be created | pending | 2026-09-21 |
+| **20001** | `0.2.0-beta.1` | **`v0.2.0-beta.1` = `878e370`** | [v0.2.0-beta.1](../../releases/tag/v0.2.0-beta.1) | 2026-09-21 |
 
 | versionCode | Asset | Size | sha256 |
 |---|---|---|---|
@@ -113,6 +113,34 @@ showable.
 | 10001 | `MindustryArk-v0.1.0-beta.1-payload.zip` | 146,836,356 B | `93db79ffd7974fb93859fc91b3e1de44d939a107c563e1399d430a8e36004adb` |
 | 20001 | `MindustryArk-v0.2.0-beta.1-unsigned.hap` | 272,561,064 B | `9b9f7d19e15845ccc9567c7f93a120fdc3b05b1e2af4c9807fcec478483ee51c` |
 | 20001 | `MindustryArk-v0.2.0-beta.1-payload.zip` | 146,836,398 B | `f7b08a7e577913c1540e502efb6f26846d48efea08e80d165b7cebb456e3e26a` |
+
+### Verified as published — v0.2.0-beta.1, 2026-09-21
+
+| | |
+|---|---|
+| Release id | `392676472` |
+| Tag | `v0.2.0-beta.1` = **`878e370fa2c2b546305930fcc953040d16c1e458`** ✅ the commit the docs were finished at |
+| Pre-release | ✅ set |
+| Assets | **two**, and neither is the signed HAP ✅ |
+
+⭐ **Both assets were downloaded from the release and hashed again, and both match the
+local files byte for byte:**
+
+| Asset | sha256 (uploaded == local) |
+|---|---|
+| `…-unsigned.hap` | `9b9f7d19e15845ccc9567c7f93a120fdc3b05b1e2af4c9807fcec478483ee51c` |
+| `…-payload.zip` | `f7b08a7e577913c1540e502efb6f26846d48efea08e80d165b7cebb456e3e26a` |
+
+That is what closes the last gap: the unsigned HAP was checked for a signature block
+locally, and equal hashes mean the published bytes ARE those checked bytes. A local check
+alone would only ever be evidence about the local file.
+
+⚠️ **The tag target had to be corrected while creating this release.** The picker's
+"recent commits" list was stale and stopped at `94a7fee`, the commit before the
+documentation split. Selecting `master` instead gave `878e370`, which is what the tag
+wants — safe here because we were not going to push again before publishing. **The
+lesson from 2.3 applies: check what the target actually resolved to, do not assume the
+picker is current.**
 
 ⚠️ **After uploading, recompute the hash and compare it with what GitHub displays.** Equal
 hashes are what closes the gap between "verified locally" and "actually published" — a
