@@ -77,7 +77,8 @@ HarmonyOS 7 / API 26 真机验证：**HUAWEI MatePad Pro 12.2" 2025** 平板、
   焦点只有一个，所以只有这两种状态。
 - ⚠️ **PC / 触屏模式切换需要重启应用才生效。** 不是缺陷：Mindustry 的输入层和 UI 都派生自
   一个**启动时写入**的值，中途改会让两者不一致。游戏内自带的「鼠标 + 键盘操控」开关可即时切换操控方式。
-- ⚠️ **2in1（PC）上沉浸模式不生效**，状态栏和导航条会留着。平板和手机正常。
+- ⚠️ **2in1（PC）上沉浸模式不生效** —— 任务栏和窗口标题栏会留着（这是平台限制，不是没做）。
+  ⚠️ 实测确认。**但功能不受影响**：悬浮球在 PC 上**能正常隐藏**（PC 是独立窗口，窗口外的部分被系统裁掉）。
 - **游戏内的文件浏览器用的是 Mindustry 自带**的兜底实现（Arc 的文件对话框库是 glibc 链接，鸿蒙加载不了）。
 - **导入游戏数据后游戏会主动退出** —— 这是 Mindustry 的设计（用新数据重启），**看起来像崩溃但不是**。
 - ⛔ **没有多人联机、没有成就、没有模组浏览器**（与桌面版相比）。
@@ -179,7 +180,10 @@ HarmonyOS 7 / API 26.
   both its input layer and its UI from one value written at **startup**, and changing it
   midway would leave the two disagreeing. Mindustry's own "mouse + keyboard control" toggle
   changes the controls immediately.
-- ⚠️ **Immersive mode does not apply on 2in1** (PC); the bars stay. Tablet and phone are unaffected.
+- ⚠️ **Immersive mode does not apply on 2in1** (PC) — the taskbar and window title bar stay.
+  That is a platform limit, not something left undone. ⚠️ Measured, not assumed.
+  **Nothing is broken by it**, though: the floating ball **does** hide normally on PC, because the
+  app runs in its own window and the system clips what falls outside it..
 - **The in-game file browser is Mindustry's own fallback** — Arc's file-dialog native is
   glibc-linked and cannot load here.
 - **Importing game data makes the game exit on purpose**, so it restarts with the new data.
