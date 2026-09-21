@@ -101,6 +101,17 @@ TARGETS = [
     ("entry/src/main/resources/base/media/background.png", 1024, "background"),
     ("entry/src/main/resources/base/media/foreground.png", 1024, "foreground"),
     ("entry/src/main/resources/base/media/startIcon.png", 144, "flat"),
+    # The floating ball's glyph: the SAME turret, alone on transparency.
+    #
+    # Not the layered icon and not the composed plate -- the ball is a small dark
+    # circle, and a blue plate inside it would just read as a filled dot. Only the
+    # silhouette goes in.
+    #
+    # 204 = 34 x 6, an exact integer multiple, for the same reason as the plate: a
+    # fractional factor makes some pixel blocks a row taller than their neighbours,
+    # which reads as a rendering fault. The ball is around 61vp, i.e. ~183px at the
+    # common 3x density, so this is a slight downscale rather than an upscale.
+    ("entry/src/main/resources/base/media/ball_icon.png", 204, "turret"),
     ("AppScope/resources/phone-sdpi/media/app_icon.png", 41, "flat"),
     ("AppScope/resources/phone-mdpi/media/app_icon.png", 54, "flat"),
     ("AppScope/resources/phone-ldpi/media/app_icon.png", 81, "flat"),
@@ -171,6 +182,20 @@ def make_foreground(turret):
     return fg
 
 
+def make_turret_square(turret, size):
+    """The turret alone on transparency, at an exact integer multiple of its own size.
+
+    Returns None if the size is not a whole multiple. Refusing rather than rounding is
+    the point: a fractional scale silently produces uneven pixel blocks, and the icon
+    work already spent rounds on that failure mode once.
+    """
+    if size % turret.width != 0:
+        print("FAIL %d is not an integer multiple of the %dpx frame"
+              % (size, turret.width))
+        return None
+    return turret.resize((size, size), Image.NEAREST)
+
+
 def main():
     check_only = "--check" in sys.argv
 
@@ -183,11 +208,22 @@ def main():
     flat = bg.copy()
     flat.alpha_composite(fg)
 
+    # Built lazily: a wrong size should be reported once, clearly, rather than
+    # producing a file of the wrong dimensions.
+    turret_cache = {}
+
     made = 0
     for rel, size, kind in TARGETS:
         path = os.path.join(config.PROJECT_ROOT, rel)
-        layer = {"background": bg, "foreground": fg, "flat": flat}[kind]
-        out = layer if size == CANVAS else layer.resize((size, size), Image.LANCZOS)
+        if kind == "turret":
+            if size not in turret_cache:
+                turret_cache[size] = make_turret_square(turret, size)
+            out = turret_cache[size]
+            if out is None:
+                return 1
+        else:
+            layer = {"background": bg, "foreground": fg, "flat": flat}[kind]
+            out = layer if size == CANVAS else layer.resize((size, size), Image.LANCZOS)
         if check_only:
             print("would write %s %dx%d (%s)" % (rel, size, size, kind))
             continue
