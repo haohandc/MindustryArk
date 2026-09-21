@@ -209,8 +209,12 @@ that is the *game's* version, not this project's — the two move independently.
 
 ## ⭐ 这一版新增 / What is new in this release
 
-**上个 beta 之后有 14 个提交，以下是全部用户可见的变化。**
-*Fourteen commits since the last beta; these are all the user-visible changes.*
+**上一个 beta 以来的全部用户可见变化。**
+（原始提交列表见页面底部的 **Full Changelog** —— 那里的计数是自动的，
+这里手写一个数字只会过期。）
+*All the user-visible changes since the last beta.*
+(The raw commit list is the **Full Changelog** link at the foot of the page;
+a count written here by hand would only go stale.)
 
 | 新增 / Added | 说明 / Notes |
 |---|---|
