@@ -113,7 +113,20 @@ SRC_CXXABI_SHIM = _env("ARK_SRC_SHIM", os.path.join(JDK_SLIM, "lib", "libcxxabi_
 # ---------------------------------------------------------------------------
 CPP = os.path.join(PROJECT_ROOT, "entry", "src", "main", "cpp")
 LIBS = os.path.join(PROJECT_ROOT, "entry", "libs", "arm64-v8a")
-OUT_DIR = os.path.join(PROJECT_ROOT, "entry", "build", "default", "outputs", "default")
+
+# WHICH build product's output to look at. The build profile defines two --
+# "default" (debug certificate, the one deploy.sh puts on a device) and
+# "release" (the AppGallery certificate) -- and the product name is a path
+# component, so the two do not overwrite each other:
+#
+#     entry/build/<product>/outputs/default/
+#
+# Defaulting to "default" keeps every existing invocation pointing where it
+# already pointed; ARK_PRODUCT=release is what a store build wants. This is
+# deliberately NOT auto-detected from "the newest file anywhere": with two
+# products on disk, newest-wins silently starts describing the other build.
+PRODUCT = _env("ARK_PRODUCT", "default")
+OUT_DIR = os.path.join(PROJECT_ROOT, "entry", "build", PRODUCT, "outputs", "default")
 
 # The three things that have to agree with entry/build-profile.json5's
 # artifactName and AppScope/app.json5's versionName. verify_hap.py reads the
@@ -138,23 +151,41 @@ APP_NAME = "MindustryArk"
 # So the leading "v" belongs to the release tag and the artifact name, never to
 # the version name, and the safe alphabet for both is digits, letters, dot,
 # underscore and hyphen.
-APP_VERSION = "0.2.0-beta.2"
+APP_VERSION = "0.2.0.2"
 
 # versionCode is the integer the platform actually orders installs by.
 #
 #   base = major*1000000 + minor*10000 + patch*100
-#   then +1..98 for a pre-release, +99 for the final release of that version
+#   then the last two digits: 1..98 for a build of that version, 99 for the
+#   final release of it
 #
 # which keeps the ordering a semver reader expects (a beta sorts below its own
 # final release) while staying a plain int32, which is all the field accepts:
 # measured, 0 <= versionCode <= 2147483647.
 #
-#   0.1.0-beta1 -> 10001        0.1.0-beta2 -> 10002        0.1.0 -> 10099
-#   0.1.1-beta1 -> 10101        0.2.0-beta1 -> 20001        1.0.0 -> 1000099
+#   0.1.0-beta1 -> 10001        0.1.0.1 -> 10001        0.1.0 -> 10099
+#   0.1.1-beta1 -> 10101        0.2.0.1 -> 20001        1.0.0 -> 1000099
+#   0.2.0.2     -> 20002
+#
+# THE FOURTH SEGMENT REPLACED THE PRE-RELEASE SUFFIX, and the two share one
+# slot because they answer the same question -- which build of this version.
+#
+#   WHY: AppGallery's admission check rejects a versionName that is not purely
+#        digits and dots. Measured, not read off a document: uploading an .app
+#        whose versionName was `0.2.0-beta.2` returned 版本名称规范性检测 不通过
+#        (55/100), and there is no way past it -- the upload cannot proceed. The
+#        check recommends "A.B.C.D", which is also the form HarmonyOS uses for
+#        its own system apps.
+#
+#   AND WHY THE OLD SPELLING STILL HAS TO PARSE: `0.2.0-beta.1` was released and
+#        tagged, and version_code_for() is called on version strings that came
+#        from somewhere other than this constant. A regex that only accepted the
+#        new form would turn an already-published tag into a hard failure.
 #
 # The pre-release number may be written with or without a dot -- 0.2.0-beta1 and
 # 0.2.0-beta.1 both give 20001, since neither the spelling nor the letters enter
-# the arithmetic. This project moved to the dotted form at 0.2.0.
+# the arithmetic. This project moved to the dotted form at 0.2.0, and off the
+# suffix entirely at 0.2.0.2.
 #
 # version_code_for() below derives it, and the module checks its own constant
 # against the derivation, so a version bump that forgets the code fails on
@@ -165,9 +196,14 @@ VERSION_CODE = 20002
 def version_code_for(version):
     """versionCode for a version string, per the rule above.
 
-    Handles the only shapes this project uses: M[.m[.p]][-pre[.]N]. Anything else
-    raises rather than guessing -- a wrong versionCode is invisible until an
+    Handles the only shapes this project uses: M[.m[.p[.b]]][-pre[.]N]. Anything
+    else raises rather than guessing -- a wrong versionCode is invisible until an
     install silently refuses to upgrade, which is a bad way to find out.
+
+    At most one of the fourth segment and the pre-release suffix may be present:
+    they occupy the same slot, so a string carrying both has two contradictory
+    answers to "which build is this", and picking one silently would be the same
+    class of mistake as guessing.
 
     The dot before the pre-release number is OPTIONAL, and deliberately so. The
     pre-release part is not read for the code -- only the digit after it is -- so
@@ -183,18 +219,50 @@ def version_code_for(version):
     """
     import re
 
-    m = re.fullmatch(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([a-z]+)\.?(\d+))?", version)
+    m = re.fullmatch(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:\.(\d+))?"
+                     r"(?:-([a-z]+)\.?(\d+))?", version)
     if not m:
-        raise ValueError("unrecognised version %r; expected M[.m[.p]][-pre[.]N]"
+        raise ValueError("unrecognised version %r; expected M[.m[.p[.b]]][-pre[.]N]"
                          % version)
     major = int(m.group(1))
     minor = int(m.group(2) or 0)
     patch = int(m.group(3) or 0)
-    pre = int(m.group(5) or 0)
-    if pre > 98:
-        raise ValueError("pre-release number %d is too large (max 98; 99 means "
-                         "the final release)" % pre)
-    return major * 1000000 + minor * 10000 + patch * 100 + (pre if pre else 99)
+    build = m.group(4)
+    pre = m.group(6)
+
+    if build is not None and pre is not None:
+        raise ValueError("%r carries both a fourth segment and a pre-release "
+                         "number; they mean the same thing -- which build of "
+                         "this version -- so give one or the other" % version)
+
+    if build is not None:
+        n = int(build)
+        # A 0 here is worth its own message rather than a range error: the
+        # plausible way to produce one is a build tool padding a three-segment
+        # name out to four, and that would put a version name and its
+        # versionCode on opposite sides of the final-release boundary.
+        if n == 0:
+            raise ValueError("fourth segment is 0 in %r -- that is not a build "
+                             "number, and it usually means something padded a "
+                             "three-segment name; write the segment explicitly"
+                             % version)
+        # 99 is rejected here even though it IS the final-release slot, because
+        # accepting it would make `0.2.0.99` a second spelling of `0.2.0` -- two
+        # names for one version, which is how "which build is this" starts
+        # getting two answers. One way to say the final release, and it is to
+        # leave the segment off.
+        if not 1 <= n <= 98:
+            raise ValueError("build number %d out of range 1..98 (99 means the "
+                             "final release -- write the version with no fourth "
+                             "segment)" % n)
+    elif pre is not None:
+        n = int(pre)
+        if not 1 <= n <= 98:
+            raise ValueError("pre-release number %d out of range 1..98 (99 means "
+                             "the final release)" % n)
+    else:
+        n = 99
+    return major * 1000000 + minor * 10000 + patch * 100 + n
 
 
 if version_code_for(APP_VERSION) != VERSION_CODE:
@@ -260,7 +328,7 @@ GROUPS = [
     ("Outputs", [
         ("native sources", CPP),
         ("payload dest", LIBS),
-        ("hap output", OUT_DIR),
+        ("hap output (product=%s)" % PRODUCT, OUT_DIR),
     ]),
 ]
 

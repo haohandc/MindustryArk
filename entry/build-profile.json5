@@ -51,6 +51,14 @@
         }
       },
       "nativeLib": {
+        // Overrides the target-level strip:false above, and ONLY for this
+        // buildMode -- measured, not assumed: the same tree built with
+        // buildMode=debug carries libjvm_real.so at 25,322,128 B with .symtab
+        // and .debug_str, and with buildMode=release at 20,108,408 B with
+        // neither. So the pin hashes in verify_hap.py describe debug packages;
+        // a store package mismatches on exactly the three natives it strips.
+        // That FAIL is the gate working, not a stale expectation -- do not
+        // re-pin it. See RELEASE-MAINTENANCE.md 2.2.
         "debugSymbol": {
           "strip": true,
           "exclude": []
@@ -64,11 +72,14 @@
       "output": {
         // Gives entry-default-signed.hap a name that says what it is.
         //
-        // Bump this together with versionName in AppScope/app.json5 and HAP_BASE
-        // in deploy.sh. verify_hap.py asserts that all three agree, because a
-        // download whose file name says one version and whose contents say
-        // another is worse than one with no version in the name at all.
-        "artifactName": "MindustryArk-v0.2.0-beta.2"
+        // This is a HAND-WRITTEN COPY of a name that is derived elsewhere, which
+        // is the one thing to remember about it. Bump it together with
+        // APP_VERSION in scripts/config.py and versionName in AppScope/app.json5
+        // -- those are the three places the version is written down, and
+        // verify_hap.py asserts that all three agree, because a download whose
+        // file name says one version and whose contents say another is worse
+        // than one with no version in the name at all.
+        "artifactName": "MindustryArk-v0.2.0.2"
       }
     },
   ]

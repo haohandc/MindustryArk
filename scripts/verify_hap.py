@@ -52,19 +52,57 @@ def find_hap():
     package is what gets verified: signing appends a signature block and does
     not change the payload being checked here, and preferring it means the check
     does not depend on which naming convention hvigor happens to be using.
+
+    WHICH PRODUCT is config.OUT_DIR, i.e. ARK_PRODUCT, and it is never guessed.
+    The build profile defines "default" and "release", whose outputs live in
+    separate directories; a search rooted at entry/build/ would find both and
+    then have to pick, and "newest" would quietly start verifying the other
+    product the moment somebody built it. Enumerating only the requested
+    product's directory means a store build cannot be checked by accident
+    against the device build.
     """
-    root = os.path.join(PROJECT_ROOT, "entry", "build", "default", "outputs", "default")
+    root = config.OUT_DIR
     hits = []
     for dp, _d, fs in os.walk(root):
         for f in fs:
             if f.endswith(".hap"):
                 hits.append(os.path.join(dp, f))
     if not hits:
+        # Naming the product and the directory matters here: "no HAP" and
+        # "you asked for the wrong product" look identical otherwise, and this
+        # project has already spent a round looking at entry/build/default/
+        # while the release build sat in entry/build/release/.
+        print("!! no .hap under %s" % root)
+        print("   (ARK_PRODUCT=%s -- set ARK_PRODUCT=release for a store build)" % config.PRODUCT)
         return None
-    unsigned = sorted(p for p in hits if p.endswith("-unsigned.hap"))
+
+    # ONLY THE CURRENT VERSION. A product's output directory accumulates: after
+    # a version bump it holds the previous version's packages too, and hvigor
+    # does not clean them out. Sorting the whole directory and taking the first
+    # is not a tie-break here, it is a coin toss -- measured, `-v0.2.0-beta.2-`
+    # sorts BEFORE `-v0.2.0.2-` because `-` (0x2D) < `.` (0x2E), so the stale
+    # build would have been the one verified, and the version gate would then
+    # have reported a mismatch for the file it should not have opened.
+    #
+    # Filtering on the artifact name instead makes the failure say the true
+    # thing: "no build of THIS version here", plus what is here.
+    want = config.ARTIFACT_NAME
+    hits.sort()
+    mine = [p for p in hits if os.path.basename(p).startswith(want)]
+    others = [p for p in hits if p not in mine]
+    if others:
+        print("   NOTE  %d .hap(s) here are a DIFFERENT version, ignored:" % len(others))
+        for p in others:
+            print("         %s" % os.path.basename(p))
+    if not mine:
+        print("!! no .hap for version %s under %s" % (config.APP_VERSION, root))
+        print("   run: bash build.sh assembleHap --mode module "
+              "-p product=%s -p buildMode=<debug|release>" % config.PRODUCT)
+        return None
+    unsigned = sorted(p for p in mine if p.endswith("-unsigned.hap"))
     if unsigned:
         return unsigned[0]
-    return sorted(hits)[0]
+    return mine[0]
 
 
 def check_version_matches_name(hap, ok_ref):
