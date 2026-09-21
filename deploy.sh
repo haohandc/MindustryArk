@@ -27,6 +27,12 @@
 #   image is opened by java.base as a file). Executable memory at runtime comes
 #   from anonymous mappings, which this platform permits regardless.
 #
+#   ⚠️ That is about ONE permission. The other one this app declares,
+#   ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY, DOES have to go through the
+#   ACL route -- but only for an AppGallery upload, which this script does not
+#   do. A debug profile is not checked that way, so nothing here changes.
+#   See docs/BUILDING.md, 'ACL (restricted permissions)'.
+#
 #   So the ordinary signing config in build-profile.json5 is enough, and this
 #   script installs what hvigor signed. Set that config up once with
 #   DevEco: File -> Project Structure -> Signing Configs -> Automatically

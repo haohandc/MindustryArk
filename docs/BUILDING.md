@@ -74,6 +74,38 @@ bash build.sh assembleApp --mode project -p product=release -p buildMode=release
 
 写 `.app` 而非 `.hap`：应用市场只收 `.app`，`.hap` 是单模块包、用于本地安装。
 
+#### ⚠️ 产物会累积，旧版本不会被自动删掉
+
+`artifactName` 是**文件名的一部分** ⇒ **改版本号或换构建模式时，hvigor 写一个新名字的包，
+但不会删掉旧的**（它已经不产那个名字了，就不认旧文件是自己的）。两个 product 目录
+（`entry/build/<product>/outputs/default/`）都会这样一代代堆。
+
+⚠️ **别靠文件名判断产物是什么版本** —— 读包自己的 `pack.info`：
+
+```bash
+python - <<'EOF'
+import json, zipfile, glob
+for p in sorted(glob.glob("entry/build/**/outputs/default/*.hap", recursive=True)):
+    v = json.loads(zipfile.ZipFile(p).read("pack.info").decode())["summary"]["app"]["version"]
+    print("%-50s name=%-14s code=%s" % (p.split("/")[-1], v["name"], v["code"]))
+EOF
+```
+
+⚠️ 这个坑**同一天误导过两次检查**：排序取"第一个"会拿到旧包（`-v0.2.0-beta.2-`
+按字节序排在 `-v0.2.0.2-` **前面**，因为 `-` 0x2D < `.` 0x2E）。
+
+#### 装到哪台设备：`ARK_HDC_TARGET`
+
+`deploy.sh` **带 `uninstall`**，所以它**拒绝在多设备时猜测**：
+
+```bash
+hdc list targets                                  # 先看有哪几台
+ARK_HDC_TARGET=<上面列的 id> bash deploy.sh        # 显式指定
+```
+
+只有一台连着时它会自动用那一台；**零台或多台都会停下并说明**。
+⚠️ 单设备时没有必要设这个变量。
+
 #### ACL（受限权限）—— 只有上架会碰到
 
 `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY` 的权限级别在 API 12 变更为
@@ -153,10 +185,67 @@ bash deploy.sh                   # build + verify + install + launch + log
 packaging check that fails, because each of those once produced a green build
 that installed the *previous* binary.
 
+#### The store package (`.app`) is a different command
+
+```bash
+bash build.sh assembleApp --mode project -p product=release -p buildMode=release
+```
+
+⭐ **`assembleApp` exists only under `--mode project`**; with `--mode module` it
+answers `Task [ 'assembleApp' ] was not found`. Output lands in
+`build/outputs/release/` — **the product name is a path component**
+(`build/outputs/<product>/`); a package was once looked for under
+`entry/build/default/` when it was really in `entry/build/release/`.
+
+An `.app`, not a `.hap`: AppGallery takes only `.app`; a `.hap` is one module, for
+local installs.
+
+#### ⚠️ Outputs accumulate, and the old ones are never deleted
+
+`artifactName` is part of the file NAME, so a version bump or a mode switch makes
+hvigor write a package under the new name and leave the old one in place — it no
+longer produces that name, so it does not treat the old file as its output. Both
+product directories (`entry/build/<product>/outputs/default/`) collect a pair per
+bump.
+
+⚠️ **Do not use the file name to find out what version a package is.** Read the
+package's own `pack.info` (the snippet is in the Chinese section above).
+
+This misled two separate checks on the same day: taking "the first" after sorting
+gets the stale package, because `-v0.2.0-beta.2-` sorts before `-v0.2.0.2-`
+(`-` is 0x2D, `.` is 0x2E).
+
+#### Which device: `ARK_HDC_TARGET`
+
+`deploy.sh` runs `uninstall`, so it **refuses to guess when more than one device
+is attached**:
+
+```bash
+hdc list targets                                   # see what is connected
+ARK_HDC_TARGET=<id from that list> bash deploy.sh  # state it explicitly
+```
+
+With exactly one device it uses it; with zero or several it stops and says why.
+Nothing needs setting in the single-device case.
+
+#### ACL (restricted permissions) — only the store route meets it
+
+`ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY` became level `normal` in API 12,
+but Huawei requires it to keep going through the restricted/ACL route for
+compatibility. **AppGallery's admission check compares the package's declarations
+against the Profile's ACL list**, and a missing entry fails the upload — and the
+package is not what gets changed:
+
+1. request that ACL in AGC
+2. **regenerate the Release Profile** from the result
+3. re-sign and re-upload
+
+⚠️ Local installs (product `default`, debug certificate) need none of this — a
+debug profile is not checked this way.
+
 Signing must be configured once: DevEco Studio → File → Project Structure →
 Signing Configs → Automatically generate signature. `deploy.sh` installs the
-signed HAP that hvigor produces; there is no ACL re-signing step, because this
-app needs no restricted permissions (see [PERMISSIONS.md](PERMISSIONS.md)).
+signed HAP that hvigor produces.
 
 ⚠️ **That signature is for your own machine.** DevEco's automatically generated
 profile is a *debug* profile, which names the device UDIDs it is valid for, and

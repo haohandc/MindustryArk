@@ -7,6 +7,9 @@
 
 只申请 `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY`，用于从「下载」目录导入存档与游戏数据包。
 
+⚠️ 上架应用市场时，**上面那一条要走 ACL 受限权限流程**（权限级别虽是 `normal`，
+但官方要求保持受限申请方式）；本地安装不受影响。见 [BUILDING.md](BUILDING.md)。
+
 **刻意不申请**：`ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY`。
 那是「让可写沙箱可执行」的 **ACL 受限权限**。实测证明**并不需要**它 ——
 JDK 在 HAP 里，沙箱只存数据 —— 而**正是因为没有它，别人才能用普通签名安装本构建**。
@@ -16,6 +19,10 @@ JDK 在 HAP 里，沙箱只存数据 —— 而**正是因为没有它，别人�
 
 Only `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY`, so the player can import
 saves and game-data exports from Download.
+
+⚠️ For an AppGallery submission, **the one above goes through the ACL route**
+(its level is `normal`, but Huawei requires the restricted application path for
+compatibility); local installs are unaffected. See [BUILDING.md](BUILDING.md).
 
 Deliberately **not** requested: `ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY`.
 That is the restricted ACL permission for making the writable sandbox

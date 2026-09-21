@@ -82,6 +82,53 @@ for fn in ["…-unsigned.hap", "….hap"]:
 PY
 ```
 
+### ⚠️ Committing to a `skip-worktree` file does not do what it looks like
+
+`build-profile.json5` is protected with `git update-index --skip-worktree`, which
+is what keeps the two `signingConfigs` -- including two password blobs -- from
+being committed. That protection has a sharp edge worth knowing before the next
+version bump touches it.
+
+**`git commit -- <path>` reads the WORKING TREE, not the index.** On a
+skip-worktree file, git refuses, with a message that names a different feature
+entirely:
+
+```
+The following paths and/or pathspecs matched paths that exist
+outside of your sparse-checkout definition, so will not be
+updated in the index:
+build-profile.json5
+```
+
+Measured: `git sparse-checkout list` answers *"this worktree is not sparse"* --
+there is no sparse checkout. The message is about skip-worktree, which is the
+older mechanism for the same idea. Do not go looking for a sparse-checkout
+config that does not exist. (Note `git grep` does honour skip-worktree, so
+scanning for secrets that way is safe.)
+
+**The safe way to edit the committed copy**, used when §「the ACL comment」 above
+was changed:
+
+1. `git show HEAD:build-profile.json5 > tmp` -- start from the COMMITTED version,
+   the one with `"signingConfigs": []`, never from the working copy.
+2. Edit `tmp`, then move it into place.
+3. `git update-index --no-skip-worktree build-profile.json5`
+4. `git add build-profile.json5`, then **check the index before committing**:
+   ```bash
+   git show :build-profile.json5 | grep -cE '"(storePassword|keyPassword)": "'   # must be 0
+   git show :build-profile.json5 | grep -n "signingConfigs"                      # must be []
+   ```
+5. Commit with **no pathspec** (a bare `git commit` commits the index, which is
+   what was just verified).
+6. Restore the working copy from the backup kept outside the repository, then
+   `git update-index --skip-worktree build-profile.json5` again.
+
+⚠️ **Confirm step 4 before step 5, every time.** The whole point of the
+protection is that a mistake here is not recoverable by editing a later commit --
+the password stays in the history, and unlike a leaked password a `.p12` cannot
+be rotated without the app getting a new certificate.
+
+
 ### If a pre-signed build is ever genuinely wanted
 
 It needs a **release certificate** and a Release profile from AppGallery Connect, which
@@ -353,6 +400,75 @@ header moved. Worth keeping on record, because "the tag moved" reads alarming an
 case it is not.
 
 ---
+
+### 2.8 A product's output directory accumulates, and nothing cleans it
+
+**`artifactName` is part of the file NAME.** Change the version, or change the
+build mode, and hvigor writes a package under the new name -- and does **not**
+delete the old one. It does not consider the old files its output any more,
+because it no longer produces that name. So both product directories collect a
+pair per version bump, per build mode:
+
+```
+entry/build/default/outputs/default/
+    MindustryArk-v0.2.0-beta.2-unsigned.hap   2026-09-21 22:39   <- stale
+    MindustryArk-v0.2.0-beta.2.hap            2026-09-21 22:39   <- stale
+    MindustryArk-v0.2.0.2-unsigned.hap        2026-09-22 00:07   <- current
+    MindustryArk-v0.2.0.2.hap                 2026-09-22 00:07   <- current
+```
+
+⭐ **This misled two separate checks on the same day**, which is why it is
+written down rather than just cleaned:
+
+1. `verify_hap.py` used to sort the directory and take the first `.hap`. `-v0.2.0-beta.2-`
+   sorts **before** `-v0.2.0.2-` (`-` is 0x2D, `.` is 0x2E), so the stale package
+   would have been the one verified. Fixed by filtering on `config.ARTIFACT_NAME`.
+2. A hand-built `product=default` + `buildMode=debug` appeared to still carry the
+   old version name. It did not -- the build was correct, and the old files were
+   sitting next to it.
+
+⚠️ **The file name is not evidence.** To ask a package what version it is, read
+its own `pack.info`:
+
+```bash
+python - <<'EOF'
+import json, zipfile, glob
+for p in sorted(glob.glob("entry/build/**/outputs/default/*.hap", recursive=True)):
+    v = json.loads(zipfile.ZipFile(p).read("pack.info").decode())["summary"]["app"]["version"]
+    print("%-50s name=%-14s code=%s" % (p.split("/")[-1], v["name"], v["code"]))
+EOF
+```
+
+`deploy.sh` is not affected: it removes the two names it is about to build
+before building, so the stale-package failure mode it was written for cannot
+recur there.
+
+
+### 2.9 The store build and the GitHub build cannot replace each other
+
+Both channels carry the same `versionCode` (20002) and different signatures:
+
+| Channel | Package | Signature |
+|---|---|---|
+| AppGallery | `.app` | **release** certificate (from AGC) |
+| GitHub | unsigned `.hap` | the user's own, via DevEco Studio |
+
+A platform refuses to replace an installed app with one signed by a different
+certificate. With the versionCode equal and the certificates different, the
+device has no way to treat one as an update of the other -- so installing the
+GitHub build over a store install fails, and clearing it out costs the save data.
+
+🔶 **Inferred, not measured**: the certificate rules are the platform's general
+behaviour and were not exercised with these two packages here -- the store build
+has never been installed anywhere (see 2.2, "open risk"). What is certain from
+the profile is that the two are signed differently: the store `.app`'s leaf is
+the release certificate, verified byte-for-byte in 2.3.
+
+⇒ **When the store build actually ships**, RELEASE.md's download section needs a
+line saying so, because the user who hits it will otherwise report it as a bug.
+Not written into RELEASE.md yet, deliberately: that page describes what is
+downloadable today, and today the store build is not.
+
 
 ## 3. Release page copy
 

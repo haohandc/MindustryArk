@@ -43,8 +43,13 @@
 2. **File → Project Structure → Signing Configs → Automatically generate signature**
 3. `bash deploy.sh`
 
-⭐ **本项目不申请任何受限权限**（没有需要向 AppGallery Connect 申请的 ACL 权限），
-所以**自动生成的证书就够了**，不必去申请任何东西。
+⭐ **本构建不申请让沙箱可执行的受限权限**
+（`ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY`），
+所以**本地安装只要自动生成的证书就够了**。
+
+⚠️ 这只针对**本地安装**。若你要**上架应用市场**，另一条已申请的权限
+（`READ_WRITE_DOWNLOAD_DIRECTORY`）必须走 ACL 流程 —— 见
+[BUILDING.md](docs/BUILDING.md) 的「ACL（受限权限）」。
 
 ### 只想装、不想构建
 
@@ -149,9 +154,14 @@ Embedded game version: **Mindustry `v8 Build 160.4`** (in-game: `release build 1
 2. **File → Project Structure → Signing Configs → Automatically generate signature**
 3. `bash deploy.sh`
 
-⭐ **This project requests no restricted permission** (no ACL permission requiring an
-AppGallery Connect application), so **an automatically generated certificate is
-sufficient**.
+⭐ **This build does not request the restricted permission that makes the sandbox
+executable** (`ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY`), so **for a
+local install an automatically generated certificate is sufficient**.
+
+⚠️ That is the local install. For an **AppGallery submission**, the other
+permission this app declares (`READ_WRITE_DOWNLOAD_DIRECTORY`) has to go through
+the ACL route — see "ACL (restricted permissions)" in
+[BUILDING.md](docs/BUILDING.md).
 
 ### Install only, without building
 
