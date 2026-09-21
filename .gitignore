@@ -77,6 +77,24 @@ quit_timing.sh
 jvmrun.sh
 tryopts.sh
 
+# ---------------------------------------------------------------------------
+# Signing material -- NEVER in git.
+#
+# A .p12 holds the PRIVATE KEY. Anyone who gets it can sign releases as this
+# developer, and unlike a leaked password it cannot be rotated without the app
+# getting a new certificate. The .cer and .p7b are the public halves and are far
+# less dangerous, but they identify the account, so they stay out too.
+#
+# These patterns are a backstop, not the plan: the real protection is keeping the
+# files outside the repository (DevEco defaults to ~/.ohos/config, which is
+# already outside). This exists so that dropping one in here "for a moment" does
+# not end up committed by a `git add -A`.
+# ---------------------------------------------------------------------------
+*.p12
+*.csr
+*.cer
+*.p7b
+
 # Release artifacts assembled locally (the payload zip is ~140 MB -- it goes on
 # the Releases page, never in git; see the note on entry/libs above).
 dist/
