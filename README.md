@@ -29,18 +29,18 @@ saves can be imported from the Download folder.
 | Graphics | OpenGL ES via SDL3 |
 | Audio | OHAudio, through a self-built `libarcarm64.so` with an SDL3 backend |
 | Touch | Works, including two-finger pinch zoom |
-| Keyboard | Works (physical keyboard; WASD and ESC). Typing into game text fields uses an on-screen field with full input-method support — see limitations |
+| Keyboard | Works (physical keyboard; WASD and ESC). Typing into game text fields uses an on-screen field with full input-method support — see [limitations](docs/LIMITATIONS.md) |
 | Gamepad / mouse | Mouse works. Gamepad untested |
 | Save import/export | Works, from/to the Download folder |
-| Desktop/mobile mode switch | **Not implemented** |
+| Desktop/mobile mode switch | Switches, but needs an app restart — see the [FAQ](docs/FAQ.md) |
 
-## Getting it
+## How to download and install
 
 Prebuilt artifacts are on the
 **[Releases page](https://github.com/haohandc/MindustryArk/releases)**:
 the unsigned HAP (the app) and a payload zip (only needed to build from source).
 
-An unsigned HAP will not install — HarmonyOS requires a signature. Either:
+An unsigned HAP will not install. Two ways around that:
 
 **① An installer tool (no dev environment needed, recommended)**
 
@@ -49,174 +49,35 @@ An unsigned HAP will not install — HarmonyOS requires a signature. Either:
 | [小白调试助手 (Auto-Installer)](https://github.com/likuai2010/auto-installer/releases/latest) | Free cross-platform HarmonyOS debugging tool — **signing and installing in one step** |
 | [HoKit](https://github.com/yabi-zzh/HoKit/releases/latest) | **One-click re-signing**, device mirroring, perf monitoring, file management. Windows / macOS / Linux |
 
-This project is also listed in
-[Zitann/HarmonyOS-Haps](https://github.com/Zitann/HarmonyOS-Haps), a HarmonyOS Next HAP collection.
+> This project is also listed in
+> [Zitann/HarmonyOS-Haps](https://github.com/Zitann/HarmonyOS-Haps), a HarmonyOS Next HAP collection.
 
 **② Sign it yourself with DevEco Studio**
 
 Open the project, **File → Project Structure → Signing Configs → Automatically
-generate signature**, then `bash deploy.sh`. An automatically generated profile is
-enough, because this app requests **no restricted permission** — there is nothing
-to apply for from AppGallery Connect.
+generate signature**, then `bash deploy.sh`.
 
 > Install only, without building: drop the downloaded HAP into
 > `entry/build/default/outputs/default/` and run `bash deploy.sh`.
 
 More detail, including what must **not** be published, is in [RELEASE.md](RELEASE.md).
 
-## Requirements
+## Documentation
 
-- DevEco Studio with the HarmonyOS SDK (`compatibleSdkVersion 6.1.1(24)`,
-  `targetSdkVersion 26.0.0`)
-- A HarmonyOS device or emulator
-- Python 3.12, JDK 17 (only for the Arc patches and the helper jar)
+Everything below is a separate document. **The files under `docs/` are bilingual —
+Chinese section first, then English, in the same file.**
 
-## Building
-
-The payload is **not** in this repository (see `.gitignore` for why), and neither
-are the inputs it is assembled from. You must supply the inputs before the
-project will build, because the HAP embeds all of the payload.
-
-### 1. Put the inputs in `payload-src/`
-
-`payload-src/README.md` lists them — three jars, two LWJGL natives and two files
-out of the JDK — with where each comes from. Nothing there is committed.
-
-Every path the toolchain uses is in **`scripts/config.py`**, overridable from the
-environment with `ARK_*` variables, so a different machine does not have to edit
-any script. To see what it resolves to:
-
-```bash
-python scripts/config.py          # each path, and whether it exists
-```
-
-### 2. Assemble the payload into `entry/libs/arm64-v8a/`
-
-```bash
-python scripts/prep_jdklib.py     # the JDK pieces that are read by name
-python scripts/prep_lwjgl.py      # LWJGL -- jars renamed, natives in place
-python scripts/prep_arc.py        # Arc's natives, taken from the pinned jar
-python scripts/prep_freetype.py   # Arc's freetype, from Arc's Android build
-python scripts/prep_game.py       # the game jar itself
-python scripts/prep_helper.py     # compiles and packs the helper jar
-```
-
-Each script checks its input's hash before writing anything and re-reads what it
-wrote, so a stale or wrong input fails loudly instead of producing a jar that
-silently differs from the one that was tested. Any of them takes `--check` to
-report without writing.
-
-The JDK-derived libraries (`jdk21/lib/server/libjvm_real.so` and the anchor
-`libjvm.so`) come from `prep_vendor.py` — see the note at the top of it.
-`libcxxabi_shim.so` is not derived at all: the JDK's own file is copied and
-shipped unmodified, and `verify_hap.py` pins its SHA-1 so that stays true.
-
-### 3. Build
-
-```bash
-bash build.sh assembleHap        # just compile
-bash deploy.sh                   # build + verify + install + launch + log
-```
-
-`deploy.sh` refuses to continue on a stale native object, a failed build, or a
-packaging check that fails, because each of those once produced a green build
-that installed the *previous* binary.
-
-Signing must be configured once: DevEco Studio → File → Project Structure →
-Signing Configs → Automatically generate signature. `deploy.sh` installs the
-signed HAP that hvigor produces; there is no ACL re-signing step, because this
-app needs no restricted permissions (see below).
-
-⚠️ **That signature is for your own machine.** DevEco's automatically generated
-profile is a *debug* profile, which names the device UDIDs it is valid for, and
-the HAP it produces embeds that list — plus your developer id and the name on
-your certificate. Build with it, install with it, do not publish the result.
-What to publish instead is in **[RELEASE.md](RELEASE.md)**.
-
----
-
-## Permissions
-
-Only `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY`, so the player can import
-saves and game-data exports from Download.
-
-Deliberately **not** requested: `ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY`.
-That is the restricted ACL permission for making the writable sandbox
-executable. It was measured unnecessary -- the JDK lives in the HAP, and the
-sandbox holds only data -- and leaving it out is what lets anyone install this
-build without a special signing profile.
-
-## Known limitations
-
-- **Text entry, and what each route can do.** Touch a text field inside the game
-  (a save name, a schematic name, the export filename) and the app puts up its
-  own text field, wired to the system input method — so the on-screen keyboard
-  appears and composed input works, Chinese included. A physical keyboard works
-  too, and what it can type depends on where the focus is:
-    - while the app's field is up, the keyboard goes through the system input
-      method as well, so Chinese works from a physical keyboard too;
-    - when it is not up, the keyboard goes straight to the game through SDL's
-      key-to-character path, which has no input method behind it — ASCII only.
-  Focus is singular, so those are the only two states there can be.
-  - **Both routes exist because SDL's own IME path cannot work here.** This
-    process maps `libSDL3.so` twice, ArkTS hands the IME controller to the copy
-    that is *not* running the game, and a `napi_ref` cannot be moved between
-    them — so SDL can never show a keyboard. What replaced it: the app watches
-    for the game asking for text (a file), shows an ArkUI `TextInput`, and feeds
-    what the user types back into SDL's text event queue. The code is in
-    `SDL_openharmony.c`, `SDL_openharmonyevents.c` and `ets/pages/Index.ets`.
-  - **One rough edge, stated plainly:** the app cannot read the game field's
-    cursor, so it sends the *difference* from what it believes the field holds.
-    Typing and backspacing at the end of a name are exact. Inserting or editing
-    in the *middle* is repaired by retracting and resending — the result is
-    correct, but that text is retyped on screen.
-- **Desktop/mobile mode cannot be switched at runtime.** The mode is fixed at
-  launch. Mindustry has an in-game "mouse + keyboard control" toggle that covers
-  most of the same ground.
-- `libarc-filedialogsarm64.so` is linked against glibc and cannot load here, so
-  Arc falls back to Mindustry's own in-game file browser. This is why the
-  browser path had to be redirected to Download.
-- Importing game data makes the game exit on purpose (`Core.app.exit()`), so
-  that it restarts with the new data. This looks like a crash and is not one.
-- Verified on two devices so far: a HUAWEI MatePad Pro 12.2" 2025 tablet and a
-  HUAWEI Mate 80 Pro phone, both HarmonyOS 7 / API 26. Anything else is
-  untested — the platform's policy on executable memory is what this depends on,
-  and a device that enforces it differently would fail in ways this project has
-  no way to predict.
-- **`hiview/AppKilledReporter` logs `reason: CppCrash` every time the app exits
-  normally. It is not a crash, and it is not attributable to this app.** Measured
-  on a normal in-game Quit, in one 5 ms window:
-
-  | Component | Verdict, with attribution |
-  |---|---|
-  | `AppMS` | `Kill Reason: app exit`, `pid=… processName=com.haohandc.mindustryark` |
-  | `sceneboard` | `onProcessDied, uid: …, bundleName: com.haohandc.mindustryark, pid: …` |
-  | `aidataservice` | `process died, bundleName: com.haohandc.mindustryark` |
-  | `hiview` | `uid: 0, bundleName: ` **empty**, `reason: CppCrash` |
-
-  The one component with no attribution is the one calling it a crash, and it is
-  contradicted by the other three. Nothing is produced for it either: no
-  `faultlog`, no `cppcrash` directory, no core dump, no non-zero exit signal, and
-  `crash.txt` (which the launcher writes when it *does* see a fatal signal) stays
-  empty. If you are reading `hiview` lines and wondering, that is what you are
-  looking at. See `EntryAbility.ets` for the exit handshake that produces the
-  three attributed lines.
-
-The reasoning behind each of those is in the source comments where the code is, rather than here -- `entry/src/main/cpp/launcher.c` is the place to start.
-
-## Repository layout
-
-| Path | What |
+| Document | Open it when |
 |---|---|
-| `entry/src/main/cpp/launcher.c` | The launcher: sandbox setup, JVM options, game launch, exit handshake |
-| `entry/src/main/cpp/SDL/` | SDL3, with patches for OpenHarmony input, windowing and audio |
-| `entry/src/main/ets/` | ArkTS: the XComponent page and key handling, and the ability |
-| `payload-src/` | The build's **inputs** (not in git) — see its `README.md` |
-| `entry/libs/` | The **assembled payload** (not in git -- see `.gitignore`) |
-| `scripts/config.py` | Every path the toolchain uses, in one place |
-| `scripts/` | Payload assembly from those inputs, rebuilding the patched jar, and the packaging checks |
-| `deploy.sh`, `build.sh` | Build and deploy, with gates |
-| `RELEASE.md` | What to publish and what must not be published |
+| **[docs/FAQ.md](docs/FAQ.md)** | You have a specific question — start here |
+| **[docs/LIMITATIONS.md](docs/LIMITATIONS.md)** | Before reporting a bug: is this known? |
+| **[docs/BUILDING.md](docs/BUILDING.md)** | You want to build it from source |
+| **[docs/PERMISSIONS.md](docs/PERMISSIONS.md)** | You want to know what it asks for |
+| **[docs/LAYOUT.md](docs/LAYOUT.md)** | You just cloned it and can't find things |
+| [RELEASE.md](RELEASE.md) | You downloaded a build: which file, how to install, what's verified |
+| [RELEASE-MAINTENANCE.md](RELEASE-MAINTENANCE.md) | You're cutting a release |
+| [THIRD-PARTY.md](THIRD-PARTY.md) | You're auditing licences |
+| [payload-src/README.md](payload-src/README.md) | You're assembling the build's inputs |
 
 ## Licence
 
@@ -224,37 +85,20 @@ The reasoning behind each of those is in the source comments where the code is, 
 
 Copyright (C) 2026 Haohandc and contributors.
 
-This project is not free to choose a permissive licence, because a build
-redistributes Mindustry, which is GPL-3.0. A HAP is a single installable unit
-whose only purpose is to run that game, so it is a combined work rather than a
-mere aggregation of independent programs, and GPL-3.0 applies to the whole of
-it. The practical consequence worth knowing before contributing: **derivative
-works must also be GPL-3.0**, so this cannot be built into a closed-source
-product.
+**Note in particular**: derivative works must also be distributed under GPL-3.0, so
+this **cannot** be used as the basis of a closed-source product.
 
-Every other component in the stack is compatible with GPL-3.0, which is what
-makes this combination distributable at all — including the JDK, whose
-Classpath Exception is the specific provision that permits shipping it
-alongside a work under other terms. Details, and the obligations that come with
-each component, are in [THIRD-PARTY.md](THIRD-PARTY.md).
-
-**Third-party files keep their own licences.** `entry/src/main/cpp/SDL/` is
-Zlib-licensed SDL3 with local modifications; it is not relicensed by this
-project's GPL, and Zlib requires that modified copies not be presented as the
-original. The same applies to the LWJGL payload and to the vendored Arc sources
-referenced by `scripts/`.
+Per-component obligations are in [THIRD-PARTY.md](THIRD-PARTY.md).
 
 ## Credits
 
-- **Mindustry** by Anuken -- the game, loaded unmodified
-- **Arc** by Anuken -- the game framework; `arc/backend/sdl/**` and
-  `arc/graphics/gl/**` carry patches for this platform
-- **SDL3** -- the windowing/input/audio layer
-- **LWJGL** -- the JNI bindings for OpenGL and SDL
-- **OpenJDK 21** -- the runtime
+- [**Mindustry**](https://github.com/Anuken/Mindustry) — by Anuken, the game, **loaded unmodified**
+- [**Arc**](https://github.com/Anuken/Arc) — by Anuken, the game framework; `arc/backend/sdl/**` and `arc/graphics/gl/**` carry patches for this platform
+- [**SDL3**](https://github.com/libsdl-org/SDL) — the windowing / input / audio layer
+- [**LWJGL**](https://github.com/LWJGL/lwjgl3) — the JNI bindings for OpenGL and SDL
+- [**OpenJDK 21**](https://github.com/openjdk/jdk) — the runtime
 
-Licensing and redistribution terms for each are in
-[THIRD-PARTY.md](THIRD-PARTY.md).
+Licensing and redistribution terms for each are in [THIRD-PARTY.md](THIRD-PARTY.md).
 
 Most of the code in this repository was written with AI assistance
 (Claude via Cherry Studio, model deepseek-flash v4.1). The measurements, the

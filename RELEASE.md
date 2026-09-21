@@ -71,19 +71,26 @@ HarmonyOS 7 / API 26 真机验证：**HUAWEI MatePad Pro 12.2" 2025** 平板、
 
 ## 已知限制
 
-- ⚠️ **实体键盘在「应用自己的输入框不在屏幕上」时只能打 ASCII。**
-  那条路是 SDL 的「按键→字符」通路，**背后没有输入法**。
-  ⇒ **点一下游戏里的输入框**，让应用自己的输入框弹出（它接系统输入法），实体键盘**也能打中文**。
-  焦点只有一个，所以只有这两种状态。
-- ⚠️ **PC / 触屏模式切换需要重启应用才生效。** 不是缺陷：Mindustry 的输入层和 UI 都派生自
-  一个**启动时写入**的值，中途改会让两者不一致。游戏内自带的「鼠标 + 键盘操控」开关可即时切换操控方式。
-- ⚠️ **2in1（PC）上沉浸模式不生效** —— 任务栏和窗口标题栏会留着（这是平台限制，不是没做）。
-  ⚠️ 实测确认。**但功能不受影响**：悬浮球在 PC 上**能正常隐藏**（PC 是独立窗口，窗口外的部分被系统裁掉）。
-- **游戏内的文件浏览器用的是 Mindustry 自带**的兜底实现（Arc 的文件对话框库是 glibc 链接，鸿蒙加载不了）。
-- **导入游戏数据后游戏会主动退出** —— 这是 Mindustry 的设计（用新数据重启），**看起来像崩溃但不是**。
+**完整的限制清单（附实测证据）在 [docs/LIMITATIONS.md](docs/LIMITATIONS.md)。**
+这里只留**下载前就该知道的**：
+
 - ⛔ **没有多人联机、没有成就、没有模组浏览器**（与桌面版相比）。
-- **只在上面那两台设备上验证过**，其他鸿蒙设备未测试。这取决于平台对可执行内存的策略，
+- ⚠️ **实体键盘在「应用自己的输入框不在屏幕上」时只能打 ASCII** ——
+  **点一下游戏里的输入框**，让应用自己的输入框弹出（它接系统输入法），实体键盘**也能打中文**。
+- **导入游戏数据后游戏会主动退出** —— 这是 Mindustry 的设计（用新数据重启），**看起来像崩溃但不是**。
+- **只在上面那两台设备上验证过**，其他鸿蒙设备未测试。能否可用取决于平台对**可执行内存**的策略，
   策略不同的设备会以本项目无法预测的方式失败。
+
+## 常见问题
+
+完整 FAQ 是独立的一篇：**[docs/FAQ.md](docs/FAQ.md)**（双语 —— 中文段在前、英文段在后）。
+放在这里会让三个文档说同一件事，所以只留最常被问的两条：
+
+- **返回键好像没反应？** 返回键 = 游戏内的 **ESC**（退一层）；
+  **主界面上 ESC 无处可去**，所以那里看起来没反应。有意为之。
+  **退出请用游戏主菜单的 Quit。**
+- **DevEco 报 `cppcrash`？** 那里混了**两件性质完全不同**的事，其中一件**不是崩溃**。
+  ⚠️ 并且**别照报告里的函数名去查代码** —— 那两个位置经反汇编核对**都不是内存访问指令**。
 
 ## 从源码构建
 
@@ -171,27 +178,31 @@ HarmonyOS 7 / API 26.
 
 ## Known limitations
 
-- ⚠️ **A physical keyboard is ASCII-only while the app's own text field is NOT on screen.**
-  That route goes straight to the game through SDL's key-to-character path, which has **no
-  input method behind it**. ⇒ **Tap a text field in the game** so the app's own field comes
-  up (it is wired to the system input method) and the physical keyboard **types Chinese too**.
-  Focus is singular, so those are the only two states.
-- ⚠️ **The PC / touch mode switch needs an app restart.** Not a defect: Mindustry derives
-  both its input layer and its UI from one value written at **startup**, and changing it
-  midway would leave the two disagreeing. Mindustry's own "mouse + keyboard control" toggle
-  changes the controls immediately.
-- ⚠️ **Immersive mode does not apply on 2in1** (PC) — the taskbar and window title bar stay.
-  That is a platform limit, not something left undone. ⚠️ Measured, not assumed.
-  **Nothing is broken by it**, though: the floating ball **does** hide normally on PC, because the
-  app runs in its own window and the system clips what falls outside it..
-- **The in-game file browser is Mindustry's own fallback** — Arc's file-dialog native is
-  glibc-linked and cannot load here.
+**The full list, with the measurements behind it, is in [docs/LIMITATIONS.md](docs/LIMITATIONS.md).**
+Only what you should know *before downloading* is kept here:
+
+- ⛔ **No multiplayer, achievements or mod browser**, compared with the desktop release.
+- ⚠️ **A physical keyboard is ASCII-only while the app's own text field is NOT on screen** —
+  **tap a text field in the game** so the app's own field comes up (it is wired to the system
+  input method) and the physical keyboard **types Chinese too**.
 - **Importing game data makes the game exit on purpose**, so it restarts with the new data.
   It looks like a crash and is not one.
-- ⛔ **No multiplayer, achievements or mod browser**, compared with the desktop release.
-- **Verified on those two devices only.** This depends on the platform's policy on
-  executable memory, and a device that enforces it differently would fail in ways this
-  project has no way to predict.
+- **Verified on those two devices only.** Whether it works elsewhere depends on the platform's
+  policy on executable memory, and a device that enforces it differently would fail in ways
+  this project has no way to predict.
+
+## FAQ
+
+The full FAQ is its own document: **[docs/FAQ.md](docs/FAQ.md)** (bilingual — Chinese
+section first, then English). Keeping it here too would have three documents saying the
+same thing, so only the two most-asked ones stay:
+
+- **Back does nothing?** Back is the game's **ESC** ("up one level");
+  **on the main menu ESC has nowhere to go**, so it looks dead there. Deliberate.
+  **To quit, use Quit on the game's main menu.**
+- **DevEco reports `cppcrash`?** That conflates **two completely different things**, one of
+  which is **not** a crash. ⚠️ And **do not go looking for code based on the function names
+  in that report** — disassembly shows those two frames are **not memory accesses at all**.
 
 ## Building from source
 
