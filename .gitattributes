@@ -17,6 +17,22 @@
 *.c       text eol=lf
 *.h       text eol=lf
 
+# Source and config WE author. Every text blob in this repository is LF, but
+# `text=auto` only says how to NORMALISE on the way in -- it leaves the checkout
+# side to core.autocrlf, which is `true` on this machine and therefore wants
+# CRLF. The mismatch produced a phantom "modified" on module.json5 after a tool
+# rewrote it with LF endings, with the content byte-identical to the blob. That
+# cost a round of confusion; pinning the checkout side to what is actually
+# stored removes the whole class of it.
+#
+# Measured before adding this: of every blob in the repository, only the 14 PNGs
+# contain CRLF, and they are declared `binary` below. No text file is affected.
+*.json5   text eol=lf
+*.json    text eol=lf
+*.ets     text eol=lf
+*.ts      text eol=lf
+*.md      text eol=lf
+
 # Binary payloads. These are not committed (see .gitignore) but stating it here
 # means a future `git add -f` cannot corrupt them.
 *.so      binary
