@@ -652,6 +652,49 @@ needs the RELEASE-SIGNED package on a device we can watch.** A release-profile-s
 `.app` cannot be sideloaded, which is the same constraint that let §2.10 happen. What
 *both* candidates agree on is the next action, so it is not blocking.
 
+#### ⛔⛔ AND IT HAS NOW BEEN ANSWERED -- CAUSE B, AND CAUSE A WAS NEVER SUPPORTED
+
+**Two things, a month of drift apart, and the second is the one worth keeping.**
+
+**1. The experiment ran, 2026-09-22** (2.13b): a device-bound **release** profile with no
+executable-memory ACL failed to start the JVM on an **API 26** phone -- the same version as the
+tablet that works. Cause A is therefore not needed to explain anything, and cause B alone accounts
+for every observation in the table above.
+
+**2. And a claim grew out of this section that this section never made.** ⚠️ **Reported by the
+user, 2026-09-22**:
+
+> **「实测过一台 API 24 设备拒绝可执行内存（§2.11）：哪来的记录，我当时测试是能跑的。」**
+
+They are right on both counts:
+
+| what was written elsewhere | what this file actually says |
+|---|---|
+| "An API 24 device **refuses executable memory**" | "Two candidate causes, **NOT yet separated**" -- and the failing device **ran the release package** |
+| "HarmonyOS 5 / 6 devices **cannot run it, self-signed or not**" | nothing here supports that; the user's own test on API 24 was a debug install **and it ran** |
+
+⇒ ⛔ **"API 24 refuses executable memory" was never a measurement of the platform version.** The
+only failures were on a **release-signed** package, which 2.13b has since shown fails at **any**
+version. The version hypothesis has no surviving evidence -- and it had none here even before
+2.13b; the section's own table says so.
+
+⚠️ **The failure mode, named**: a hedged entry ("neither is established") was later read as a
+finding and cited as one. It reached `README.md`, `README.zh-CN.md`, `RELEASE.md` (both halves)
+and the release body (both halves) as a **⛔ "does not work"** warning -- i.e. the docs were
+telling users with a HarmonyOS 5/6 device not to bother, on the strength of a question this file
+had explicitly left open. **All of it is corrected to state only the platform-version-neutral
+fact: a release signature never gets the memory (measured), and a HarmonyOS 5/6 self-signed
+install is untested.**
+
+⭐ **The generalisable bit**: **a section that says "we have not separated these two causes" is
+not a licence to cite either one elsewhere.** When a hedged entry is quoted, the hedge has to
+survive the quotation -- and if it cannot, the thing to write is the unresolved question, not the
+convenient half of it.
+
+⚠️ **And 2.11(c)'s claim stands unchanged**: `compatibleSdkVersion = 6.1.1(24)` still rests on no
+measurement -- but now for the opposite reason. It is not that API 24 fails; it is that **nothing
+here has established what API 24 does**, in either direction.
+
 #### What to do about it
 
 1. ⛔ **Do not add the permission back for the local dev loop.** A debug profile
@@ -839,6 +882,65 @@ dropping it from the manifest would also block self-signed installs on a phone. 
 
 ⇒ **The reviewer's device was a Mate 60: a phone.** So the ACL is not a route to
 fixing the reviewer's failure on phones, however the application is filled in.
+
+##### ⭐⭐ AND THE ONE CASE THAT DOES WORK ON A PHONE -- DEBUG, API 26+ ONLY
+
+**Source: the user, 2026-09-22.** This does not contradict the policy above; it is the
+thing that policy leaves room for, and it is unusually precise:
+
+> 「API26之后，为手机申请profile会自动申请支持的ACL权限，所以手机也可以装需要JIT的应用。
+> 但旧版本的，鸿蒙5、6的设备就不行。」
+>
+> 澄清后：**「debug 的 profile 可以获得 JIT，但 release 的永远不行。所以我们的方案不变，
+> 只不过在 github 那里告诉别人，鸿蒙7（API26）的手机可以调试安装我们的应用就行。」**
+
+| install kind | phone on **HarmonyOS 7 / API 26+** | phone on **HarmonyOS 5 / 6** |
+|---|---|---|
+| **debug / self-signed** | ✅ **JIT works** | ⛔ does not |
+| **release / store** | ⛔ **never** | ⛔ never |
+
+⇒ ⭐ **The plan does not change**, and it is now reasoned rather than assumed: a phone
+store package is impossible because a **release** profile never gets the memory on a
+phone, at any API level. What the API 26 mechanism adds is that a **debug** profile
+auto-applies the *supported* ACL permissions -- so a phone installs and runs our app
+**the same way a tablet does**, provided it is on HarmonyOS 7 or later.
+
+⭐⭐ **This fits the measurement in 2.13b rather than fighting it.** That test used
+`M80Pro-dczhRelease.p7b` -- a RELEASE profile, and the package declared nothing. Both of
+those are the "never" row above. Nothing was measured there about debug profiles, and
+nothing was measured about a package that *declares* the permission. The table's ✅ cell
+was already measured independently: the debug install on the phone reports `probe=42`.
+
+⚠️ **What the docs now owe the user**: a GitHub reader with a HarmonyOS 7 phone should be
+told plainly that a debug/self-signed install works for them. That is a *supported*
+configuration, not a workaround to be apologised for.
+
+##### ✅ DECIDED: `compatibleSdkVersion` stays at `6.1.1(24)`
+
+**The user's call, 2026-09-22**: **「不改，因为上架到市场的是平板的。」**
+
+That reason is sound for the package this project actually submits. The store build's
+`deviceTypes` is narrowed to `["tablet","2in1"]` at build time (2.13d), so **the store never
+offers it to a phone**, and the phone rows of the table above are the ones that would have
+mattered there. The floor stays.
+
+🔶 **WHAT THE REASON DOES NOT COVER, recorded because it is a real residual and not a
+quibble**: `compatibleSdkVersion` is what the STORE uses to decide which tablets to offer the
+package to, and **`6.1.1(24)` is a tablet-reachable version** -- HarmonyOS 6.1.1 / API 24 is
+exactly the device where 2.11 first measured the refusal. So an API 24 or 25 **tablet** could
+still be offered the store package and fail to start it.
+
+- ⚠️ **Unmeasured**: whether an API 24 **tablet** refuses the memory. The refusal was measured
+  on an API 24 **phone** (a Huawei-supplied self-check device), and "the device that failed was
+  also a phone" is precisely the confound 2.11 says was never separated. 🔶 **Inference, not a
+  measurement.**
+- ⚠️ **And the ACL cannot rescue it either**: the ACL mechanism only exists from **ROM 7.0**
+  (see the policy quote above), so on a HarmonyOS 6.x tablet there is nothing to grant.
+- ⇒ If that cell is ever measured and turns out to be the failing one, **the floor becomes the
+  fix** -- and it is the principle 2.11(c) already states: *"An app that installs on a device
+  where it cannot run is worse than one that refuses to install."*
+- ⇒ **No action now.** The decision stands, and this is the shape of the evidence that would
+  reopen it rather than an argument against it.
 
 #### Three corrections, two of them to things written in this file
 
@@ -1242,7 +1344,8 @@ published, but relabelled -- it is the *cost of interpretation on hardware that 
 not a description of a device that was refused the memory.
 
 ⚠️ **The bilingual divergence was real, and was found while making this change**: the English
-changelog for 0.3.0.1 was missing the "the probe measures instead of guessing" entry that the
+changelog for the 1.0.0.1 entry (then numbered 0.3.0.1 -- the version was raised to 1.0.0.1
+later the same day, see 2.13g) was missing the "the probe measures instead of guessing" entry that the
 Chinese one carried. Both have it now.
 
 ⛔ **And the `compat_body` claim reached the public docs, not just the app.** It was published
@@ -1283,7 +1386,7 @@ both ends:
 
 ⚠️ **What is NOT claimed**: that any particular third-party tool uses one kind of profile. Only
 `小白调试助手` was tested. The measured variable is the **profile type**, and that is what the docs
-say. Recorded in `RELEASE.md` (both halves), `dist/RELEASE-BODY-v0.3.0.1.md` (both halves) and
+say. Recorded in `RELEASE.md` (both halves), `dist/RELEASE-BODY-v1.0.0.1.md` (both halves) and
 `docs/LIMITATIONS.md`.
 
 ⭐ **The generalisable bit**: when a failure produces no output, the *symptom* has to be the
@@ -1373,6 +1476,147 @@ player deletes the mod?** The old answer was "it comes back".
 `导入模组`, `选择文件`, `已导入`, `未导入任何模组` and `probe-mod.jar` are all **absent** from the
 built HAP, checked by searching its entries. A 2.4-second build is exactly the kind of result
 that makes this check necessary.
+
+
+### 2.13f THE FILE BROWSER'S ROOT: ONE LAUNCH OF GAP, AND A FALLBACK THAT MADE IT WORSE
+
+**Reported from the device**: 应用内文件浏览器不指向我们应用的文件夹了.
+
+#### It was not a regression, and that took a measurement to establish
+
+The bridge (`user_dirs.txt`) is written by ArkTS and read by the launcher, and the two run in
+this order:
+
+    EntryAbility.onCreate   -> writeUserDirs()          (no window yet)
+    Index.aboutToAppear     -> ensureModFolder()        (needs a window: measured 13900042 from onCreate)
+    XComponent mounts       -> launcher reads the bridge -> -Darc.sdl.chooserPath
+
+⇒ On the **first launch after an install or an uninstall**, the folder does not exist yet when
+the bridge is written, so there is no `mods=` line. Verified as a one-launch effect, not a
+regression: the tablet reported
+
+    first launch   arc.sdl.chooserPath=/storage/Users/currentUser/Download
+    second launch  arc.sdl.chooserPath=/storage/Users/currentUser/Download/com.haohandc.mindustryark
+
+⚠️ **`deploy.sh` uninstalls, so every deployment re-creates it** -- which is why it looked like
+something this session's changes had broken. It predates them.
+
+#### Two fixes, and the second is the one that mattered
+
+**1. The launcher no longer falls back to the platform Download directory.**
+
+That fallback was actively harmful, and the launcher's own probe said so, in this file's own
+output:
+
+    download  NOT READABLE  errno=1 (Operation not permitted)
+
+So the fallback pointed the browser at a directory **the app cannot list** -- an empty browser,
+which reads as a broken feature. Now: no `mods=` line means **chooserPath is left UNSET**, and
+`SdlFiles.chooserPath` falls back to `externalPath` = user.home = the sandbox, where `mods/`,
+`saves/` and `schematics/` are. **"No usable directory" and "a directory that cannot be read"
+are different answers, and only one of them was true.**
+
+**2. The page re-writes the bridge once the folder exists** (`writeUserDirs` is exported from
+EntryAbility for this). It races the launcher's read, which happens at XComponent mount --
+later than `aboutToAppear`, so it usually wins.
+
+#### Measured, on both devices, on the launch right after a wipe
+
+| device | first launch | second launch |
+|---|---|---|
+| tablet | ✅ `will open at the mod folder` (race won) | ✅ |
+| phone | browser in the **sandbox** (race lost, honest fallback) | ✅ `will open at the mod folder` |
+
+⇒ The lost race costs exactly the thing the old fallback used to cause anyway, except it lands
+somewhere readable. **Both devices correct from the second launch on.**
+
+⚠️ Not to be "fixed" by moving the folder creation into `onCreate`: measured, the
+DOWNLOAD-mode picker fails there with **13900042** on both devices. The window is required.
+
+⚠️ Also worth remembering for anyone reading the old comment: `writeUserDirs` is now called
+**twice per launch**, deliberately, and the second call is the repair.
+
+#### ✅ Confirmed in the game, by the user
+
+**2026-09-22, after the fix was deployed to both devices**: the user opened the in-game import
+dialog and **the browser opens at the app's own folder** -- which is the thing they reported
+broken. That is the end-to-end check: `probe_user_dirs` showing the right path, and the option
+list showing the right `-Darc.sdl.chooserPath`, are both upstream of what the player actually
+sees, and this is the player's own answer.
+
+⇒ **The report is closed.** Note which half fixed it, because the two fixes are not equal in
+value: the launcher change (no unreadable fallback) is what makes a *lost race* land somewhere
+usable, and the page's second write is what makes the race *usually won*. Removing either one
+would bring the complaint back for some launches.
+
+#### And an open claim this exposes
+
+`compatibleSdkVersion` is **`6.1.1(24)`**. Per 2.12's API-26 phone table, a HarmonyOS 5 or 6
+device can install this app and **cannot run it** -- self-signed or not. 2.11(c) already states
+the principle: *"An app that installs on a device where it cannot run is worse than one that
+refuses to install."* **Raising the floor to 26 is the consistent fix. Not done -- open
+decision**, because it changes who the store offers the app to.
+
+
+### 2.13g THE VERSION WENT FROM `0.3.0.1` TO `1.0.0.1` -- THE DAY THE DECISION WAS FREE
+
+**The user's call, 2026-09-22**, asked while the RC sat built and staged and **not yet uploaded**:
+
+> **「我们正式版要从0.3.0开始吗？我觉得从1.0.0开始比较好」**
+
+#### Why 1.0.0, and why it had to be then
+
+SemVer's `0.x` means *"not for production; anything may change"*. This app is feature-complete
+and verified on two devices, and it is heading for a store listing **where this string is what a
+user reads**. `0.3.0` on a store page reads as "still cooking"; `1.0.0` reads as the release it
+actually is. The cost was one build.
+
+⭐ **The timing was the whole argument.** Nothing had been published, so renumbering was one
+build and a re-verify. After the upload it would not have been a version change at all -- it
+would have been "a second release with a discontinuous number".
+
+#### The arithmetic, which is the part that must not be got wrong
+
+| | versionName | versionCode |
+|---|---|---|
+| the RC (now) | `1.0.0.1` | **1000001** |
+| the final | `1.0.0` | **1000099** |
+| *(what it was)* | *(0.3.0.1)* | *(30001)* |
+
+- ✅ **`30001 → 1000001 → 1000099` is monotonic**, and the platform orders installs by
+  **versionCode**, so anyone already on `0.3.0.1` upgrades **in place** — no uninstall.
+- ⚠️ **`1.0.0` is a one-way door in that direction.** Once a 1.0.0 build is out, going back to
+  any `0.x` is a *downgrade* and the platform refuses it.
+- ✅ `version_code_for()` was checked **before** editing anything, not after:
+  `1.0.0.1 → 1000001`, `1.0.0 → 1000099` (the latter was already an example in the docstring).
+
+#### The three files, and the gate that keeps them honest
+
+`scripts/config.py` (`APP_VERSION` + `VERSION_CODE`) · `AppScope/app.json5` (`versionName` +
+`versionCode`) · `entry/build-profile.json5` (`artifactName`, a **hand-written copy** of a name
+derived elsewhere). `scripts/test_version_gate.py` asserts all three agree — **7/7 after** the
+change, and its negative test now injects the *new* version, which is how you can tell it read
+`config.py` rather than a stale literal.
+
+⚠️ **Verified inside the package, not from the filename**: `module.json` reports
+`versionName=1.0.0.1 versionCode=1000001`. A filename is not evidence (2.8).
+
+#### What else moved with it
+
+- `dist/RELEASE-BODY-v0.3.0.1.md` → **`dist/RELEASE-BODY-v1.0.0.1.md`**, with the RC block
+  corrected: it had said this was an RC **of 0.3.0** leading to `0.3.0.2`, which the renumber
+  made false. Its artifact names were rewritten too.
+- The **tag now aligns with the artifact name** again: `v1.0.0.1` ↔
+  `MindustryArk-v1.0.0.1-unsigned.hap`. ⭐ That correspondence is worth keeping — it is how
+  someone holding a downloaded file finds the release it came from.
+- ⚠️ **The superseded `dist/MindustryArk-v0.3.0.1-*` copies were DELETED**, not kept beside the
+  new ones. 2.8 records that stale files sitting next to current ones misled **two separate
+  checks on one day**; leaving a never-published 0.3.0.1 next to a 1.0.0.1 would be that same
+  trap set by hand.
+- The changelog headings in `RELEASE.md` (both halves) now read `1.0.0.1 · RC 1 of 1.0.0`.
+- ⚠️ **Left alone on purpose**: the measurement at the end of §5 says "Measured, 0.3.0.1" — it
+  was taken on the build that carried that name, and rewriting a record to match a later rename
+  is falsifying it. It now carries a parenthetical saying so.
 
 
 ### 2.14 Why nobody had enabled networking, and what it cost
@@ -1489,22 +1733,55 @@ Pasted from **`dist/RELEASE-BODY-v<version>.md`**.
 | File | Covers |
 |---|---|
 | `RELEASE.md` | The standing notes: what the files are, how to install, verified devices, known limitations. **Version-independent**, and **keeps its H1** because it is read in the repository |
-| `dist/RELEASE-BODY-v<version>.md` | The release page copy. Differs from `RELEASE.md` in exactly three ways, below |
+| `dist/RELEASE-BODY-v<version>.md` | The release page copy |
 
-**The release page is an announcement. `RELEASE.md` is the manual.** A release body that
-also carries install steps, limitations and build instructions buries the one thing a
-reader came for — what changed — under material they can find at leisure.
+#### ⭐ THE BODY'S STRUCTURE, SET BY THE USER 2026-09-22
 
-**What the body keeps** (three sections, and that is all):
+⚠️ **This section used to say the body keeps three sections and DROPS installing, limitations and
+building** ("The release page is an announcement. `RELEASE.md` is the manual."). **The user
+replaced that with the structure below**, having read a body written to the old rule. Recording
+the new one, and the reasoning, because the old rule was a defensible-sounding mistake:
 
-| Section | Why it stays |
-|---|---|
-| What is new | The reason the page exists |
-| Which file to download | Two files, and nothing says which is which |
-| Verified | Short, and it is the only evidence that it runs at all |
+> **A release page is read by someone who has just arrived.** Sending them to another document for
+> "can my device run this" and "how do I install it" loses most of them. The body carries the
+> whole story; `RELEASE.md` stays the fuller manual.
 
-**What the body drops** — H1, the opening description, installing, known limitations,
-building from source, credits — with **one pointer line** to the README in its place.
+**The eight sections, in this order, in BOTH languages:**
+
+| Section | Contents | Part of it that matters |
+|---|---|---|
+| **title** | `<version> 的 RC N` / `RC N of <version>` | one line on what it is and that it is feature-frozen |
+| **新增** / Added | **table** — `项目 \| 说明` | new features only |
+| **变动** / Changed | **table** | behaviour or permission changes that are **neither** a new feature **nor** a fix |
+| **修复** / Fixed | **table** — `问题 \| 说明` | each row says what was wrong, not just what was done |
+| **下载** / Downloads | **table** | the two files, and that the HAP needs signing |
+| **安装** / Installing | the two signing routes | + a link to the README for detail |
+| **限制** / Limitations | **table** by install-method × platform, then per-platform notes | this is where the phone story lives |
+| **关于上架应用商店** / About the app store | ACL status, store scope, what changes on approval | |
+
+#### ⚠️ HOW THE USER WANTS IT WRITTEN
+
+Five rules, each of them a rejection of a way this file was written before:
+
+1. **`新增` / `变动` / `修复` are TABLES.** A list of paragraphs reads as prose and cannot be
+   scanned; the table is what makes a changelog skimmable. ⭐ The user asked for this explicitly.
+2. **No decorative emoji.** `⭐ ✅ ⛔ 🎈 🗂 🌐 🔧` were doing the work that structure should do, and
+   in a changelog they are noise. ⚠️ **`⚠️` is kept** — it marks a real caveat (unsigned HAP will
+   not install, HarmonyOS 5/6 will not run), which is a different job from decoration.
+3. **No conversation.** Nothing like "an earlier draft said…", "that was wrong", "this overturns
+   the previous claim", "I measured". ⚠️ Those belong in `RELEASE-MAINTENANCE.md`; **a release page
+   has no previous draft as far as its reader is concerned.**
+4. **No internal references.** No `§2.13b`, no "see RELEASE-MAINTENANCE.md". A reader of the
+   release page cannot act on either.
+5. **No implementation detail.** No `JNI_CreateJavaVM`, no `-Xint`, no HotSpot stub names, no
+   log excerpts. The reader needs **what happens to them**, not why it happens. ⭐ This is the
+   hardest one to follow while writing, because the reason is usually the interesting part —
+   and it is always already written down in this file.
+
+**The English is a mirror, not a translation of convenience.** Same eight sections, same order,
+same tables, row for row. ⚠️ They diverged once already (the English changelog was missing an
+entry the Chinese had, 2.13d) and that was found only by accident.
+
 
 ⚠️ **The pointer line is not decoration.** The downloaded artifact is an *unsigned* HAP,
 which **will not install**. Dropping the install steps without saying where they are
@@ -1658,7 +1935,9 @@ Doing only the first two ships a package named after the previous version.
       Measured, not reasoned: that mistake was made and then caught by re-measuring
       the artifact.
 
-      Measured, 0.3.0.1, before → after:
+      Measured on the build whose version was then `0.3.0.1` (the same artifacts were
+      later renumbered to `1.0.0.1`, see 2.13g — the numbers below are unchanged and
+      still hold for the current build), before → after:
 
       | library | before | after |
       |---|---|---|

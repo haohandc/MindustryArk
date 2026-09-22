@@ -87,57 +87,79 @@
 
 ⇒ **JVM 的 JIT 无法启动**，所以卡在 `JNI_CreateJavaVM` 里。
 
-⚠️ **两个可能的原因我们还没分离开**：① 平台版本太老；② 该设备运行的是**应用市场签名（release）**的包，
-而我们平时在真机上装的都是**调试签名**的包。两者都能解释现有全部观测。
+⭐⭐ **两个候选原因，现已分离（2026-09-22）**：当时的两种解释是 ① 平台版本太老；② 该设备运行的是
+**应用市场签名（release）**的包，而我们平时在真机上装的都是**调试签名**的包。
 
-⚠️ 另外本应用声明的最低版本是 `compatibleSdkVersion 6.1.1(24)`，**而这个声明没有得到实测支持** ——
-所有"能跑"的证据都来自 API 26。修好之前，在 API 24 设备上可能出现"装得上、跑不起来"。
+⇒ **答案是 ②，与平台版本无关**：实测一台 **API 26 的手机**用不带 ACL 的 release profile，**同样起不来**。
+**一个原因就够解释全部观测，不需要「版本」那一半。**
+
+⚠️ **所以「API 24 会拒绝可执行内存」这个说法从来没有被实测支持过** —— 记录里写的始终是「两个假说从未分离」，
+是后来**被当成结论引用**了。实测过的只有：**release 签名的包拿不到那块内存，任何版本都一样。**
+
+⚠️ 本应用声明的最低版本是 `compatibleSdkVersion 6.1.1(24)`，**而这个声明没有得到实测支持** ——
+所有「能跑」的证据都来自 API 26，而所有「起不来」的证据都来自 release 签名包。
+**API 24 到底能不能跑，两个方向都没有测过。**
 
 
-## ⚠️ 兼容模式：拿不到那项权限时会明显变慢
+## ⛔ 解释执行**救不了**拿不到可执行内存的设备
 
-⭐ **一句话：变慢是【应用商店包在手机上】的事，不是「手机」的事。**
+⚠️⚠️ **这一节更正了本文以前的一个说法。** 以前写的是「拿不到内存的设备会**变慢**」（加载约 21 秒而不是 5~6 秒）。
+**那是错的，而且从来没有实测过。** 没有任何一次观测到本应用以解释模式跑起来。
 
-| 安装方式 | 手机 | 平板 |
+**实测（2026-09-22）**：用一份**真正不给该权限的 release profile**（不带可执行内存 ACL），启动器**正确探到了**
+拿不到内存、也**照做了**加上 `-Xint` —— 然后**死在 `JNI_CreateJavaVM` 里，此后再无任何输出**。
+包本身已经**正确识别了处境并做了唯一能做的事**，日志甚至写着「slow but will start」。**它没有起来。**
+
+**为什么这条路走不通**：`-Xint` 改变的是**字节码怎么执行**，它不移除对可执行内存的需求 ——
+HotSpot 要先建**启动用的桩代码**（`SharedRuntime` / `StubRoutines`），这早于它关心字节码要怎么跑。
+⇒ 「解释执行」不是这种情况下的降级模式，**它答的是另一道题**。
+
+### 那两种安装方式分别是什么结果
+
+⭐ **限制来自【设备】，不是系统版本。**
+
+| 设备 | 自签名安装（调试 profile） | 应用商店（release profile） |
 |---|---|---|
-| **自签名**（本项目的 GitHub release 就是让你自己签） | ✅ **有 JIT，全速** | ✅ 有 JIT，全速 |
-| **应用商店** | ⚠️ 无 JIT ⇒ 解释执行 | 看 ACL 是否生效 |
+| **平板** | ✅ 可用，有 JIT、全速 | ✅ ACL 批准后可用 |
+| **手机** | ⚠️ 部分可用（见下）| ⛔ 不提供 |
+| **PC · 2in1** | ❓ 未测试 | ❓ 未测试 |
 
 **为什么自签名就有**：调试 / 自签名用的 profile 会**临时放开全部权限**，与包里声明了什么无关。
-✅ **用户 2026-09-22 确认**：第三方签名工具（小白调试助手，自带一套 profile）装到手机上**同样有 JIT**。
-⇒ ⭐ **对本项目的 GitHub 用户，手机上是全速的，兼容模式根本不会出现。**
+✅ **用户 2026-09-22 确认**：第三方签名工具（小白调试助手，自带一套 profile）在手机上一样拿到 JIT。
 
-**为什么商店包在手机上没有**：那项权限（ACL）**只面向平板与 PC/2in1，不向手机开放**。
+**为什么手机的应用商店版本不提供**：**release** profile 在手机上**永远**拿不到那块内存，**与系统版本无关** ——
+实测：一台 API 26 的手机用不带 ACL 的 release profile，同样起不来。
+⭐ 而这项 ACL 权限本身**只面向平板与 PC / 2in1**（华为政策原文），手机申请不到。
 
-⚠️⚠️ **这一节改过两次，两次的错法值得记：**
-1. 最初写「**HarmonyOS 7 以下的手机**」—— 把**被混淆的观测**（那台失败设备同时是手机、又是旧版本，
-   `RELEASE-MAINTENANCE.md` §2.11 原文写着「两个假说从未分离」）**当成了规则**。
-2. 改完之后又写成「**手机大概率是解释执行**」—— 这次是**把商店包的性质安到了所有安装方式上**。
+**系统版本是次要因素**：
+- 本应用声明的最低版本是 **6.1.1（API 24）**，**该下限未实测**。
+- 从 **API 26** 起，系统会为**调试** profile **自动申请**受支持的 ACL 权限。
+- ⚠️ **鸿蒙 5 / 6 的手机**：没有那个自动机制，**自签名安装未验证**（不是「不行」—— 见下）。
 
-**现在怎么判**：启动器**每次启动实测**「能不能拿到匿名可执行内存」，拿不到就强制解释执行。
-⇒ 测量结果**覆盖**机型与版本猜测，而且**会自我纠正**（陈旧的 `-Xint` 会在下一次启动被取回）。
-⇒ ⚠️ **自签名安装如果变慢，那是缺陷，不是预期** —— 请报出来。
+⚠️⚠️ **这一节改过三次，三次的错法值得记：**
+1. 最初写「**HarmonyOS 7 以下的手机**」—— 把**被混淆的观测**当成了规则。
+2. 改完之后又写成「**手机大概率是解释执行**」—— **把商店包的性质安到了所有安装方式上**。
+3. 再之后写「**会自动降级为解释执行，代价是变慢**」—— 引用的 21 秒是在**内存可用的设备上强行打开
+   解释模式**量出来的，只证明**解释执行的代价**，**不证明「没内存的设备会怎样」**。实测它根本不起来。
 
-**为什么**：为了让应用能在拿不到该权限的设备上启动，Java 运行时改成了「解释执行」
-而不是即时编译。
+**现在怎么判**：启动器**每次启动实测**「能不能拿到匿名可执行内存」，拿不到就加 `-Xint`。
+⚠️ 但这个强制是**如实照做**，不是**救回来** —— 上文已述：拿不到内存的设备，加了也起不来。
+探针的价值在于**如实报告**。
 
-**实测代价**（HarmonyOS 7 平板，人工开启该模式）：
+⇒ ⚠️ **自签名安装如果变慢或起不来，那是缺陷，不是预期** —— 请报出来。
+
+### 那个 21 秒仍然有效，但要换个标签
+
+它是在**内存可用**的设备上强行开启该模式量出来的：
 
 | | 加载时间 |
 | --- | --- |
 | 正常（JIT） | 约 5~6 秒 |
-| 兼容模式 | **约 21 秒** |
+| 强行解释执行 | **约 21 秒** |
 
-**游戏内的表现不是均匀变慢，而是随【视野范围】放大**：
-
-- **窗口缩小**（约手机大小）：高负载下**基本能玩**
-- **全屏**：高负载下**掉帧严重，基本不能玩**
-
-⇒ 原因是「渲染」是原生的（不受影响），而「单位与瓦片的模拟」跑在 Java 上：
-屏幕越大，每帧要更新的东西越多，而帧预算不变。
-
-⚠️ 汇总：兼容模式只影响「模拟」这部分（渲染不受影响），
-且代价随**视野面积**放大 —— 屏幕越大越吃力。
+⇒ 它证明的是**解释执行的代价**（代价随**视野面积**放大：窗口缩小基本能玩、全屏高负载掉帧严重），
+**不是**「没内存的设备会怎样」。⭐ 这条是「**平板为什么必须要 JIT**」的依据 ——
+平板屏幕最大，是解释执行吃亏最狠的设备。
 
 
 ## ✅「下载」目录：手机上走的是**应用自己创建的那个文件夹**
@@ -478,9 +500,21 @@ state the option exists for** — that is the general lesson, and it is written 
 ✅ **Confirmed by the user on 2026-09-22**: a third-party signing tool (小白调试助手,
 with its own profile) gets the JIT on a phone as well.
 
-**Why the store package cannot, on a phone**: the ACL permission is **for tablets and
-PC/2in1 and is not offered to phones at all**, and per the section above there is no
+**Why the store package cannot, on a phone**: a **release** profile **never** gets that
+memory on a phone, at any platform version, and per the section above there is no
 interpreted fallback to fall back to.
+
+⚠️ **Two different questions, and this file used to blur them:**
+
+| | HarmonyOS 7 / API 26+ | HarmonyOS 5 / 6 |
+|---|---|---|
+| **self-signed (debug profile)** | ✅ **works — JIT included** | ⛔ does not |
+| **store (release profile)** | ⛔ never | ⛔ never |
+
+⇒ ⭐ **A HarmonyOS 7 phone is a supported way to run this app** — install it self-signed,
+exactly as the release notes describe, and it has the JIT like a tablet. From API 26 the
+system applies the *supported* ACL permissions for a **debug** profile by itself; an older
+platform has no such mechanism, and a release profile is excluded regardless.
 
 ⇒ ⭐ **THERE IS NO PHONE PACKAGE IN THE STORE, ON PURPOSE.** It could only install and
 never start. **To play on a phone, install the self-signed build** -- see the

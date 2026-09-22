@@ -24,6 +24,12 @@ used, audio plays through OHAudio, touch and physical keyboard both work, and
 import/export via the Download folder works **on some devices only** -- see
 [limitations](docs/LIMITATIONS.md).
 
+⭐ **Which devices can run it**: **HarmonyOS 7 / API 26 or later**, tablet **or phone**. Install it
+self-signed (see the release notes) and it runs at full speed on either. Full-speed operation
+depends on the app getting anonymous executable memory, and from API 26 the system supplies it to
+a **debug** profile on a phone as well as a tablet — which is also why **there is no phone package
+in the store**: a store (release) signature never gets it. ⚠️ **HarmonyOS 5 / 6**: no automatic ACL grant, so the store route does not apply, and a self-signed install is untested.
+
 | Area | State |
 |---|---|
 | JVM startup | Works — the launcher must pass `-XX:UseSVE=0`. Without it the JIT emits SVE instructions this device cannot execute and the process dies with SIGILL |
