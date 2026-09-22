@@ -13,18 +13,27 @@ const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
 
 /*
- * COMPATIBILITY MODE -- run the JVM as a pure interpreter on phones too old to
- * hand an app anonymous executable memory.
+ * COMPATIBILITY MODE -- run the JVM as a pure interpreter when this device is not
+ * handed anonymous executable memory.
  *
  * WHY IT EXISTS. The JVM's JIT allocates anonymous RWX memory. A HarmonyOS 6.1.1
- * (API 24) device refuses that request -- measured, mmap(RWX) returns errno=22 --
- * and JNI_CreateJavaVM then never returns, so the app installs and cannot start.
- * The permission that would grant it is not available for phones at all. -Xint
- * takes the JIT out of the picture, so nothing needs that memory.
- * See RELEASE-MAINTENANCE.md 2.11 and 2.12.
+ * device refuses that request -- measured, mmap(RWX) returns errno=22 -- and
+ * JNI_CreateJavaVM then never returns, so the app installs and cannot start.
+ * -Xint takes the JIT out of the picture, so nothing needs that memory.
+ *
+ * WHAT ACTUALLY DECIDES IT, which took a correction from the user to get right:
+ * the DEVICE CLASS, not the system version. That failing device was also a PHONE,
+ * and this project never separated the two explanations -- RELEASE-MAINTENANCE.md
+ * 2.11 says so in as many words ("两个假说从未分离"). What is established: the ACL
+ * permission is for tablets and PC/2in1 and is not offered to phones at all, and
+ * the user confirms tablets have always been fine, on old versions included.
+ * So a version threshold was a confounded observation being read as a rule.
+ *
+ * Which is why the rule below is now only the FIRST-LAUNCH guess: the launcher
+ * measures the capability every launch and the measurement wins.
  *
  * THE COST IS LARGE, AND IT IS MEASURED. Everything runs interpreted and this is
- * a game: load time goes from ~5-6 s to ~21 s on the tablet, and on the user's own
+ * a game: load time goes from ~4700-5500 ms to ~11-21 s, and on the user's own
  * verdict "low load is fine, high load halves the frame rate and drops frames".
  * They judged it acceptable; that judgement is the reason phone support survives
  * at all, and it is not one a benchmark could have made.
@@ -65,8 +74,13 @@ function launcherExecMemoryVerdict(): string {
     return '';
   }
 }
-/* API level at which this platform grants anonymous executable memory without an
- * ACL. Below it the JIT cannot start. */
+/* The API level below which this project USED TO assume the JIT was unavailable.
+ *
+ * WARNING: A GUESS, NOT A THRESHOLD. It came from one API 24 phone, and the device
+ * class was never separated from the version -- see the note at the top of this
+ * file. It survives only because the launcher's measurement corrects a wrong guess
+ * one launch later, and because guessing "no JIT" costs a slow first launch rather
+ * than a failed one. */
 const MIN_API_FOR_JIT = 26;
 /*
  * FORCE COMPATIBILITY MODE ON EVERY DEVICE.
@@ -1683,6 +1697,8 @@ struct Index {
     try {
       kind = deviceInfo.deviceType;
       api = deviceInfo.sdkApiVersion;
+      /* Only a first-launch guess: see MIN_API_FOR_JIT. The measurement below
+       * replaces it as soon as the launcher has reported one. */
       want = kind === 'phone' && api < MIN_API_FOR_JIT;
     } catch (e) {
       const err = e as BusinessError;

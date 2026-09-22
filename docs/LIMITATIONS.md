@@ -94,7 +94,20 @@
 所有"能跑"的证据都来自 API 26。修好之前，在 API 24 设备上可能出现"装得上、跑不起来"。
 
 
-## ⚠️ 在 HarmonyOS 7 以下的手机上会明显变慢（兼容模式）
+## ⚠️ 手机（以及拿不到那项权限的平板）会明显变慢：兼容模式
+
+⚠️ **这一节原来写的是「HarmonyOS 7 以下的手机」，那个因果是错的** ——
+**决定因素是【设备类型】，不是系统版本。** 用户 2026-09-22 确认：
+**平板一直都没问题，旧版本也是。**
+
+客观事实是：那台测出失败（`errno=22`）的设备**同时也是一台手机**，而本项目
+**从未把两个解释分开过**（`RELEASE-MAINTENANCE.md` §2.11 原文就写着「两个假说从未分离」）。
+确定的是：**那项 ACL 权限只面向平板与 PC/2in1，不向手机开放**。
+⇒ **「系统版本 < 26」是个被混淆的观测被当成了规则。** 现在它只是**首次启动的猜测**，
+真正的判据是启动器的测量（见下）。
+
+**现在怎么判**：启动器**每次启动实测**「能不能拿到匿名可执行内存」，拿不到就强制解释执行。
+⇒ 测量结果**覆盖**机型与版本猜测，而且**会自我纠正**（陈旧的 `-Xint` 会在下一次启动被取回）。
 
 **为什么**：详见上一节。为了让应用能在这些设备上启动，Java 运行时改成了「解释执行」
 而不是即时编译。
@@ -391,7 +404,23 @@ install on our own hardware is **debug-signed**. Both explain every observation 
 no measurement behind it** -- every "it works" observation is from API 26. Until this
 is settled, an API 24 device may install the app and be unable to run it.
 
-## ⚠️ Noticeably slower on phones below HarmonyOS 7 (compatibility mode)
+## ⚠️ Noticeably slower on phones, and on tablets that cannot be granted the permission
+
+⚠️ **This section used to say "phones below HarmonyOS 7", and that causal claim was
+wrong** -- what decides it is the **device class, not the system version**. The user
+confirmed on 2026-09-22 that **tablets have always been fine, old versions included.**
+
+The fact behind the old wording: the device that measured the failure (`errno=22`) was
+**also a phone**, and this project **never separated the two explanations**
+(`RELEASE-MAINTENANCE.md` 2.11 says as much: "两个假说从未分离"). What IS established:
+**the ACL permission is for tablets and PC/2in1 and is not offered to phones at all.**
+So "system version < 26" was a confounded observation read as a rule. It is now only the
+**first-launch guess**; the real answer is the launcher's measurement (below).
+
+**How it is decided now**: the launcher **measures every launch** whether anonymous
+executable memory is available, and forces interpreted mode when it is not. The
+measurement **outranks** the device/version guess and **corrects itself** -- a stale
+`-Xint` is taken back out on the next launch.
 
 **Why**: see the section above. To let the app start at all on those devices, the
 Java runtime runs **interpreted** instead of just-in-time compiled.

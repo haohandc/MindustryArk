@@ -42,7 +42,7 @@
     },
     {
       "name": "compat_body",
-      "value": "This device did not hand the Java runtime executable memory, so the game runs interpreted instead of just-in-time compiled.\n\n⚠️ This is NOT a defect of the port. It is a restriction of the system:\n· HarmonyOS puts anonymous executable memory behind a permission that is not available on phones;\n· devices on older system versions (below HarmonyOS 7) cannot get it either.\n\nWhat it means: the game will be noticeably slower, more so the more units are on screen.\n· Measured: load time goes from about 5-6 s to around 20 s;\n· a smaller game window helps a lot -- the cost scales with how much you can see;\n· full screen with many units will feel slow."
+      "value": "This device did not hand the Java runtime executable memory, so the game runs interpreted instead of just-in-time compiled.\n\n⚠️ This is NOT a defect of the port. It is a restriction of the system:\n· HarmonyOS puts anonymous executable memory behind a permission that has to be applied for,\n  and that permission is for tablets and PC/2in1 only -- not for phones;\n· on a tablet, it means that permission has not taken effect on this device yet.\n\nWhat it means: the game will be noticeably slower, more so the more units are on screen.\n· Measured: load time goes from about 5-6 s to around 20 s;\n· a smaller game window helps a lot -- the cost scales with how much you can see;\n· full screen with many units will feel slow."
     },
     {
       "name": "compat_dismiss",
