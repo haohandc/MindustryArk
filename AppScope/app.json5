@@ -2,7 +2,7 @@
   "app": {
     "bundleName": "com.haohandc.mindustryark",
     "vendor": "example",
-    "versionCode": 20002,
+    "versionCode": 30001,
     // Digits and dots only, and that is a constraint rather than a preference:
     // AppGallery's admission check rejects anything else, and it is not
     // advisory -- the upload stops there. This was "0.2.0-beta.2" and came back
@@ -13,7 +13,7 @@
     // The versionCode is not derived from this string by the build -- it is a
     // separate field, and scripts/config.py asserts the two agree, because a
     // mismatch is invisible until an install silently refuses to upgrade.
-    "versionName": "0.2.0.2",
+    "versionName": "0.3.0.1",
     "buildVersion": "1",
     "icon": "$media:layered_image",
     "label": "$string:app_name"

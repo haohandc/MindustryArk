@@ -103,7 +103,7 @@
         // verify_hap.py asserts that all three agree, because a download whose
         // file name says one version and whose contents say another is worse
         // than one with no version in the name at all.
-        "artifactName": "MindustryArk-v0.2.0.2"
+        "artifactName": "MindustryArk-v0.3.0.1"
       }
     },
   ]

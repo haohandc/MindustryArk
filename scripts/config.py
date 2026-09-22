@@ -151,7 +151,7 @@ APP_NAME = "MindustryArk"
 # So the leading "v" belongs to the release tag and the artifact name, never to
 # the version name, and the safe alphabet for both is digits, letters, dot,
 # underscore and hyphen.
-APP_VERSION = "0.2.0.2"
+APP_VERSION = "0.3.0.1"
 
 # versionCode is the integer the platform actually orders installs by.
 #
@@ -190,7 +190,7 @@ APP_VERSION = "0.2.0.2"
 # version_code_for() below derives it, and the module checks its own constant
 # against the derivation, so a version bump that forgets the code fails on
 # import rather than shipping an install that cannot replace the previous one.
-VERSION_CODE = 20002
+VERSION_CODE = 30001
 
 
 def version_code_for(version):

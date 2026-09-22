@@ -106,6 +106,39 @@ bash deploy.sh          # 构建 + 校验 + 安装 + 启动 + 收日志
 
 （签名按上面「怎么安装」配置）
 
+## 版本历史
+
+### 0.3.0.1 — 2026-09-22
+
+**多人联机、模组、以及让老手机也能跑起来。**
+
+- ⭐ **多人联机可用。** 此前整条线被**一个缺失的网络权限**挡住 —— 联机代码一直在包里，
+  只是每次启动都因为拿不到权限而失败。局域网联机、搜索公网服务器、在本机开服都已验证。
+- ⭐ **模组可以加载了。** 三个入口：游戏自带的「导入模组」按钮、悬浮球菜单的「导入模组」、
+  以及应用在「下载」里创建的文件夹 `Download/com.haohandc.mindustryark/`。
+  把 `.jar` / `.zip` 丢进去、重启游戏即可生效。
+- ⭐ **API 24 及更早的手机不再「装了却打不开」。** 这类设备拒绝给应用匿名可执行内存，
+  JIT 起不来。现在会自动改用解释执行并**提前告诉你**。代价是变慢，实测加载 5~6 秒 → 约 21 秒。
+- 修：悬浮球菜单**选项太小、挨得太近** —— 可点区域原来只有约 19vp。
+- 修：拿不到「下载」目录时，游戏的文件浏览器会打开在**文件系统根目录**
+  （实测：空值等于「显式设置成空」，而不是「不设置」）。
+
+### 0.2.0.2 — 2026-09-22 · 未单独发布
+
+- 版本名改成**纯数字和点**（应用市场准入要求），并加入隐私政策。
+- 修：屏幕键盘的三个问题 —— 收起后弹回、输入框下方按钮被挡住、强杀重开时自弹。
+
+### 0.2.0-beta.1 — 2026-09-21 · 已发布
+
+- **悬浮球**：可拖动、可半隐藏、菜单里能切换 PC / 触屏模式。
+- **沉浸模式**：隐藏状态栏与导航栏，全屏游戏。
+- **屏幕键盘**：中文可输入。
+- **返回键**退一层 UI（第一次当 ESC，不直接退出应用）。
+
+### 0.1.0-beta.1 — 2026-09-20 · 首个可运行版本
+
+自建启动器跑通：内嵌 JDK、从 native 创建 JVM、把真正的 SDL3 窗口交给游戏。
+
 ## 致谢与许可
 
 Mindustry 与 Arc 由 **Anuken** 开发；窗口 / 输入 / 音频层 **SDL3**；JNI 绑定 **LWJGL**；
@@ -222,6 +255,48 @@ bash deploy.sh          # build + verify + install + launch + collect log
 ```
 
 (configure signing as under "Installing")
+
+## Changelog
+
+### 0.3.0.1 — 2026-09-22
+
+**Multiplayer, mods, and making older phones work.**
+
+- ⭐ **Multiplayer works.** The whole feature was blocked by **one missing network
+  permission** -- the multiplayer code has always been in the jar, and fail it did on every
+  launch for want of that grant. LAN play, browsing public servers and hosting a server on
+  the device are all verified.
+- ⭐ **Mods load.** Three ways in: the game's own "import mod" button, "导入模组" in the
+  floating ball's menu, and the folder the app creates in Downloads at
+  `Download/com.haohandc.mindustryark/`. Drop a `.jar` / `.zip` in and restart the game.
+- ⭐ **Phones on API 24 and below no longer "install and cannot start".** Those devices
+  refuse an app anonymous executable memory, so the JIT cannot come up. The app now falls
+  back to interpreted mode and **says so before the game starts**. The cost is real:
+  loading goes from about 5-6 s to about 21 s.
+- Fixed: the floating ball's menu options were **too small and too close together** -- the
+  tap target was about 19 vp.
+- Fixed: with no Download directory available, the game's file browser opened at the
+  **filesystem root** (measured: an empty value means "explicitly set to empty", which is
+  not the same as "not set").
+
+### 0.2.0.2 — 2026-09-22 · not released on its own
+
+- The version name became **digits and dots only** (required for store admission), and a
+  privacy policy was added.
+- Fixed three on-screen-keyboard problems: it bounced back after being dismissed, it covered
+  the buttons under the text field, and it opened by itself after a force-stop.
+
+### 0.2.0-beta.1 — 2026-09-21 · released
+
+- **Floating ball**: draggable, half-hiding, with a menu that switches PC / touch mode.
+- **Immersive mode**: status bar and navigation bar hidden, full-screen game.
+- **On-screen keyboard**, Chinese included.
+- The **Back gesture** goes up one level of UI (it acts as ESC rather than leaving the app).
+
+### 0.1.0-beta.1 — 2026-09-20 · first runnable version
+
+The self-built launcher worked end to end: an embedded JDK, a JVM created from native code,
+and a real SDL3 window handed to the game.
 
 ## Credits and licences
 

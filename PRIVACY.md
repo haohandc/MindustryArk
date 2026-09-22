@@ -5,7 +5,7 @@
 ---
 # 中文
 
-**生效日期：2026-09-21**
+**生效日期：2026-09-22**
 
 本政策适用于 **Mindustry Ark**（包名 `com.haohandc.mindustryark`，以下简称「本应用」）。
 
@@ -26,11 +26,12 @@
 
 ## 三、权限用途
 
-本应用只申请一个权限：
+本应用申请以下权限：
 
 | 权限 | 用途 |
 |---|---|
-| `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY` | 用于**导入和导出游戏存档**，以及把游戏数据文件保存到你指定的「下载」目录 |
+| `ohos.permission.INTERNET` | 用于**多人联机**：加入服务器，以及在本机开服 |
+| `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY` | 用于**导入和导出游戏存档**，以及把游戏数据文件保存到你指定的「下载」目录。⚠️ **仅部分设备支持**（见下） |
 
 **只在你主动使用导入 / 导出功能时**才会读写该目录；本应用不会在后台扫描或传输该目录中的内容。
 
@@ -41,9 +42,19 @@
 - `api.github.com`（版本信息与封禁列表查询）
 - `cdn.jsdelivr.net`（服务器列表、模组索引）
 
-⚠️ **本构建未申请网络权限，因此这些请求无法离开你的设备**，也就不会向任何第三方发送任何信息。
+⚠️ **本应用【已申请】网络权限（`ohos.permission.INTERNET`），因此上述请求会真的发出。**
+这一点与早期版本不同 —— 早期版本没有网络权限，那些请求全部失败在本地。
 
-⚠️ **若将来为本应用启用网络功能，本政策将随之更新。**
+**会发送什么**：只包含上述请求本身所需的常规内容（要访问的地址、Mindustry 协议握手、
+你输入的服务器地址）。**本应用没有任何账号系统、不内嵌任何统计或广告 SDK，也不会上传
+你的设备标识、位置、通讯录或使用记录。**
+
+**要提醒的一点**：多人联机与服务器列表由**上游 Mindustry / 第三方服务器**提供，
+它们各自的隐私做法**不受本应用控制**。连接到哪台服务器、由谁运营，由你选择；
+连上去之后的数据如何处理，适用的是**对方的**政策。
+
+⚠️ 如果你不希望有任何网络流量，可以在系统设置里关闭本应用的网络权限，或直接不加入联机 ——
+**单机游戏完全不需要网络**，关掉权限不影响存档、模组和游戏本体。
 
 ## 五、第三方组件
 
@@ -71,7 +82,7 @@
 ---
 # English
 
-**Effective date: 2026-09-21**
+**Effective date: 2026-09-22**
 
 This policy applies to **Mindustry Ark** (bundle name `com.haohandc.mindustryark`, "the app").
 
@@ -90,11 +101,12 @@ The app saves a few things **on your own device, inside its private storage** (t
 
 **Uninstalling the app deletes all of it.** None of it leaves your device.
 
-## 3. The one permission
+## 3. Permissions
 
 | Permission | Why |
 |---|---|
-| `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY` | to **import and export game saves**, and to write game data files to the Download folder you choose |
+| `ohos.permission.INTERNET` | for **multiplayer**: joining a server, and hosting one on this device |
+| `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY` | to **import and export game saves**, and to write game data files to the Download folder you choose. ⚠️ **Only some devices support this** (see below) |
 
 That folder is touched **only while you use the import / export feature**; the app never scans or transmits its contents in the background.
 
@@ -105,9 +117,23 @@ The Mindustry build inside the app contains the **code** for multiplayer, a mod 
 - `api.github.com` (version and ban-list lookups)
 - `cdn.jsdelivr.net` (server list, mod index)
 
-⚠️ **This build requests no network permission, so those requests cannot leave your device** — nothing is sent to any third party.
+⚠️ **This app DOES request the network permission (`ohos.permission.INTERNET`), so those
+requests do go out.** That is a change from earlier versions, which had no network permission
+and therefore failed every one of them locally.
 
-⚠️ **If network features are ever enabled for this app, this policy will be updated.**
+**What is sent**: only what those requests carry -- the address being fetched, the Mindustry
+protocol handshake, and the server address you typed. **The app has no accounts, no analytics
+and no advertising SDK, and it does not upload your device identifiers, location, contacts or
+usage.**
+
+**One thing worth saying plainly**: multiplayer and the server list are provided by **upstream
+Mindustry and by third-party servers**, whose own privacy practices **this app does not
+control**. Which server you connect to, and who runs it, is your choice; once connected, what
+happens to that data is governed by **their** policy, not this one.
+
+⚠️ If you would rather have no network traffic at all, revoke this app's network permission in
+the system settings, or simply do not join a multiplayer game -- **single-player needs no
+network**, and turning the permission off does not affect saves, mods or the game itself.
 
 ## 5. Third-party components
 

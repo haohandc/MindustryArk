@@ -343,7 +343,18 @@ const BALL_MENU_W_VP = 176;
 const BALL_MENU_ROW_VP = 32;
 const BALL_MENU_DIVIDER_VP = 1;
 const BALL_MENU_PAD_VP = 16;
-const BALL_MENU_H_VP = 2 * BALL_MENU_ROW_VP + BALL_MENU_DIVIDER_VP + BALL_MENU_PAD_VP;
+/*
+ * HOW MANY ROWS THE MENU HAS. Keep this in step with the Rows in build().
+ *
+ * A named constant because BALL_MENU_H_VP has to match, and the shape of the
+ * last mistake here was a height that was right for the count it was written
+ * for. Adding a row is now one edit instead of two -- and the one that is easy
+ * to forget is the one that is written down.
+ */
+const BALL_MENU_ROWS = 3;
+const BALL_MENU_H_VP = BALL_MENU_ROWS * BALL_MENU_ROW_VP
+                     + (BALL_MENU_ROWS - 1) * BALL_MENU_DIVIDER_VP
+                     + BALL_MENU_PAD_VP;
 /* One size for both the label and its hint, so the two rows cannot drift apart. */
 const BALL_MENU_FONT_VP = 16;
 const BALL_MENU_HINT_FONT_VP = 14;
@@ -484,6 +495,13 @@ struct Index {
   @State ballY: number = 0;
   @State ballPlaced: boolean = false;
   @State ballMenu: boolean = false;
+
+  /* The About overlay, and the version it shows. The version is READ FROM THE
+   * BUNDLE rather than written down here: this project has already been bitten
+   * once by a hand-copied version (artifactName in build-profile.json5), and a
+   * second copy would drift in exactly the same way. */
+  @State showAbout: boolean = false;
+  @State appVersion: string = '';
 
   /* Compatibility mode, and whether its one-time notice is on screen. */
   private compatMode: boolean = false;
@@ -1020,6 +1038,29 @@ struct Index {
    * See ModImporter for why this entry has to exist at all -- the game's own
    * import button cannot work on this platform.
    */
+  /*
+   * Show the About card, reading the version from the bundle.
+   *
+   * Read when it is opened rather than at startup: it costs a bundle query and
+   * nothing needs the answer before then.
+   */
+  openAbout(): void {
+    this.ballMenu = false;
+    this.showAbout = true;
+    try {
+      bundleManager.getBundleInfoForSelf(bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT)
+        .then((info: bundleManager.BundleInfo) => {
+          this.appVersion = info.versionName;
+        })
+        .catch((e: BusinessError) => {
+          hilog.warn(DOMAIN, TAG, 'about: version lookup failed: %{public}s', e.message);
+        });
+    } catch (e) {
+      const err = e as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'about: version lookup threw: %{public}s', err.message);
+    }
+  }
+
   async importMods(): Promise<void> {
     const ctx = getContext(this) as common.UIAbilityContext;
     const report: ModImportReport = await pickMods(ctx);
@@ -1916,6 +1957,10 @@ struct Index {
            * the vertical span obvious, which is the half of the problem a larger
            * gap alone would not fix.
            */
+          Divider()
+            .strokeWidth(BALL_MENU_DIVIDER_VP)
+            .color('#22ffffff')
+
           /*
            * Entry: bring mod files in.
            *
@@ -1943,6 +1988,24 @@ struct Index {
             .strokeWidth(BALL_MENU_DIVIDER_VP)
             .color('#22ffffff')
 
+          /*
+           * Entry: who made this, where it lives, and what it is not.
+           *
+           * A port that is not on any store yet gets asked "where do I get it /
+           * where do I report a bug / is this official" -- and the answers need
+           * to be reachable from inside the app, because the player is already
+           * in it when the question comes up.
+           */
+          Row() {
+            Text('关于')
+              .fontSize(BALL_MENU_FONT_VP)
+              .fontColor('#eef2f9')
+            Blank()
+            Text('仓库 / 更新日志').fontSize(BALL_MENU_HINT_FONT_VP).fontColor('#8fb4ff')
+          }
+          .width('100%')
+          .height(BALL_MENU_ROW_VP)
+          .onClick(() => { this.openAbout(); })
         }
         .width(BALL_MENU_W_VP)
         .padding({ left: 14, right: 14, top: 8, bottom: 8 })
@@ -1995,6 +2058,80 @@ struct Index {
       .justifyContent(FlexAlign.Center)
       .focusable(false)
       .onClick(() => { this.dismissCompatNotice(); })
+    }
+    /*
+     * The About card -- built like the compatibility notice above, for the same
+     * reason: NO FOCUSABLE COMPONENT ANYWHERE. A dialog or a Button takes focus
+     * from the XComponent, and the game then stops seeing the keyboard. So the
+     * card is not focusable and holds nothing that is; the dimmed area itself is
+     * the dismiss button.
+     *
+     * The addresses are plain Text rather than links, and that is the price of
+     * that rule: making them tappable would need either a focusable component or
+     * a clipboard permission, and neither is worth breaking the keyboard for.
+     * Anyone who wants the repository can read it off the card.
+     */
+    if (this.showAbout) {
+      Column() {
+        Column() {
+          Text('Mindustry Ark')
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Color.White)
+          Text(this.appVersion === '' ? ' ' : ('版本 ' + this.appVersion))
+            .fontSize(13)
+            .fontColor('#A0FFFFFF')
+            .margin({ top: 4 })
+          Text('在 HarmonyOS / OpenHarmony 上运行 Mindustry')
+            .fontSize(13)
+            .fontColor('#E0FFFFFF')
+            .margin({ top: 12 })
+
+          Text('仓库')
+            .fontSize(12)
+            .fontColor('#8fb4ff')
+            .margin({ top: 16 })
+          Text('github.com/haohandc/MindustryArk')
+            .fontSize(13)
+            .fontColor('#E0FFFFFF')
+
+          Text('问题反馈 / 联系方式')
+            .fontSize(12)
+            .fontColor('#8fb4ff')
+            .margin({ top: 12 })
+          Text('github.com/haohandc/MindustryArk/issues')
+            .fontSize(13)
+            .fontColor('#E0FFFFFF')
+
+          Text('更新日志')
+            .fontSize(12)
+            .fontColor('#8fb4ff')
+            .margin({ top: 12 })
+          Text('见仓库 RELEASE.md 的「版本历史」')
+            .fontSize(13)
+            .fontColor('#E0FFFFFF')
+
+          Text('非官方项目。与 Mindustry 及其作者 Anuken 无隶属关系，未获其认可或支持。以 GPL-3.0 分发。')
+            .fontSize(12)
+            .fontColor('#A0FFFFFF')
+            .margin({ top: 16 })
+
+          Text('轻触任意处关闭')
+            .fontSize(12)
+            .fontColor('#80FFFFFF')
+            .margin({ top: 16 })
+        }
+        .padding(22)
+        .backgroundColor('#F01C1C1C')
+        .borderRadius(14)
+        .width('86%')
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor('#B0000000')
+      .justifyContent(FlexAlign.Center)
+      .focusable(false)
+      .onClick(() => { this.showAbout = false; })
     }
     }
     /* The only job of this modifier is to learn the window size, once, so the ball
