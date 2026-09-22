@@ -1329,12 +1329,25 @@ struct Index {
     } catch (e) {
       return;                          /* a half-written read; try again next tick */
     }
-    if (text.indexOf(GAME_LOADED_MARKER) < 0) {
+    const at: number = text.indexOf(GAME_LOADED_MARKER);
+    if (at < 0) {
       return;
     }
     this.stopLoadWatch();
+    /*
+     * Log the game's own load time, not just the fact that it loaded.
+     *
+     * This is the only number that says what interpreted mode COSTS, and it is
+     * the one measurement that is otherwise impossible here: the file it comes
+     * from is not readable over hdc on this device (permission denied), so the
+     * app is the only thing that can report it.
+     *
+     * Baseline with the JIT, same device and same package: 5201 ms and 6301 ms.
+     */
+    const eol: number = text.indexOf('\n', at);
+    const line: string = text.substring(at, eol > 0 ? eol : at + 40);
+    hilog.info(DOMAIN, TAG, 'compat mode: game loaded -> %{public}s', line);
     this.compatNotice = true;
-    hilog.info(DOMAIN, TAG, 'compat mode: game loaded, showing the notice');
   }
 
   private dismissCompatNotice(): void {
