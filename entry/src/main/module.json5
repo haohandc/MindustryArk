@@ -39,7 +39,7 @@
       // INTERNET is a NORMAL-level permission: granted at install, no
       // requestPermissionsFromUser call, and none of the ACL machinery. The
       // reason string is filled in because the store reviews it.
-      { "name": "ohos.permission.INTERNET", "reason": "$string:perm_reason_INTERNET", "usedScene": { "abilities": [ "EntryAbility" ], "when": "inuse" } },
+      { "name": "ohos.permission.INTERNET", "reason": "$string:perm_reason_INTERNET", "usedScene": { "abilities": [ "EntryAbility" ], "when": "inuse" } }
       //{ "name": "ohos.permission.READ_PASTEBOARD", "reason": "$string:perm_reason_READ_PASTEBOARD", "usedScene": { "abilities": [ "EntryAbility" ], "when": "inuse" } },
 
       // The game reads files the player placed in Download when importing a
@@ -88,7 +88,20 @@
       // Do not add it back for the local dev loop: this platform blocks mapping
       // a FILE as executable, and that restriction is what forces the JDK to
       // live in the HAP.
-      { "name": "ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY", "reason": "$string:perm_reason_DOWNLOAD", "usedScene": { "abilities": [ "EntryAbility" ], "when": "inuse" } }
+      //
+      // REMOVED 2026-09-22: ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY.
+      //   Measured: it has never once succeeded on either device this project
+      //   owns -- on the phone Environment.getUserDownloadDir() throws (the API
+      //   is not there), and on the tablet the grant is denied and mkdir returns
+      //   EPERM. Nothing that matters to a player walked that path: all three
+      //   ways of getting a mod in need NO permission (the system picker, and
+      //   DocumentPickerMode.DOWNLOAD), and the game's data lives in the sandbox.
+      //   It also drops an authorisation prompt at startup. See
+      //   docs/PERMISSIONS.md and docs/LIMITATIONS.md.
+      //   The reason string perm_reason_DOWNLOAD is now unreferenced in
+      //   resources/ -- harmless, left in place.
+      //
+      // With this gone the app declares exactly ONE permission: INTERNET.
     ],
 
     "abilities": [

@@ -51,26 +51,26 @@ const MIN_API_FOR_JIT = 26;
 const FORCE_COMPAT_MODE = false;
 
 /**
- * ⚠️ THIS PERMISSION HAS NO USE IN THIS APP ANY MORE, AND IS ABOUT TO BE REMOVED.
- * Read this before acting on the list below.
+ * The app now requests NO runtime permissions. The list below is empty and
+ * requestPerms() skips the call entirely when it is.
  *
- *   It was declared so the app could reach the user's Download directory with
- *   Environment.getUserDownloadDir(). That API is documented as needing
- *   SystemCapability.FileManagement.File.Environment.FolderObtain and as being
- *   "currently 2in1 devices only" -- so on a phone it throws "The device doesn't
- *   support this api" no matter what the permission state is (measured with the
- *   grant applied by hand, so the grant is not the variable).
+ * REMOVED 2026-09-22: ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY. It was
+ * declared so the app could reach the user's Download directory with
+ * Environment.getUserDownloadDir(). That API is documented as needing
+ * SystemCapability.FileManagement.File.Environment.FolderObtain and as being
+ * "currently 2in1 devices only", so on a phone it throws "The device doesn't
+ * support this api" whatever the permission state is (measured with the grant
+ * applied by hand, so the grant is not the variable).
  *
- *   The route that works on a phone is DocumentPickerMode.DOWNLOAD, which creates
- *   Download/<bundle name>/ and needs NO permission at all. See
- *   mods/ModImporter.ets. Nothing calls getUserDownloadDir() any more.
+ * ⚠️ One thing the removal does NOT change: ModImporter.ets STILL calls
+ * getUserDownloadDir(), as route A of createModFolder -- it is what the tablet
+ * reports a path for. What went away is the permission, not the call: route A
+ * never worked anyway (the tablet's mkdir returns EPERM), and the route that
+ * does the work is DocumentPickerMode.DOWNLOAD, which needs no permission at
+ * all. An earlier version of this comment claimed "nothing calls
+ * getUserDownloadDir() any more", which was simply false.
  *
- *   It is left declared until the ACL work is finished, because the store build
- *   and its profile are being touched then anyway. Removing a permission is not
- *   the one-line change it looks like: scripts/make_store_app.sh used to anchor
- *   its injection on this very entry.
- *
- * WHAT IS STILL TRUE, AND WHAT IS NOT
+ * WHAT THE MEASUREMENTS SAID
  *   Measured, same HAP, same signature (identical appId):
  *
  *     tablet : reqPermissionStates [0, 0]  -- both granted
@@ -88,22 +88,23 @@ const FORCE_COMPAT_MODE = false;
  *   asked once, and on hardware that does not, nothing happens and nothing breaks.
  */
 const WANTED: Permissions[] = [
-  'ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY'
 ];
 
 async function requestPerms(ctx: common.UIAbilityContext): Promise<void> {
   /*
    * Nothing to ask for means nothing to do.
    *
-   * This list is now down to one entry and is on its way to empty -- the
-   * permission has no use in this app any more, because the route that works on
-   * a phone (DocumentPickerMode.DOWNLOAD) needs no permission at all. See
-   * mods/ModImporter.ets.
+   * The list is EMPTY as of 2026-09-22 -- READ_WRITE_DOWNLOAD_DIRECTORY was the
+   * last entry and it is gone (see the note on WANTED). Nothing this app does
+   * needs a runtime permission: the one thing that ever did was reaching into
+   * the user's Download directory, and that route never worked on any device
+   * this project owns. The remaining permission, INTERNET, is install-granted
+   * and never appears here.
    *
-   * So the empty case is not hypothetical. What requestPermissionsFromUser()
-   * does with an empty array is not documented anywhere this project has looked,
-   * and the answer does not matter: the call is skipped until there is something
-   * to ask for.
+   * So this is the normal path now, not a corner. What
+   * requestPermissionsFromUser() does with an empty array is not documented
+   * anywhere this project has looked, and the answer does not matter: the call
+   * is skipped, so the question never comes up.
    */
   if (WANTED.length === 0) {
     hilog.info(DOMAIN, TAG, 'permissions: nothing to request');
