@@ -33,7 +33,7 @@ import/export via the Download folder works **on some devices only** -- see
 | Keyboard | Works (physical keyboard; WASD and ESC). Typing into game text fields uses an on-screen field with full input-method support — see [limitations](docs/LIMITATIONS.md) |
 | Gamepad / mouse | Mouse works. Gamepad untested |
 | Save import/export | Via the Download folder -- **only on devices that offer it** (not the Mate 80 Pro phone) -- see [limitations](docs/LIMITATIONS.md) |
-| Mods | Work. Three ways in: the game's own "import mod" button, "导入模组" in the floating ball's menu, or drop the file in `Download/MindustryMods/` (that last one **only on devices that offer the Download folder**). The latter two **need an app restart** — see [limitations](docs/LIMITATIONS.md) |
+| Mods | Work. Three ways in: the game's own "import mod" button, "导入模组" in the floating ball's menu, or drop the file in `Download/com.haohandc.mindustryark/` (taken in automatically at startup). Only the ball's picker **needs an app restart** — see [limitations](docs/LIMITATIONS.md) |
 | Desktop/mobile mode switch | Switches, but needs an app restart — see the [FAQ](docs/FAQ.md) |
 | Networking / multiplayer | **The platform side works** — `socket`, `epoll`, DNS, TCP, TLS and HTTP all measured working here. ⚠️ **But no actual multiplayer match has been tried yet** |
 

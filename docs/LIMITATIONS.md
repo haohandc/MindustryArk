@@ -204,7 +204,7 @@ file://docs/storage/Users/currentUser/Download/...  No such file or directory
 ⇒ 那个 URI**不是能直接喂给 `fs.listFileSync` 的形式** —— 官方示例也是先
 `new fileUri.FileUri(uri).path` 再用的。**所以路径优先、URI 只做兜底。**
 
-## ⚠️ 模组：导入后要重启，文件在沙箱内
+## ⚠️ 模组：文件在沙箱内，只有悬浮球那个入口需要重启
 
 **模组文件放在**（应用沙箱内）：
 `/data/storage/el2/base/files/.local/share/Mindustry/mods/`
@@ -218,17 +218,67 @@ file://docs/storage/Users/currentUser/Download/...  No such file or directory
 | --- | --- |
 | **游戏自带的「导入模组」** | 游戏模组界面里那个按钮。✅ **可用**（设备上实测过）。⚠️ 它会先弹一个**取不到社区模组列表**的提示 —— 那是它在联网，平台层的网络已经通了，取不到是服务端/链路的问题（实测是 `Connection refused`），关掉提示继续即可 |
 | **悬浮球菜单 → 导入模组** | 在**系统文件选择器**里选 `.jar` / `.zip`。**不需要任何权限** |
-| **Download 里的包名文件夹** | 把模组放进 `Download/com.haohandc.mindustryark/`，**下次启动自动**搬进去。⚠️ **仅手机上可用**，见上一节 |
+| **Download 里的包名文件夹** | 把模组放进 `Download/com.haohandc.mindustryark/`，**下次启动自动**搬进去。**两台设备都可用**，见上一节 |
 
-⚠️ **后两个入口导入之后必须重启应用才生效** —— 这**不是偷懒**：游戏**只在启动时扫一次**
-`mods/` 目录（在 `Vars.load()` 里），之后再也不看。文件确实躺在那儿，但游戏看不见它。
-（**游戏自带的那个不用重启**，它自己会触发重载。）
+⚠️ **只有「悬浮球菜单 → 导入模组」需要重启才生效**，另外两个不用：
+
+| 入口 | 要不要重启 | 为什么 |
+| --- | --- | --- |
+| 游戏自带的导入 | **不用** | 它自己会触发重载 |
+| **Download 里的包名文件夹** | **不用** | 它在**启动时**搬进去，早于游戏扫描 |
+| **悬浮球菜单 → 导入模组** | ⚠️ **要** | 它在**游戏运行中**落地，而游戏**只在启动时扫一次** `mods/`（`Vars.load()` 里），之后再也不看 |
+
+⇒ 悬浮球那条要重启**不是偷懒**，是游戏机制：文件确实躺在那儿，但游戏看不见它。
 
 📌 顺带说明一个容易混的点（我自己在这里搞错过一次）：游戏**自己**那套文件浏览器
 （`mindustry/ui/FileChooser` / `FileChooserDialog`）是**纯 Java、画在游戏界面里**的，
 和**原生**文件对话框是两回事。后者（`libarc-filedialogsarm64.so`，实为 tinyfiledialogs）
 是个 glibc 桌面库、本平台加载不了 —— **但本平台没有任何代码路径会走到它**，
 所以不影响上面任何一个入口。
+
+### ⚠️ 内置导入会把文件**改名成 `<名字>.zip`**
+
+不是缺陷，是游戏写死的。`Mods.importMod` 算目标名用的是：
+
+```java
+file.nameWithoutExtension().replace(' ', '_') + ".zip"
+```
+
+⇒ 同一个 `.jar` 分别走「游戏内置导入」和「悬浮球 / Download」，会在 `mods/` 里
+**留下两个文件**（一份 `.jar` 一份 `.zip`），**内容逐字节相同**。
+
+实测：把 `MindustryToolMod - 复制 .jar` 放进 Download，落地成
+`MindustryToolMod_-_复制_.zip` —— 空格变下划线、后缀变 `.zip`，与上面那个式子逐字相符。
+
+⚠️ **无害**，但容易让人以为装了两遍。只想留一份的话，删掉任意一个即可
+（**在游戏内的模组列表里删** —— `mods/` 在应用沙箱内，文件管理器打不开）。
+
+### ⚠️ 模组可能被**游戏自己**禁用，而且**不报错**
+
+游戏有一条**崩溃安全阀**。若上一次启动没能起来（`Vars.failedToLaunch`），下一次启动它会
+**对每一个模组**做：
+
+```java
+settings.put("mod-" + 名字 + "-enabled", false);      // 关掉
+settings.put("mod-" + 名字 + "-failed",  <旧enabled>); // 记一笔，给界面看
+```
+
+之后 `Mods.load()` 读 `-enabled`，是 false 就把状态设成 `disabled` ⇒ **模组不生效**。
+
+⚠️⚠️ **最容易骗人的一点**：`Loading mod: <名字>` 这行日志是在**判定之前**打的
+（在 `loadMod` 里，而状态改写发生在之后的 `load()`）⇒ **这行日志出现 ≠ 模组生效**。
+判断有没有生效要看模组**本身的功能**，不要看这行。
+
+**恢复办法**：游戏 → 模组 → 把模组**重新启用**。那是唯一能改回来的地方。
+
+⚠️ **悬浮球和 Download 这两个入口不会重新启用模组。** 游戏自己的导入会顺手写
+`-enabled = true`，**我们的没有** ⇒ 一个被禁用过的模组，用我们的入口重装
+**装进去了但不生效**，而且**没有任何提示**。
+
+之所以不去补：那两个标志位在 `settings.bin`（游戏的 Java 序列化设置文件）里，
+**游戏运行时改它会被游戏覆盖**；而且键名用的是模组的**内部名字**（`mod.json` 里的
+`name`），不是文件名，得先解析 jar 才知道。为一个窄场景去动玩家的设置文件，
+风险与收益不成比例 —— 所以**如实记在这里**，而不是悄悄绕过。
 
 ⚠️ 开发时注意：用 `deploy.sh` 重新部署会**清空沙箱**，模组和存档一起没。
 
@@ -464,7 +514,7 @@ file://docs/storage/Users/currentUser/Download/...    No such file or directory
 example resolves it with `new fileUri.FileUri(uri).path` first. **So the path is
 tried first and the URI is only a fallback.**
 
-## ⚠️ Mods: a restart applies them, and the files live in the sandbox
+## ⚠️ Mods: the files live in the sandbox, and only the picker needs a restart
 
 **Where the mod files are** (inside the app sandbox):
 `/data/storage/el2/base/files/.local/share/Mindustry/mods/`
@@ -478,12 +528,18 @@ tried first and the URI is only a fallback.**
 | --- | --- |
 | **The game's own "import mod"** | the button in the game's mods screen. ✅ **Works** (confirmed on the device). ⚠️ It shows a **cannot-reach-the-community-mod-list** notice first -- it is going online, and the platform-level network path works; failing to fetch is a server/route condition (measured: `Connection refused`). Dismiss it and carry on |
 | **导入模组 in the ball's menu** | pick a `.jar` / `.zip` in the **system file picker**. **Needs no permission** |
-| **The bundle-name folder in Downloads** | drop the file in `Download/com.haohandc.mindustryark/` and it is taken in **automatically on the next launch**. ⚠️ **Phones only** -- see the section above |
+| **The bundle-name folder in Downloads** | drop the file in `Download/com.haohandc.mindustryark/` and it is taken in **automatically on the next launch**. **Both devices work** -- see the section above |
 
-⚠️ **The last two need a restart to take effect** -- and that is not laziness:
-the game scans the `mods/` directory exactly **once**, inside `Vars.load()`, and
-never looks again. The file really is sitting there; the game just cannot see it.
-(The game's own button does not need one -- it triggers the reload itself.)
+⚠️ **Only the ball's picker needs a restart**; the other two do not:
+
+| Way in | Restart? | Why |
+| --- | --- | --- |
+| the game's own import | **no** | it triggers the reload itself |
+| **the bundle-name folder in Downloads** | **no** | it is taken in **at startup**, before the game scans |
+| **导入模组 in the ball's menu** | ⚠️ **yes** | it lands files **while the game is running**, and the game scans `mods/` exactly **once**, inside `Vars.load()`, and never looks again |
+
+⇒ the picker needing a restart is not laziness, it is the game's mechanism: the file really
+is sitting there, the game just cannot see it.
 
 📌 One thing that is easy to confuse -- and that this project got wrong once:
 the game's **own** file browser (`mindustry/ui/FileChooser` /
@@ -492,6 +548,57 @@ thing from the **native** file dialog. The latter
 (`libarc-filedialogsarm64.so`, really tinyfiledialogs) is a glibc desktop
 library that does not load here -- but **no code path on this platform ever
 reaches it**, so none of the entries above is affected by it.
+
+### ⚠️ The game's own import **renames the file to `<name>.zip`**
+
+Not a defect -- it is hard-coded. `Mods.importMod` derives its destination as:
+
+```java
+file.nameWithoutExtension().replace(' ', '_') + ".zip"
+```
+
+⇒ the same `.jar` taken in through **the game's import** and through the ball's picker
+or Downloads leaves **two files** in `mods/` (one `.jar`, one `.zip`) with **byte-identical
+contents**.
+
+Measured: dropping in `MindustryToolMod - 复制 .jar` landed as
+`MindustryToolMod_-_复制_.zip` -- spaces became underscores and the suffix became `.zip`,
+matching that expression exactly.
+
+⚠️ **Harmless**, but it reads as though the mod were installed twice. To keep one copy,
+delete either one -- **from the game's own mods list**, since `mods/` lives in the app
+sandbox and a file manager cannot open it.
+
+### ⚠️ The game may disable a mod **by itself**, and it **says nothing**
+
+Mindustry has a **crash safety valve**. If the previous launch failed to start
+(`Vars.failedToLaunch`), the next launch does this **to every mod**:
+
+```java
+settings.put("mod-" + name + "-enabled", false);        // switch it off
+settings.put("mod-" + name + "-failed",  <old enabled>); // and note it for the UI
+```
+
+`Mods.load()` then reads `-enabled`, and when it is false it sets the mod's state to
+`disabled` ⇒ **the mod does not take effect**.
+
+⚠️⚠️ **The part that misleads:** the `Loading mod: <name>` line is printed *before* that
+decision (inside `loadMod`; the state is rewritten later, in `load()`) ⇒ **that line
+appearing does NOT mean the mod took effect.** Judge that by the mod's own behaviour, not
+by that line.
+
+**To recover**: game → mods → **enable the mod again**. That is the only place that can
+change it back.
+
+⚠️ **Neither the ball's picker nor the Downloads folder re-enables a mod.** The game's own
+import also writes `-enabled = true`; **ours does not** ⇒ a mod that has been disabled is
+re-installed by our entries **and still does not take effect**, with **no message at all**.
+
+Why it was left alone: those flags live in `settings.bin`, the game's Java-serialised
+settings file. Writing it while the game is running gets overwritten by the game, and the
+key is the mod's **internal name** (the `name` in `mod.json`) rather than the file name, so
+the jar would have to be parsed first. Rewriting a player's settings file for a narrow case
+is a bad trade -- so it is recorded here rather than quietly worked around.
 
 ⚠️ For developers: re-deploying with `deploy.sh` **wipes the sandbox**, mods and
 saves together.

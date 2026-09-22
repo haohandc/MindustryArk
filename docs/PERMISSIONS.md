@@ -10,7 +10,7 @@
 | 权限 | 为什么 |
 |---|---|
 | `ohos.permission.INTERNET` | **多人联机**：加入服务器，以及在本机开服。游戏本身的联网功能（社区服务器列表、联机对战）要用它 |
-| `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY` | 从「下载」目录**导入存档与游戏数据包**，以及把模组放进 `Download/MindustryMods/`。⚠️ **部分机型不提供此权限**（手机 Mate 80 Pro 上申请返回 `2`「无效请求」，不弹窗也不授权），此时该功能不存在；模组仍可用悬浮球的系统文件选择器导入 |
+| `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY` | **只用来**让游戏的文件浏览器打开在「下载」目录。⚠️ **实测：在本项目的两台设备上从来没有成功过一次** —— 手机上是 API 本身不存在（`Environment.getUserDownloadDir()` 抛错），平板上是权限被拒 + `mkdir` 返回 `EPERM`。⚠️ **模组不需要它**：三个模组入口都不碰这个权限（悬浮球走系统选择器，Download 文件夹走 `DocumentPickerMode.DOWNLOAD`，两者都是**零权限**）。⇒ 这条权限**正在申请移除**，见 [RELEASE-MAINTENANCE.md](../RELEASE-MAINTENANCE.md) |
 
 ⚠️ 上架应用市场时，**第二条要走 ACL 受限权限流程**（权限级别虽是 `normal`，
 但官方要求保持受限申请方式）；本地安装不受影响。见 [BUILDING.md](BUILDING.md)。
@@ -37,7 +37,7 @@ prompt (both are granted at install):
 | Permission | Why |
 |---|---|
 | `ohos.permission.INTERNET` | **Multiplayer**: joining a server, and hosting one on this device. The game's own online features (the community server list, networked matches) need it |
-| `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY` | Importing saves and game-data exports from Download, and picking up mods from `Download/MindustryMods/`. ⚠️ **Some devices do not offer it** -- on the Mate 80 Pro phone the request returns `2` (invalid request), no dialog appears and it is never granted, so that feature does not exist there. Mods still import through the ball menu's system file picker |
+| `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY` | **Only** used to start the game's file browser in Download. ⚠️ **Measured: it has never once succeeded on either device this project owns** -- on the phone the API does not exist (`Environment.getUserDownloadDir()` throws), and on the tablet the permission is denied and `mkdir` returns `EPERM`. ⚠️ **Mods do not need it**: none of the three ways in touches this permission (the ball's picker uses the system picker, the Downloads folder uses `DocumentPickerMode.DOWNLOAD`, both **zero-permission**). ⇒ It is **being removed** -- see [RELEASE-MAINTENANCE.md](../RELEASE-MAINTENANCE.md) |
 
 ⚠️ For an AppGallery submission, **the second one goes through the ACL route**
 (its level is `normal`, but Huawei requires the restricted application path for
