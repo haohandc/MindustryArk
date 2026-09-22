@@ -1438,7 +1438,7 @@ static char g_extra[MAX_EXTRA_OPTS][256];
 
 /* Candidate locations, tried in order.
  *
- * ⚠️ A THIRD ENTRY USED TO BE HERE -- "/data/local/tmp/jvm.options" -- and it was
+ * WARNING: A THIRD ENTRY USED TO BE HERE -- "/data/local/tmp/jvm.options" -- and it was
  * removed on 2026-09-22 because it cannot work. Measured: the file was pushed
  * there with `hdc file send` and was readable from the shell, and the launcher
  * still reported "no options file found; tried 3 locations" -- every fopen
@@ -1464,7 +1464,7 @@ static const char *OPTION_PATHS[] = {
      *  26, and the game then runs permanently interpreted with nothing to explain
      *  why.
      *
-     *  ⚠️ The launcher ALSO forces -Xint by itself when probe_exec_mem() says the
+     *  WARNING: The launcher ALSO forces -Xint by itself when probe_exec_mem() says the
      *  memory is unavailable, which covers the cases an API-version rule cannot:
      *  a phone at API 26 with a store signature, and a tablet without the ACL.
      *  This file is the request; that probe is the authority. */
@@ -2830,6 +2830,67 @@ static int start_jvm(void)
     if (force_noexec) {
         SDL_Log(" NOTE: NOEXEC was set, so the probe result above was IGNORED and the "
                 "fallback was taken on purpose -- this is a test, not a real condition");
+    }
+
+    /*
+     * LEAVE THE VERDICT WHERE THE UI CAN READ IT.
+     *
+     * WHY THIS EXISTS
+     *   Whether the JVM runs interpreted is now decided HERE, by measurement. The
+     *   page has to tell the player about it -- being slow with no explanation
+     *   reads as a broken port -- but the page cannot make this measurement (it
+     *   has no mmap) and cannot read these logs either: the game pushes a few
+     *   thousand lines per second through a ring buffer, and this app's own
+     *   output is gone within seconds. So the verdict travels by file, the same
+     *   channel the IME bridge already uses.
+     *
+     * WHY IT DOES NOT EVEN TRY TO BE THE SAME LAUNCH
+     *   The page writes its notice decision before the XComponent mounts, and the
+     *   XComponent mounting is what starts SDL_main -- where this runs. So the
+     *   page can only ever read the PREVIOUS launch's answer. That is acceptable
+     *   because the answer is a property of the instalment, not of the launch: it
+     *   does not change from one run to the next.
+     *
+     * WARNING: AND THE CASE THAT LOOKS LIKE IT BREAKS THAT
+     *   If the JVM cannot start at all, is the player stuck on a first launch
+     *   with no explanation? No: this runs BEFORE JNI_CreateJavaVM, so the file
+     *   saying "interp" is already on disk when the JVM hangs. Kill the app, open
+     *   it again, and the notice is there -- on the launch where the fallback
+     *   also takes effect and the game actually starts.
+     *
+     * "interp" and "jit" rather than the raw number: the caller needs the
+     * decision, not the experiment, and the number is already in the log.
+     *
+     * WARNING: REPORT THE CAPABILITY, NOT THE OPTION LIST. This was got wrong first
+     * time round and the mistake is worth the paragraph, because it made the
+     * verdict unable to ever correct itself:
+     *
+     *     the block used to ask "is -Xint in the option list?"
+     *
+     *   The page writes -Xint into jvm.options when IT thinks the JIT is
+     *   unavailable, so a stale request fed straight back in as a fresh verdict:
+     *   verdict interp -> page writes -Xint -> launcher sees -Xint -> verdict
+     *   interp, forever. Measured, on a phone whose probe was returning 42 the
+     *   whole time: it stayed interpreted at 12239 ms across launches while the
+     *   probe kept saying the memory was fine.
+     *
+     *   Asking the probe instead breaks the loop: the page's request stops being
+     *   an input to its own verdict, so one launch after the capability appears,
+     *   the verdict flips to "jit" and the page takes -Xint back out.
+     */
+    {
+        const int incapable = (force_noexec || g_exec_probe_result != 42);
+        FILE *vf = fopen(DEST_ROOT "/execmem", "w");
+        if (vf == NULL) {
+            SDL_Log(" !! cannot write %s -- the UI cannot tell the player the game is "
+                    "running interpreted", DEST_ROOT "/execmem");
+        } else {
+            fputs(incapable ? "interp\n" : "jit\n", vf);
+            fclose(vf);
+            SDL_Log(" wrote the verdict for the UI: %s (probe=%ld%s)",
+                    incapable ? "interp" : "jit", g_exec_probe_result,
+                    force_noexec ? ", NOEXEC set" : "");
+        }
     }
 
     /*

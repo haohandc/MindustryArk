@@ -35,6 +35,36 @@ const TAG = 'MindustryLauncher';
  */
 const JVM_OPTIONS_FILE_NAME = 'jvm.options';
 const COMPAT_NOTICE_FILE_NAME = 'compat_notice_shown';
+
+/*
+ * Where the LAUNCHER records whether the JVM actually got executable memory.
+ *
+ * An absolute literal for the same reason as the IME bridge below: this is the
+ * application-level directory the native side writes, while context.filesDir is
+ * the module-level one. They look almost identical and are not interchangeable.
+ *
+ * Contents are one word: "interp" or "jit".
+ */
+const EXEC_MEMORY_FILE = '/data/storage/el2/base/files/execmem';
+
+/**
+ * What the launcher measured LAST launch, or '' if it has not said yet.
+ *
+ * '' means "no measurement" -- a fresh install, or a launch where the file could
+ * not be written -- and the caller falls back to its own guess. It does NOT mean
+ * "the JIT works": treating an absent file as good news is how a device that
+ * cannot start gets no notice at all.
+ */
+function launcherExecMemoryVerdict(): string {
+  try {
+    if (!fs.accessSync(EXEC_MEMORY_FILE)) {
+      return '';
+    }
+    return fs.readTextSync(EXEC_MEMORY_FILE).trim();
+  } catch (e) {
+    return '';
+  }
+}
 /* API level at which this platform grants anonymous executable memory without an
  * ACL. Below it the JIT cannot start. */
 const MIN_API_FOR_JIT = 26;
@@ -1630,26 +1660,81 @@ struct Index {
    * explain why.
    */
   private setupCompatMode(): void {
-    let want: boolean = FORCE_COMPAT_MODE;
+    /*
+     * THE ORDER OF THESE THREE DECIDES WHAT BEATS WHAT, and it is:
+     *
+     *   FORCE_COMPAT_MODE   an explicit instruction, so it wins outright
+     *   the launcher's verdict   a measurement of THIS install
+     *   the device-type rule     a guess, used only when there is no measurement
+     *
+     * ⚠️ FORCE must stay on top. It is the switch this project's store script
+     * refuses to build a release with unless it is false, so its whole purpose is
+     * to override the automatic decision. An earlier revision of this change put
+     * the verdict above it, and the switch silently stopped working: a launch with
+     * FORCE on read a stale "jit" verdict, turned the force back off, and wrote
+     * nothing -- measured, and it is why the order is spelled out here rather than
+     * left to the sequence of the code.
+     */
+    let want: boolean = false;
     let kind: string = '?';
     let api: number = -1;
-    if (!want) {
-      try {
-        kind = deviceInfo.deviceType;
-        api = deviceInfo.sdkApiVersion;
-        want = kind === 'phone' && api < MIN_API_FOR_JIT;
-      } catch (e) {
-        const err = e as BusinessError;
-        /*
-         * FAIL OPEN. If the platform will not say what it is, assume the JIT
-         * works. Failing closed would slow the game down for everyone on the
-         * strength of a failed query.
-         */
-        hilog.error(DOMAIN, TAG,
-          'deviceInfo unavailable (%{public}s) -- assuming the JIT works', err.message);
-        kind = 'unavailable';
-        want = false;
-      }
+    let source: string = 'device rule';
+
+    try {
+      kind = deviceInfo.deviceType;
+      api = deviceInfo.sdkApiVersion;
+      want = kind === 'phone' && api < MIN_API_FOR_JIT;
+    } catch (e) {
+      const err = e as BusinessError;
+      /*
+       * FAIL OPEN. If the platform will not say what it is, assume the JIT
+       * works. Failing closed would slow the game down for everyone on the
+       * strength of a failed query.
+       */
+      hilog.error(DOMAIN, TAG,
+        'deviceInfo unavailable (%{public}s) -- assuming the JIT works', err.message);
+      kind = 'unavailable';
+      want = false;
+    }
+
+    /*
+     * THE LAUNCHER'S MEASUREMENT OUTRANKS THE GUESS.
+     *
+     * The device-type rule and the launcher's probe answer different questions.
+     * The rule asks "is this the kind of device that usually cannot get the
+     * memory"; the probe asks "did THIS install get it". Only the second is the
+     * thing the player experiences, and the two disagree more often than the rule
+     * implies:
+     *
+     *   - a phone at API 26, where the rule says JIT and the store package cannot
+     *     be granted the permission at all;
+     *   - a phone at API 26 on a DEBUG install, where the rule says nothing but
+     *     DevEco's debug profile unlocks every permission and the JIT works fine;
+     *   - a tablet without the ACL.
+     *
+     * Taking the verdict when there is one also REPAIRS the middle case rather
+     * than merely describing it: the rule would have written -Xint and slowed a
+     * device that can perfectly well use the JIT, and one launch later the
+     * measurement switches that back off.
+     *
+     * ⚠️ The guess is still the first-launch answer, and it has to be: on a
+     * device below API 26 there is no verdict yet, and writing nothing would let
+     * the JVM hang before it ever produced one. So the order is
+     * "measured if we have it, guessed if we do not" -- never "assume fine".
+     */
+    const verdict: string = launcherExecMemoryVerdict();
+    if (verdict === 'interp') {
+      want = true;
+      source = 'launcher measured: no executable memory';
+    } else if (verdict === 'jit') {
+      want = false;
+      source = 'launcher measured: executable memory available';
+    }
+
+    /* Last and highest: see the note on the order at the top. */
+    if (FORCE_COMPAT_MODE) {
+      want = true;
+      source = 'FORCE_COMPAT_MODE';
     }
     this.compatMode = want;
     /*
@@ -1665,8 +1750,8 @@ struct Index {
      * tried 3 locations)". Two independent observations, agreeing.
      */
     hilog.info(DOMAIN, TAG,
-      'compat mode: device=%{public}s api=%{public}d -> interpreted=%{public}s',
-      kind, api, String(want));
+      'compat mode: device=%{public}s api=%{public}d -> interpreted=%{public}s (from %{public}s)',
+      kind, api, String(want), source);
 
     const ctx = getContext(this) as common.UIAbilityContext;
     const path: string = ctx.filesDir + '/' + JVM_OPTIONS_FILE_NAME;
@@ -1708,9 +1793,25 @@ struct Index {
      * With the timing changed, the whole watch -- the timer, the deadline, the
      * file reads -- has nothing left to do and is gone.
      */
-    if (want && !this.compatNoticeAlreadyShown()) {
+    const alreadyShown: boolean = this.compatNoticeAlreadyShown();
+    if (want && !alreadyShown) {
       this.compatNotice = true;
       hilog.info(DOMAIN, TAG, 'compat notice shown (before the game starts)');
+    } else {
+      /*
+       * LOGGED ON BOTH BRANCHES, and that is not tidiness.
+       *
+       * "The notice did not appear" has two completely different causes -- the
+       * game is not running interpreted, or the player already dismissed it once
+       * -- and without this line they are indistinguishable from outside. Worse,
+       * the marker lives in filesDir, which hdc cannot read, so there is no way
+       * to check it from a shell either. Measured: a test launch looked like a
+       * failure to show the notice and was in fact the marker left over from an
+       * earlier test.
+       */
+      hilog.info(DOMAIN, TAG,
+        'compat notice NOT shown: want=%{public}s alreadyShown=%{public}s',
+        String(want), String(alreadyShown));
     }
   }
 
