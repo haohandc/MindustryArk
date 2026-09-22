@@ -109,10 +109,16 @@ ARK_HDC_TARGET=<上面列的 id> bash deploy.sh        # 显式指定
 
 #### ACL（受限权限）—— 只有上架会碰到
 
-`ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY` 的权限级别在 API 12 变更为
-`normal`，但官方要求**「为保证兼容性，在当前版本请继续采用受限权限申请方式」**
-⇒ 走 ACL 路线。**AppGallery 的准入检测会逐条比对**包里的声明与 Profile 里的
-ACL 列表，**少一条就不通过**，而且**改不了包、只能改 Profile**：
+⚠️ **2026-09-22 更新**：`READ_WRITE_DOWNLOAD_DIRECTORY` **已从包里移除**，
+⇒ **它那条 ACL 申请随之取消**。⚠️ **但本节仍然有效，而且仍然是 RC 的头号阻塞** ——
+因为它现在只针对**另一条**权限：
+
+**`ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY`**（沙箱里匿名内存可执行，
+JIT 需要它）。它只在**商店构建**时由 `scripts/make_store_app.sh` 注入，
+要配套的 ACL Profile 才装得上。见 [RELEASE-MAINTENANCE.md](../RELEASE-MAINTENANCE.md) §2.11。
+
+**AppGallery 的准入检测会逐条比对**包里的声明与 Profile 里的 ACL 列表，
+**少一条就不通过**，而且**改不了包、只能改 Profile**：
 
 1. AGC → 申请该 ACL
 2. **重新生成 Release Profile**（带 ACL 的那份）
@@ -232,11 +238,19 @@ Nothing needs setting in the single-device case.
 
 #### ACL (restricted permissions) — only the store route meets it
 
-`ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY` became level `normal` in API 12,
-but Huawei requires it to keep going through the restricted/ACL route for
-compatibility. **AppGallery's admission check compares the package's declarations
-against the Profile's ACL list**, and a missing entry fails the upload — and the
-package is not what gets changed:
+⚠️ **Updated 2026-09-22**: `READ_WRITE_DOWNLOAD_DIRECTORY` **has been removed from
+the package**, so **its ACL application is cancelled**. ⚠️ **This section still
+applies, and it is still the number-one RC blocker** -- it now covers **one other**
+permission:
+
+**`ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY`** (anonymous memory in the
+sandbox made executable, which the JIT needs). It is injected only for the **store
+build**, by `scripts/make_store_app.sh`, and needs a matching ACL Profile to install.
+See [RELEASE-MAINTENANCE.md](../RELEASE-MAINTENANCE.md) §2.11.
+
+**AppGallery's admission check compares the package's declarations against the
+Profile's ACL list**, and a missing entry fails the upload — and the package is not
+what gets changed:
 
 1. request that ACL in AGC
 2. **regenerate the Release Profile** from the result

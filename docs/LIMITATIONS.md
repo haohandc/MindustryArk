@@ -143,8 +143,8 @@
 ⚠️ **仍未验证**：游戏的**文件浏览器**（走 libc，不是走 URI）能否读那个路径 ——
 应用的授权是**按 URI** 持有的，而浏览器用**路径**。这是下一步要在设备上看的。
 
-⚠️ **顺带**：`READ_WRITE_DOWNLOAD_DIRECTORY` 现在**没有任何用途**了（机器上那条路用不到它），
-但**仍然声明在包里** —— 这是**上架审核的风险**，考虑撤掉。
+⚠️ **顺带**：`READ_WRITE_DOWNLOAD_DIRECTORY` 在本项目里**从来没有过一次成功**
+（见下），已**于 2026-09-22 移除**。⇒ **本应用现在是【零文件权限】。**
 
 ### ⭐⭐ 逐设备的精确实测（2026-09-22，两台机器都测了）
 
@@ -159,7 +159,8 @@
 
 ⇒ ⭐ **`READ_WRITE_DOWNLOAD_DIRECTORY` 对本应用【完全没有用】**：
 路线 A **从来没有成功过一次**（手机上是 API 不支持，平板上是权限被拒 + `mkdir` EPERM）。
-它**仍然声明在包里** ⇒ **上架审核风险**，应当撤掉。
+✅ **已于 2026-09-22 移除** —— 随之取消的还有它那条 **ACL 受限权限申请流程**，
+⇒ **上架审核少一个障碍**。见 [PERMISSIONS.md](PERMISSIONS.md)。
 
 ⚠️ **平板上那个 EPERM 的原因，用户确认了：权限是【他手动拒绝】的。**
 ⇒ 不是平台故障，也不是解不开的矛盾。但**留下一个有用的发现**：
@@ -445,9 +446,9 @@ through libc, not through the URI) can read that path -- the app's grant is held
 **per URI** while the browser uses a **path**. That is the next thing to check on
 the device.
 
-⚠️ **Also**: `READ_WRITE_DOWNLOAD_DIRECTORY` now has **no use at all** (the working
-route does not need it) yet is **still declared** in the package -- a **store
-review risk** worth removing.
+⚠️ **Also**: `READ_WRITE_DOWNLOAD_DIRECTORY` has **never once succeeded** in this
+project (see below), and was **removed on 2026-09-22**. ⇒ **this app now has ZERO
+file permissions.**
 
 ### ⭐⭐ Precise, per device (2026-09-22, both machines measured)
 
@@ -463,8 +464,9 @@ the user**, and the picker mode still created the folder.
 
 ⇒ ⭐ **`READ_WRITE_DOWNLOAD_DIRECTORY` has NO use in this app**: route A has never
 succeeded once (on the phone the API does not exist, on the tablet the permission is
-denied and `mkdir` returns EPERM). It is **still declared** ⇒ a **store review
-risk**, and should be removed.
+denied and `mkdir` returns EPERM). ✅ **Removed on 2026-09-22** -- which also cancels
+the **ACL restricted-permission route** it required, so **store review has one less
+obstacle**. See [PERMISSIONS.md](PERMISSIONS.md).
 
 ⚠️ **That EPERM on the tablet is now explained -- the user DENIED the permission
 by hand.** So it is not a platform fault and not a contradiction. But it leaves a

@@ -26,14 +26,20 @@
 
 ## 三、权限用途
 
-本应用申请以下权限：
+本应用**只申请一个权限**：
 
 | 权限 | 用途 |
 |---|---|
 | `ohos.permission.INTERNET` | 用于**多人联机**：加入服务器，以及在本机开服 |
-| `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY` | 用于**导入和导出游戏存档**，以及把游戏数据文件保存到你指定的「下载」目录。⚠️ **仅部分设备支持**（见下） |
 
-**只在你主动使用导入 / 导出功能时**才会读写该目录；本应用不会在后台扫描或传输该目录中的内容。
+⚠️ **关于文件访问：本应用不申请任何文件权限。** 早期版本曾申请
+`READ_WRITE_DOWNLOAD_DIRECTORY`，**该权限已于 2026-09-22 移除** —— 实测它在
+本项目的设备上从未起过作用，而本应用需要的文件读写走的是**系统文件选择器**
+（你亲自选中哪个文件，本应用才被允许读那一个）与**应用自己的沙箱目录**，
+两者都**不需要任何权限**。
+
+⇒ **本应用只读取下列两类文件**：① 你在系统文件选择器里**主动选中**的模组文件；
+② 本应用自己沙箱内的游戏数据。**不会在后台扫描或传输任何目录的内容。**
 
 ## 四、⚠️ 关于游戏内置的联网功能
 
@@ -103,12 +109,22 @@ The app saves a few things **on your own device, inside its private storage** (t
 
 ## 3. Permissions
 
+The app requests **exactly one** permission:
+
 | Permission | Why |
 |---|---|
 | `ohos.permission.INTERNET` | for **multiplayer**: joining a server, and hosting one on this device |
-| `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY` | to **import and export game saves**, and to write game data files to the Download folder you choose. ⚠️ **Only some devices support this** (see below) |
 
-That folder is touched **only while you use the import / export feature**; the app never scans or transmits its contents in the background.
+⚠️ **On file access: the app requests no file permission of any kind.** An earlier
+version requested `READ_WRITE_DOWNLOAD_DIRECTORY`; **it was removed on 2026-09-22** --
+measured, it never did anything on either device this project owns. The file access
+the app does need goes through the **system file picker** (only the file you
+personally select becomes readable) and through the **app's own sandbox**, and
+neither needs a permission.
+
+⇒ **The app reads exactly two kinds of file**: (1) a mod file **you** select in the
+system picker, and (2) its own game data in its sandbox. **It never scans or
+transmits any directory's contents in the background.**
 
 ## 4. ⚠️ The game's built-in network features
 
