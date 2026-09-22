@@ -1,17 +1,33 @@
 /*
  * Getting mod files into the directory the game reads them from.
  *
- * WHY THIS IS OURS AND NOT THE GAME'S
- *   Mindustry ships an "import mod" button, and on this platform it cannot work.
- *   It calls Platform.showFileChooser, whose default implementation in the game
- *   jar is:
+ * WHAT THIS IS FOR, AND WHAT WAS WRONG ABOUT THE FIRST ANSWER
+ *   The first version of this file said the game's own "import mod" button
+ *   cannot work here, because it goes through Platform.showFileChooser, whose
+ *   default implementation throws:
  *
  *       throw new IllegalArgumentException("Not implemented on this platform!")
  *
- *   and the one backend that does implement it loads
- *   libarc-filedialogsarm64.so, which is tinyfiledialogs -- zenity/kdialog/
- *   popen -- and is glibc-linked, so it does not load here at all. Both
- *   measured. So the button is dead, and an entry has to exist somewhere.
+ *   and the backend that implements it loads libarc-filedialogsarm64.so, which
+ *   is tinyfiledialogs -- zenity/kdialog/popen, glibc-linked, does not load.
+ *
+ *   The individual measurements were right; the conclusion was not. Read from
+ *   the jar: `showFileChooser` is referenced only by DesktopLauncher, and
+ *   ModsDialog -- which owns the import button -- references
+ *   mindustry/ui/FileChooser instead. That is the game's OWN in-game browser
+ *   (FileChooserDialog), pure Java over Arc's Fi, and it needs no native dialog
+ *   at all. So nothing on this path ever reaches the throwing default, and the
+ *   claim that the button is dead was never supported. Whether it works on the
+ *   device is still unverified.
+ *
+ *   Both documents that repeated that claim have been corrected. This note is
+ *   kept because "a true measurement can still be assembled into a false
+ *   conclusion" is worth the paragraph.
+ *
+ * SO WHY THIS ENTRY
+ *   The platform picker is a shorter path: pick a file from anywhere the system
+ *   can reach and it lands in the mods directory, with no browsing through a
+ *   dialog rooted at one folder and no permission needed.
  *
  * TWO WAYS IN, BOTH ASKED FOR
  *   A. the HarmonyOS document picker, from the floating ball's menu. No
@@ -20,11 +36,11 @@
  *   B. a folder in Downloads, scanned at startup. Reuses the
  *      READ_WRITE_DOWNLOAD_DIRECTORY grant and the Environment API that
  *      user_dirs.txt already exercises. A is the discoverable one; B is the one
- *      that works when a picker is unavailable or refused.
+ *      that keeps working if the picker is unavailable.
  *
- *   B has to tolerate the permission being refused -- it is an ACL permission
- *   and the profile that grants it may change -- so a failure there is logged
- *   and returns empty rather than surfacing. A is unaffected.
+ *   B fails soft on the permission, always -- it is an ACL permission and the
+ *   profile that grants it is in flux -- so a refusal there is logged and
+ *   returns empty rather than surfacing. A is unaffected.
  *
  * WHY THE MODS PATH IS AN ABSOLUTE LITERAL
  *   Same reason as the IME bridge in Index.ets: this is the APPLICATION-level

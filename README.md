@@ -32,6 +32,7 @@ saves can be imported from the Download folder.
 | Keyboard | Works (physical keyboard; WASD and ESC). Typing into game text fields uses an on-screen field with full input-method support — see [limitations](docs/LIMITATIONS.md) |
 | Gamepad / mouse | Mouse works. Gamepad untested |
 | Save import/export | Works, from/to the Download folder |
+| Mods | Work — "导入模组" in the floating ball's menu, or drop the file in `Download/MindustryMods/`. **Needs an app restart** — see [limitations](docs/LIMITATIONS.md) |
 | Desktop/mobile mode switch | Switches, but needs an app restart — see the [FAQ](docs/FAQ.md) |
 
 ## How to download and install

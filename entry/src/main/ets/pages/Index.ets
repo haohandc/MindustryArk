@@ -99,8 +99,13 @@ async function requestPerms(ctx: common.UIAbilityContext): Promise<void> {
  * the game runs. Its data goes to the sandbox -- user.home is redirected there,
  * and files/.local/share/Mindustry/ holds saves, settings.bin, mods and cache --
  * its assets come out of the game jar, and the only feature that wants a
- * user-visible directory is the file picker, whose library cannot load here at
- * all (glibc-linked; see prep_arc.py). Nothing in the game references it.
+ * user-visible directory is Arc's file chooser backend,
+ * libarc-filedialogsarm64.so, which cannot load here at all: it is
+ * tinyfiledialogs -- zenity/kdialog/popen -- and it is glibc-linked. That is a
+ * statement about ARC'S library, not about this platform's own picker, which
+ * works and is what the mods menu uses (see mods/ModImporter.ets). An earlier
+ * wording here said only "the file picker ... cannot load", which reads as the
+ * latter and cost a round of investigation.
  *
  * Removing it drops an authorisation prompt at startup. The reason string
  * perm_reason_DOWNLOAD is still in resources/ -- now unreferenced and harmless.

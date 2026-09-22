@@ -66,6 +66,11 @@ function writeJvmOptions(want: Want, filesDir: string): void {
  *
  * WHY
  *   The game's built-in file browser (mindustry/ui/FileChooser, used by "import
+ *   save" and "import mod"; it is rooted at Arc's external storage path, which
+ *   is why these directories are collected at all). NOTE: the reason that
+ *   browser cannot work here is Arc's libarc-filedialogsarm64.so being a
+ *   glibc desktop library -- NOT this platform's picker, which works fine.
+ *   See mods/ModImporter.ets, which uses it.
  *   save") roots itself at Arc's external storage path, which SdlFiles computes
  *   as user.home + separator -- and this launcher points user.home at its own
  *   sandbox. So the browser opens inside the app, where the player cannot put

@@ -102,6 +102,33 @@
 且代价随**视野面积**放大 —— 屏幕越大越吃力。
 
 
+## ⚠️ 模组：导入后要重启，文件在沙箱内
+
+**模组文件放在**（应用沙箱内）：
+`/data/storage/el2/base/files/.local/share/Mindustry/mods/`
+
+**格式**：`.jar` 或 `.zip`。
+（游戏也接受「内含 `mod.json` 的文件夹」，但那种没法用文件选择器选。）
+
+**两个入口，都在悬浮球菜单里**：
+
+| 方式 | 怎么用 |
+| --- | --- |
+| **导入模组** | 点它，在**系统文件选择器**里选 `.jar` / `.zip`。**不需要任何权限** |
+| **Download 文件夹** | 把模组放进 `Download/MindustryMods/`，**下次启动自动**搬进去 |
+
+⚠️ **导入之后必须重启应用才生效** —— 这**不是偷懒**：游戏**只在启动时扫一次**
+`mods/` 目录（在 `Vars.load()` 里），之后再也不看。文件确实躺在那儿，但游戏看不见它。
+
+📌 顺带说明一个容易混的点：游戏**自己**也有一套文件浏览器
+（`mindustry/ui/FileChooser` / `FileChooserDialog`，**纯 Java、画在游戏界面里**），
+「导入存档」用的就是它 —— 它和**原生**文件对话框是两回事。后者
+（`libarc-filedialogsarm64.so`，实为 tinyfiledialogs）是个 glibc 桌面库、本平台加载不了，
+但在本平台上**没有任何代码路径会走到它**。
+
+⚠️ 开发时注意：用 `deploy.sh` 重新部署会**清空沙箱**，模组和存档一起没。
+
+
 # English
 
 - **Text entry, and what each route can do.** Touch a text field inside the game
@@ -213,3 +240,33 @@ Java: a larger viewport means more work per frame at the same frame budget.
 ⚠️ In summary: compatibility mode affects the simulation only -- rendering is
 untouched -- and its cost grows with the VISIBLE AREA, so a larger screen suffers
 more.
+
+
+## ⚠️ Mods: a restart applies them, and the files live in the sandbox
+
+**Where the mod files are** (inside the app sandbox):
+`/data/storage/el2/base/files/.local/share/Mindustry/mods/`
+
+**Format**: `.jar` or `.zip`. (The game also accepts a *folder* containing
+`mod.json`, but a picker cannot hand a folder over.)
+
+**Two ways in, both from the floating ball's menu**:
+
+| Way | How |
+| --- | --- |
+| **导入模组** | tap it and pick a `.jar` / `.zip` in the **system file picker**. **Needs no permission** |
+| **Downloads folder** | drop the file in `Download/MindustryMods/` and it is taken in **automatically on the next launch** |
+
+⚠️ **Importing requires a restart to take effect** -- and that is not laziness:
+the game scans the `mods/` directory exactly **once**, inside `Vars.load()`, and
+never looks again. The file really is sitting there; the game just cannot see it.
+
+📌 One thing that is easy to confuse: the game has its **own** file browser
+(`mindustry/ui/FileChooser` / `FileChooserDialog`, **pure Java, drawn inside the
+game**), and that is what "import save" uses. It is a different thing from the
+**native** file dialog. The latter (`libarc-filedialogsarm64.so`, really
+tinyfiledialogs) is a glibc desktop library that does not load here -- but **no
+code path on this platform ever reaches it**.
+
+⚠️ For developers: re-deploying with `deploy.sh` **wipes the sandbox**, mods and
+saves together.
