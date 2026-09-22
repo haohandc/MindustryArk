@@ -58,7 +58,7 @@
  *           dlopen("<sandbox>/.../libSDL3_copy.so")          -> fails
  *       (The permission covers anonymous executable memory only; AMCL gets
  *        around it with a hand-written ELF loader -- we do not need that.)
- *       ⚠️ "Anonymous executable memory" is exactly what a JIT needs, and it is
+ *       !! "Anonymous executable memory" is exactly what a JIT needs, and it is
  *       NOT universally available: measured 2026-09-22, a HarmonyOS 6.1.1
  *       (API 24) device refused mmap(RWX) with errno=22 while running the
  *       release-signed store package. See RELEASE-MAINTENANCE.md 2.11.
@@ -1408,7 +1408,7 @@ static const char *OPTION_PATHS[] = {
      * context.filesDir resolves to the ability's own files dir, which is NOT the
      * same directory as DEST_ROOT (that one is the application-level files dir).
      *
-     * ⭐ The first entry is ALSO how the platform-version fallback works: on a
+     *  The first entry is ALSO how the platform-version fallback works: on a
      * phone below API 26 the JVM cannot get anonymous executable memory and must
      * run interpreted, so ArkTS writes -Xint here. See RELEASE-MAINTENANCE.md
      * 2.12. The file has to be REWRITTEN IN BOTH DIRECTIONS on every launch --
