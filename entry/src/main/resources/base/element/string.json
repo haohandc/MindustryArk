@@ -35,22 +35,6 @@
     {
       "name": "perm_reason_CODE_MEMORY",
       "value": "Required by the bundled Java runtime to allocate memory for its just-in-time compiler."
-    },
-    {
-      "name": "compat_title",
-      "value": "Compatibility mode"
-    },
-    {
-      "name": "compat_body",
-      "value": "This device was not granted the executable-memory permission, so Java's just-in-time compiler (JIT) cannot be used and the game runs interpreted instead.\n\n⚠️ That is a restriction of the system, not a problem with this app.\n\nWhat it means:\n· the game is noticeably slower, more so the more units are on screen;\n· measured: load time goes from about 5-6 s to around 20 s;\n· a smaller game window helps a lot -- the cost scales with how much you can see."
-    },
-    {
-      "name": "compat_dismiss",
-      "value": "Tap anywhere to close -- it will not be shown again"
-    },
-    {
-      "name": "compat_dismiss_wait",
-      "value": "Closes in %d s -- it will not be shown again"
     }
   ]
 }

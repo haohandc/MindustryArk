@@ -35,22 +35,6 @@
     {
       "name": "perm_reason_CODE_MEMORY",
       "value": "内置的 Java 运行时需要分配内存给即时编译器（JIT）。"
-    },
-    {
-      "name": "compat_title",
-      "value": "兼容模式"
-    },
-    {
-      "name": "compat_body",
-      "value": "本设备没有获得「可执行内存」权限，Java 的即时编译（JIT）无法使用，游戏改为解释执行。\n\n⚠️ 这是系统的限制，不是本应用的问题。\n\n影响：\n· 游戏会明显变慢，屏幕上单位越多越明显；\n· 实测加载时间从约 5~6 秒变成 20 秒上下；\n· 让游戏窗口小一些、视野缩小会明显好转（代价与视野面积成正比）。"
-    },
-    {
-      "name": "compat_dismiss",
-      "value": "点击任意处关闭，关闭后不再提示"
-    },
-    {
-      "name": "compat_dismiss_wait",
-      "value": "%d 秒后可关闭，关闭后不再提示"
     }
   ]
 }

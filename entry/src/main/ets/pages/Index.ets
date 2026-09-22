@@ -13,46 +13,55 @@ const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
 
 /*
- * COMPATIBILITY MODE -- run the JVM as a pure interpreter when this device is not
- * handed anonymous executable memory.
+ * COMPATIBILITY MODE -- add -Xint when this install was not given anonymous
+ * executable memory.
  *
- * WHY IT EXISTS. The JVM's JIT allocates anonymous RWX memory. A HarmonyOS 6.1.1
- * device refuses that request -- measured, mmap(RWX) returns errno=22 -- and
- * JNI_CreateJavaVM then never returns, so the app installs and cannot start.
- * -Xint takes the JIT out of the picture, so nothing needs that memory.
+ * ⚠️⚠️ MEASURED 2026-09-22: THIS DOES NOT RESCUE SUCH A DEVICE.
  *
- * WHAT ACTUALLY DECIDES IT, which took a correction from the user to get right:
- * the DEVICE CLASS, not the system version. That failing device was also a PHONE,
- * and this project never separated the two explanations -- RELEASE-MAINTENANCE.md
- * 2.11 says so in as many words ("两个假说从未分离"). What is established: the ACL
- * permission is for tablets and PC/2in1 and is not offered to phones at all, and
- * the user confirms tablets have always been fine, on old versions included.
- * So a version threshold was a confounded observation being read as a rule.
+ * It is kept for two reasons and neither of them is "it works": the alternative is
+ * to do nothing at all, and FORCE_COMPAT_MODE below is how the interpreter's COST
+ * is measured on hardware that does not need it.
  *
- * Which is why the rule below is now only the FIRST-LAUNCH guess: the launcher
- * measures the capability every launch and the measurement wins.
+ * WHAT WAS MEASURED. A device-bound RELEASE profile -- no executable-memory ACL,
+ * bound to the phone's own UDID -- produced this in hilog and then nothing:
  *
- * THE COST IS LARGE, AND IT IS MEASURED. Everything runs interpreted and this is
- * a game: load time goes from ~4700-5500 ms to ~11-21 s, and on the user's own
- * verdict "low load is fine, high load halves the frame rate and drops frames".
- * They judged it acceptable; that judgement is the reason phone support survives
- * at all, and it is not one a benchmark could have made.
+ *     !! executable memory unavailable (probe=-1) -- FORCING -Xint
+ *     wrote the verdict for the UI: interp (probe=-1)
+ *     calling JNI_CreateJavaVM (strict) ...
+ *       opt: ... -Xint
  *
- * The player is told once, BEFORE the game starts -- the performance is obvious
- * from the first seconds, so a notice afterwards only explains a wait they have
- * already sat through.
+ * No return, no error, the process gone.
+ *
+ * ⇒ The interpreter still needs executable memory. HotSpot builds its startup
+ *   stubs (SharedRuntime / StubRoutines) before it ever looks at how bytecode
+ *   will be run, so "interpreted" is not a fallback for a device that withholds
+ *   that memory -- it answers a question that was never the blocker.
+ *
+ * ⚠️ THE EARLIER "VERIFIED" WAS NOT A TEST OF THIS. The fallback was once called
+ * verified because the NOEXEC hook forced the decision -- but the memory was
+ * available throughout that run, so what actually passed was "the option is added
+ * on a device that never needed it". Forcing an option is not the same as being in
+ * the state the option exists for. See RELEASE-MAINTENANCE.md 2.13b.
+ *
+ * WHAT DECIDES IT: the CAPABILITY, probed by the launcher every launch -- not the
+ * system version and not the device class. The rule below is therefore only the
+ * FIRST-LAUNCH guess, for the one launch that has no verdict yet; from the second
+ * launch on the launcher's own measurement outranks it.
+ *
+ * ⇒ AND SO THE STORE LISTING HAS NO PHONE PACKAGE. A phone cannot be granted the
+ *   ACL, this fallback does not save it, and a package that installs and cannot
+ *   start is worse than one the store never offers. Phones are served by the
+ *   self-signed build instead, where a debug profile supplies the memory.
+ *
+ * WHAT WAS REMOVED, AND WHY. A full-screen notice used to tell the player all
+ * this, and it once said the game would merely be SLOWER (measured: 5-6 s to load,
+ * against ~20 s interpreted). On the devices where it actually appeared that was a
+ * promise the app could not keep: the notice was armed in aboutToAppear, BEFORE
+ * the XComponent mounted, so the player read it, tapped it away, and then watched
+ * the app die. Deleting it was the user's call. The wording, the marker file and
+ * the 5-second countdown are preserved in RELEASE-MAINTENANCE.md 2.13b.
  */
 const JVM_OPTIONS_FILE_NAME = 'jvm.options';
-const COMPAT_NOTICE_FILE_NAME = 'compat_notice_shown';
-/*
- * How long the compatibility notice must stay up before it can be dismissed.
- *
- * The notice explains that the game will be slow, and the player's first instinct
- * on seeing an unexpected card is to tap it away -- which would leave them with
- * exactly the unexplained slowness the notice exists to prevent. Five seconds is
- * roughly the time it takes to read the two short paragraphs.
- */
-const COMPAT_NOTICE_MIN_MS = 5000;
 
 /*
  * Where the LAUNCHER records whether the JVM actually got executable memory.
@@ -578,31 +587,10 @@ struct Index {
   @State showAbout: boolean = false;
   @State appVersion: string = '';
 
-  /* Compatibility mode, and whether its one-time notice is on screen. */
-  private compatMode: boolean = false;
-  @State compatNotice: boolean = false;
-  /*
-   * Whether the notice may be dismissed yet.
-   *
-   * It stays FALSE for COMPAT_NOTICE_MIN_MS after the notice appears, and the tap
-   * does nothing until it flips. The player can read the notice, but not flick it
-   * away before the first word of it lands.
-   *
-   * ⚠️ The tap is IGNORED rather than the overlay being un-clickable, and the hint
-   * changes while waiting. An inert overlay with a live-looking "tap to close"
-   * line is indistinguishable from a frozen app, and the whole point of this
-   * notice is to explain a delay the player is already annoyed by.
-   */
-  @State compatNoticeArmed: boolean = false;
-  /*
-   * Whole seconds left before the notice can be dismissed.
-   *
-   * Shown to the player, so it has to be honest about being a countdown rather
-   * than a generic "please wait": a number going down says the app is working and
-   * says how long this lasts, and neither of those is something a spinner says.
-   */
-  @State compatCountdown: number = 0;
-  private compatArmTimer: number = -1;
+  /* No compatibility-notice state any more: the notice is gone. See the header
+   * comment for why, and RELEASE-MAINTENANCE.md 2.13b for the text it used to
+   * show. `compatMode` went with it -- a field nothing reads is not a record of
+   * anything. */
   /*
    * Ball diameter, recomputed from the window. A @State field rather than a getter
    * because the render reads it: a plain field derived from winW/winH would change
@@ -940,10 +928,6 @@ struct Index {
     if (this.imeTimer >= 0) {
       clearInterval(this.imeTimer);
       this.imeTimer = -1;
-    }
-    if (this.compatArmTimer >= 0) {
-      clearInterval(this.compatArmTimer);
-      this.compatArmTimer = -1;
     }
     this.cancelBallHide();
     if (this.imeWindow !== undefined) {
@@ -1787,7 +1771,6 @@ struct Index {
       want = true;
       source = 'FORCE_COMPAT_MODE';
     }
-    this.compatMode = want;
     /*
      * Logged UNCONDITIONALLY, including the inputs.
      *
@@ -1827,114 +1810,6 @@ struct Index {
        * starting at all. Better to keep going than to throw out of aboutToAppear. */
     }
 
-    /*
-     * SHOWN NOW, AT THE START -- not when the game finishes loading.
-     *
-     * It used to wait for the game's own "loaded" line, because that is the first
-     * moment there is a picture to talk over. That was wrong twice, and the user
-     * found both:
-     *
-     *   1. It caused a HITCH exactly at the end of loading. Watching for that line
-     *      meant re-reading stdout.log on a timer, and that file grows throughout
-     *      loading -- so the reads got steadily more expensive and the biggest one
-     *      landed at the worst possible moment.
-     *   2. The notice belongs BEFORE the game, not after it. Told afterwards, the
-     *      player has already spent twenty seconds wondering why it is so slow.
-     *
-     * With the timing changed, the whole watch -- the timer, the deadline, the
-     * file reads -- has nothing left to do and is gone.
-     */
-    const alreadyShown: boolean = this.compatNoticeAlreadyShown();
-    if (want && !alreadyShown) {
-      this.compatNotice = true;
-      this.armCompatNoticeLater();
-      hilog.info(DOMAIN, TAG, 'compat notice shown (before the game starts)');
-    } else {
-      /*
-       * LOGGED ON BOTH BRANCHES, and that is not tidiness.
-       *
-       * "The notice did not appear" has two completely different causes -- the
-       * game is not running interpreted, or the player already dismissed it once
-       * -- and without this line they are indistinguishable from outside. Worse,
-       * the marker lives in filesDir, which hdc cannot read, so there is no way
-       * to check it from a shell either. Measured: a test launch looked like a
-       * failure to show the notice and was in fact the marker left over from an
-       * earlier test.
-       */
-      hilog.info(DOMAIN, TAG,
-        'compat notice NOT shown: want=%{public}s alreadyShown=%{public}s',
-        String(want), String(alreadyShown));
-    }
-  }
-
-  private compatNoticeAlreadyShown(): boolean {
-    const ctx = getContext(this) as common.UIAbilityContext;
-    try {
-      return fs.accessSync(ctx.filesDir + '/' + COMPAT_NOTICE_FILE_NAME);
-    } catch (e) {
-      return false;
-    }
-  }
-
-  /**
-   * Let the notice be dismissed COMPAT_NOTICE_MIN_MS after it appeared, counting
-   * the seconds down in the meantime.
-   *
-   * An interval rather than one timeout, because the countdown IS the displayed
-   * text -- a single timeout would leave the player looking at a number that never
-   * moves, which is worse than no number at all. The handle is kept so it can be
-   * cancelled: a live interval writing to state after the page is gone is a real
-   * leak, and "it only runs for five seconds" is not a reason to leave one behind.
-   */
-  private armCompatNoticeLater(): void {
-    this.compatNoticeArmed = false;
-    this.compatCountdown = Math.ceil(COMPAT_NOTICE_MIN_MS / 1000);
-    if (this.compatArmTimer >= 0) {
-      clearInterval(this.compatArmTimer);
-    }
-    this.compatArmTimer = setInterval(() => {
-      this.compatCountdown -= 1;
-      if (this.compatCountdown > 0) {
-        return;
-      }
-      clearInterval(this.compatArmTimer);
-      this.compatArmTimer = -1;
-      this.compatNoticeArmed = true;
-      hilog.info(DOMAIN, TAG, 'compat notice is now dismissable');
-    }, 1000);
-  }
-
-  private dismissCompatNotice(): void {
-    if (!this.compatNoticeArmed) {
-      /* Deliberately silent to the player, but not to the log: a tap that does
-       * nothing is otherwise indistinguishable from one that was never received. */
-      hilog.info(DOMAIN, TAG,
-        'compat notice tap ignored (%{public}d ms minimum not elapsed yet)',
-        COMPAT_NOTICE_MIN_MS);
-      return;
-    }
-    this.compatNotice = false;
-    /*
-     * Recorded on DISMISS, not on show: an app killed while the notice is up has
-     * not told the player anything, so the notice should come back.
-     */
-    try {
-      const ctx = getContext(this) as common.UIAbilityContext;
-      const f: fs.File = fs.openSync(ctx.filesDir + '/' + COMPAT_NOTICE_FILE_NAME,
-        fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
-      fs.writeSync(f.fd, '1');
-      fs.closeSync(f);
-    } catch (e) {
-      const err = e as BusinessError;
-      hilog.error(DOMAIN, TAG, 'could not record the notice: %{public}s', err.message);
-      /* Worst case it is shown once more next launch. That beats not dismissing. */
-    }
-    /*
-     * The tap went to an overlay with no focusable child, so focus should not have
-     * moved -- but the game receives no key events without it, and "should not
-     * have" is not a measurement. Asking again is cheap.
-     */
-    focusControl.requestFocus('SDL_XComponent');
   }
 
   build() {
@@ -2273,62 +2148,16 @@ struct Index {
         .focusable(false)
       }
     /*
-     * The compatibility notice -- shown once, after the game reports that it loaded.
-     *
-     * WHY AN OVERLAY AND NOT A DIALOG. A dialog takes focus, and ArkUI delivers
-     * key events to the focused component only; the XComponent has to hold that
-     * focus or the game stops seeing the keyboard. So this is not focusable AND
-     * CONTAINS NOTHING FOCUSABLE -- the overlay itself is the button. Tapping
-     * anywhere dismisses it, which is also what a player tries first.
-     *
-     * TWO LAYERS: an outer Column fills and dims the screen, an inner one is the
-     * card. One Column cannot do both, because the card would fill the screen too.
-     *
-     * Last among the Stack's children, so it covers everything -- including the
+     * The About card -- a Stack child that covers everything, including the
      * floating ball, which would otherwise float on top of it.
-     */
-    if (this.compatNotice) {
-      Column() {
-        Column() {
-          Text($r('app.string.compat_title'))
-            .fontSize(20)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(Color.White)
-          Text($r('app.string.compat_body'))
-            .fontSize(14)
-            .fontColor('#E0FFFFFF')
-            .margin({ top: 14 })
-          /*
-           * Two different lines, not one: while the tap is ignored the player has
-           * to be able to see that it is ignored on purpose. A card that says
-           * "tap to close" and then does nothing reads as a frozen app, and this
-           * notice exists precisely to explain a delay rather than add a puzzle.
-           */
-          Text(this.compatNoticeArmed
-            ? $r('app.string.compat_dismiss')
-            : $r('app.string.compat_dismiss_wait', this.compatCountdown))
-            .fontSize(12)
-            .fontColor('#80FFFFFF')
-            .margin({ top: 20 })
-        }
-        .padding(24)
-        .backgroundColor('#F01C1C1C')
-        .borderRadius(14)
-        .width('84%')
-      }
-      .width('100%')
-      .height('100%')
-      .backgroundColor('#B0000000')
-      .justifyContent(FlexAlign.Center)
-      .focusable(false)
-      .onClick(() => { this.dismissCompatNotice(); })
-    }
-    /*
-     * The About card -- built like the compatibility notice above, for the same
-     * reason: NO FOCUSABLE COMPONENT ANYWHERE. A dialog or a Button takes focus
-     * from the XComponent, and the game then stops seeing the keyboard. So the
-     * card is not focusable and holds nothing that is; the dimmed area itself is
-     * the dismiss button.
+     *
+     * NO FOCUSABLE COMPONENT ANYWHERE. A dialog or a Button takes focus from the
+     * XComponent, and the game then stops seeing the keyboard. So the card is not
+     * focusable and holds nothing that is; the dimmed area itself is the dismiss
+     * button.
+     *
+     * (A compatibility notice used to sit here and was built the same way. It is
+     * gone -- see the header comment -- so this is now the only such overlay.)
      *
      * The addresses are plain Text rather than links, and that is the price of
      * that rule: making them tappable would need either a focusable component or

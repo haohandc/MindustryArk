@@ -34,34 +34,46 @@
 #
 # Usage:
 #   bash scripts/make_store_app.sh tablet
-#   bash scripts/make_store_app.sh phone
 #
-# THE TWO MODES EXIST BECAUSE THE STORE WANTS TWO PACKAGES.
+# ⚠️⚠️ THERE IS NO PHONE MODE, AND NOT BUILDING ONE IS THE POINT.
+#
+# A phone mode was written and is now gone, deliberately. It would have produced a
+# package that DECLARES NO executable-memory permission and targets phone only,
+# with the JVM expected to run interpreted. Measured 2026-09-22 -- see
+# RELEASE-MAINTENANCE.md 2.13b -- that package CANNOT WORK:
+#
+#   On a device-bound RELEASE profile with no executable-memory ACL, the launcher
+#   probes the capability, gets -1, forces -Xint, and then dies inside
+#   JNI_CreateJavaVM with no further output at all. The interpreter still needs
+#   executable memory: HotSpot builds its startup stubs before it ever looks at how
+#   bytecode will be run.
+#
+# ⇒ A phone cannot be granted the ACL (the policy covers tablet and PC/2in1), and
+#   the interpreted fallback does not save it, so a phone store package would
+#   install and never start -- the worst submission there is. Phones are served by
+#   the SELF-SIGNED build instead, where a debug profile temporarily unlocks every
+#   permission and the JIT works. That route is documented; it is not a package
+#   this script produces.
+#
+# ⚠️ AND module.json5 STILL LISTS "phone" IN deviceTypes -- ALSO DELIBERATELY.
+#    deviceTypes is enforced at INSTALL time, not only at listing time, so removing
+#    "phone" from the manifest would make the self-signed build uninstallable on a
+#    phone as well, destroying the one route phones have. The narrowing belongs
+#    here, at build time: this is the layer that decides what the STORE offers.
 #
 # The executable-memory permission is granted through a restricted (ACL)
-# application, and Huawei's policy for it lists its supported devices as
-# "tablet and PC/2in1" -- phones are excluded. So one package cannot serve both:
+# application, whose supported devices are "tablet and PC/2in1". This build
+# declares it and targets tablet + 2in1. The user confirmed with Huawei that one
+# Release Profile covers it, and that AppGallery filters by deviceTypes -- which is
+# why deviceTypes is rewritten here rather than left at the toolchain template's
+# ["phone","tablet","2in1","tv"]. "tv" is dropped: this project has never tested a
+# TV, and declaring an untested platform is a claim, not a default.
 #
-#   tablet   declares ALLOW_WRITABLE_CODE_MEMORY and targets tablet + 2in1.
-#            The ACL is what lets the JVM's JIT run, so this is the fast one.
-#   phone    declares no such permission and targets phone only. It must not:
-#            a phone package carrying a permission the ACL cannot cover is a
-#            package the store refuses. The JVM runs interpreted, which the
-#            launcher now decides by probing rather than by device type.
+# THE MODE ARGUMENT IS STILL REQUIRED, not defaulted. It is the one place where the
+# package says out loud which platforms it claims, and a default should not be
+# allowed to answer that.
 #
-# The user confirmed with Huawei that ONE Release Profile covers both (a profile
-# carrying the ACL entry is fine for a package that does not declare it), that no
-# separate review is needed, and that AppGallery filters by deviceTypes -- which
-# is why deviceTypes is split per mode rather than left as the template's
-# ["phone","tablet","2in1","tv"]. "tv" is dropped in both: this project has never
-# tested a TV, and declaring an untested platform is a claim, not a default.
-#
-# THE MODE IS REQUIRED, not defaulted. A default would make it possible to build
-# the phone package while believing you built the tablet one, and the two are
-# distinguished by a permission that is invisible once uploaded.
-#
-# Output: dist/store/MindustryArk-<mode>.app  (so the two cannot overwrite each
-# other -- the build itself writes one fixed path per product)
+# Output: dist/store/MindustryArk-<mode>.app
 
 set -o pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -70,16 +82,26 @@ export MSYS_NO_PATHCONV=1
 MODE="${1:-}"
 case "$MODE" in
     tablet) WANT_PERM=yes; WANT_DEVICES='["tablet", "2in1"]' ;;
-    phone)  WANT_PERM=no;  WANT_DEVICES='["phone"]' ;;
+    phone)
+        # Named explicitly so the answer is an explanation rather than a usage
+        # error. Someone typing "phone" is not mistyping -- they are asking for the
+        # package this project decided not to build, and "usage: tablet" alone
+        # would read as if the argument were merely unrecognised.
+        echo "!! there is no phone mode, and that is a decision rather than an omission." >&2
+        echo "!! A phone store package would install and never start: the ACL covers" >&2
+        echo "!! tablet and PC/2in1 only, and the interpreted fallback does not rescue a" >&2
+        echo "!! device that was refused executable memory. Phones are served by the" >&2
+        echo "!! self-signed build. See the header of this file, and" >&2
+        echo "!! RELEASE-MAINTENANCE.md 2.13b." >&2
+        exit 2
+        ;;
     *)
-        echo "usage: bash scripts/make_store_app.sh {tablet|phone}" >&2
+        echo "usage: bash scripts/make_store_app.sh tablet" >&2
         echo >&2
         echo "  tablet  tablet + 2in1, WITH the executable-memory ACL (JIT)" >&2
-        echo "  phone   phone only, WITHOUT it (JVM runs interpreted)" >&2
         echo >&2
-        echo "The mode is required: the two packages differ by a permission that is" >&2
-        echo "invisible in the store listing, so \"which one did I just build\" is not" >&2
-        echo "a question a default should be allowed to answer." >&2
+        echo "The mode is required: it is where the package says out loud which" >&2
+        echo "platforms it claims, and a default should not be allowed to answer that." >&2
         exit 2
         ;;
 esac
@@ -196,8 +218,8 @@ indent = nm.group(1) if nm else '      '
 NEW = (indent + "// STORE BUILD ONLY -- injected by scripts/make_store_app.sh and removed\n"
        + indent + "// again on exit. See RELEASE-MAINTENANCE.md 2.11 for why this cannot be\n"
        + indent + "// declared unconditionally. Never commit a module.json5 containing this.\n"
-       + indent + "// ONLY IN THE tablet MODE. The ACL's supported devices are tablet and PC/\n"
-       + indent + "// 2in1; a phone package carrying it is one the store refuses.\n"
+       + indent + "// The ACL's supported devices are tablet and PC/2in1, which is why the\n"
+       + indent + "// package this script produces claims those and nothing else.\n"
        + indent + '{ "name": "%s", "reason": "$string:perm_reason_CODE_MEMORY", '
                   # `always`, not `inuse`. The JVM's JIT needs this memory from
                   # process start to process exit, and which ability is in the
@@ -234,16 +256,9 @@ print("   deviceTypes -> %s" % want_devices)
 # Cheap sanity on the write itself, before it reaches the disk. The build gate
 # below checks the ARTIFACT; this one catches a mangled edit while the backup is
 # still fresh.
-#
-# ⚠️ CONDITIONAL, and it has to be: in phone mode "the permission is absent" is
-# the required outcome, so an unconditional check would refuse to build the phone
-# package at all. Each mode asserts its own shape.
 decl = ('"name": "%s"' % perm) in out
-if want_perm == "yes" and not decl:
+if not decl:
     print("!! the injection produced a file without the permission in it")
-    sys.exit(1)
-if want_perm == "no" and decl:
-    print("!! phone mode must not declare %s, and this file does" % perm)
     sys.exit(1)
 
 io.open(path, "w", encoding="utf-8", newline="\n").write(out)
@@ -326,14 +341,15 @@ fi
 # ---------------------------------------------------------------------------
 # 3. GATE -- the package is what gets uploaded, so check the package
 #
-# MODE-AWARE. The invariant is not "the permission is present" any more, it is
-# "the package has the shape this mode is supposed to produce":
+# Two invariants, and the first one is now the load-bearing one:
 #
-#   tablet  the ACL permission IS declared, and deviceTypes is tablet + 2in1
-#   phone   the ACL permission is NOT declared, and deviceTypes is phone only
-#
-# A gate that only ever demanded the permission would have passed a phone package
-# that wrongly carried it, which is the failure that gets a submission refused.
+#   1. deviceTypes is EXACTLY tablet + 2in1. This is what keeps the store from
+#      offering the app to a phone, which is the entire reason the phone mode is
+#      gone: a phone install of this app cannot start. A package that accidentally
+#      carried "phone" would be offered to devices it cannot serve.
+#   2. The ACL permission IS declared. Without it there is no JIT, and the install
+#      never starts -- silently, from the outside. The only evidence is whether the
+#      launcher logs "executable memory works (probe=42)".
 # ---------------------------------------------------------------------------
 echo
 echo "############ gate: the ARTIFACT has the shape mode=$MODE requires ############"
@@ -353,16 +369,14 @@ print("   declared permissions: %s" % names)
 print("   deviceTypes: %s" % mod.get("deviceTypes"))
 
 # ---------------------------------------------------------------------------
-# THE CHECKS. Read the shape this mode promised and compare it to the package.
+# THE CHECKS.
 #
-# 1. The permission is present IF AND ONLY IF the mode says so. Both directions
-#    matter: missing it in tablet mode means no JIT (and, worse, a silent
-#    slowdown), present in phone mode means a package the ACL cannot cover, which
-#    is what gets a submission refused.
+# 1. deviceTypes matches what this build claims, checked FIRST because it is the
+#    one that decides who is offered the package at all. "phone" appearing here
+#    means the store will offer an app to devices that cannot run it.
 #
-# 2. deviceTypes matches the mode. This is what makes the store offer the right
-#    package to the right device, and it is the reason the two modes exist at all
-#    rather than one package carrying a per-device permission.
+# 2. The permission is present. Its absence is the failure that looks like a slow
+#    tablet rather than a broken package.
 #
 # 3. Every permission module.json5 declares on an UNCOMMENTED line is in the
 #    package. This is the general invariant -- a manifest edited in a way the
@@ -377,13 +391,10 @@ if sorted(actual) != sorted(expected):
              % (mode, expected, actual))
 
 has = perm in names
-if want_perm == "yes" and not has:
-    sys.exit("!! THE PACKAGE IS MISSING THE INJECTED PERMISSION: %s -- do not upload"
-             % perm)
-if want_perm == "no" and has:
-    sys.exit("!! mode=phone must NOT declare %s, and this package does -- the ACL "
-             "cannot cover a phone, so the store will refuse it. Do not upload." % perm)
-print("   ok: permission %s as mode=%s requires" % ("present" if has else "absent", mode))
+if not has:
+    sys.exit("!! THE PACKAGE IS MISSING THE INJECTED PERMISSION: %s -- do not upload. "
+             "Without it there is no JIT, and the app installs and does not start." % perm)
+print("   ok: deviceTypes %s, permission declared" % sorted(actual))
 
 # The script cds to the project root at the top, so this is already the right
 # base -- computing "../.." hops from the .app's directory is how the first
@@ -438,21 +449,11 @@ if [ "$GATE_RC" -eq 0 ]; then
     echo "############ OK -- upload this file ############"
     echo "   $OUTAPP"
     echo
-    if [ "$MODE" = tablet ]; then
-        echo "   mode=tablet: tablet + 2in1, WITH the executable-memory ACL."
-        echo "   Needs the Release Profile that carries that ACL entry."
-    else
-        echo "   mode=phone: phone only, with NO executable-memory permission."
-        echo "   The same Release Profile is fine -- the user confirmed a profile"
-        echo "   carrying the ACL entry works for a package that does not declare it."
-        echo "   Expect the JVM to run interpreted on these devices; the launcher"
-        echo "   decides that by probing, so a device that CAN get the memory keeps"
-        echo "   the JIT either way."
-    fi
-    echo
-    echo "   If you are building the other mode too, run this script again with the"
-    echo "   other argument. Both artifacts live in $OUTDIR/ and neither overwrites"
-    echo "   the other."
+    echo "   tablet + 2in1, WITH the executable-memory ACL."
+    echo "   Needs the Release Profile that carries that ACL entry."
+    echo "   Phones are deliberately NOT covered: the ACL cannot reach them and the"
+    echo "   interpreted fallback does not save them, so a phone package would install"
+    echo "   and never start. Self-signed installs are how phones are served."
     echo
     echo "   Signed with the RELEASE certificate, so it cannot be sideloaded and"
     echo "   cannot be tested on your own hardware. Same constraint as 2.10/2.11."
