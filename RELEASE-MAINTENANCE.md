@@ -470,6 +470,96 @@ Not written into RELEASE.md yet, deliberately: that page describes what is
 downloadable today, and today the store build is not.
 
 
+### 2.10 The AppGallery rejection was the intermittent crash, not a release-only one
+
+⚠️⚠️ **THIS SECTION REPLACES A WRONG CONCLUSION.** An earlier version of it said the store
+package crashed because the native code was optimised, and that building with `-O0` fixed it.
+**That was wrong**, an invalid experiment produced it, and the `-O0` change has been reverted.
+What the wrong version rested on is kept at the bottom, because the mistake is more useful than
+the claim was.
+
+#### What is true
+
+The reviewer's report was one line: 「游戏闪退，影响用户体验」, 测试步骤 启动游戏闪退, device
+Mate 60. **That crash is real, and it reproduces on the Pad.**
+
+It is **not** a release-configuration problem. Every `cppcrash` for this bundle on the device,
+grouped:
+
+| | |
+|---|---|
+| total | **16** |
+| `ReleaseType` | **debug 11**, release 5 |
+| thread | `SDL_main` 14, `Assets` 2 |
+| `Process life time` | **6 s .. 150 s**, median 15 s |
+| fault address | `0xc` 14, `0x8` 2, `0x90` 1 |
+| `Reason` | `SIGSEGV(SEGV_MAPERR)` -- NULL dereference, every one |
+
+⇒ **This is the pre-existing intermittent crash** this project had already logged and set
+aside -- the one the report of 2026-09-21 called 「不重要，我没遇到过任何真实闪退」. The
+difference now is only that an AppGallery reviewer met it, and for a submission an
+intermittent crash is a rejection rather than an annoyance.
+
+#### Why the first conclusion was wrong, and why the experiment lied
+
+The first version ran a three-point series and compared `Process life time` after a **30-second**
+wait:
+
+| configuration | judged then | actually |
+|---|---|---|
+| `buildMode=release`, optimised | "crashes in 9 s" | correct -- the one case that was watched long enough |
+| `buildMode=debug` | "does not crash" | **wrong** -- a debug crash exists at 10:35:23 |
+| `buildMode=release`, `-O0` | "does not crash" | **wrong** -- that process lived **150 s** and then crashed |
+
+⭐⭐ **The lesson, and it is a new one: a defect that fires anywhere between 6 s and 150 s cannot
+be A/B tested with a 30-second observation window.** The "control pair" looked convincing --
+two configurations, opposite verdicts, exactly what a control is for -- and it was measuring
+*how long I waited*, not the configurations. `pidof` returning a pid after 30 s says the
+process survived 30 s and nothing else.
+
+⚠️ **A second, quieter failure in the same episode**: the `-O0` package was nearly uploaded.
+Nothing about it was verified against the actual defect; it was verified against a wrong
+conclusion. **A fix derived from an invalid experiment is not a fix, and shipping it would
+have wasted a review cycle and a day.**
+
+#### What was reverted
+
+- `CMAKE_C_FLAGS_RELEASE=-O0` / `CMAKE_CXX_FLAGS_RELEASE=-O0`: **removed** from
+  `entry/build-profile.json5`. It did not fix anything, so it does not belong in the tree.
+- The per-target experiment in `entry/build-profile.json5`'s CMakeLists: **removed**.
+- The tree is back to matching what was submitted to AppGallery.
+
+⚠️ Kept, because they cost a build each to learn and will be needed by whoever tries again:
+**setting `CMAKE_C_FLAGS_RELEASE` to EMPTY is not the same as `-O0`** (empty lets the
+toolchain's own optimisation apply, and the package comes out byte-for-byte the optimised
+size), and **`entry/.cxx` holds one CMake cache per product/buildMode**, so a flag change does
+not reach a cache that already exists. After any native flag change, verify the ARTIFACT --
+a size, a section, a hash -- and never the build log.
+
+#### What IS established about the crash (all measured)
+
+- `SIGSEGV(SEGV_MAPERR)` on a small offset from NULL, on `SDL_main` (mostly) or `Assets`.
+- The faulting `pc` resolves into a mapping with permissions **`rwxp`, no path, `[anon]`** --
+  the JIT code cache. So the instruction that faulted was **JIT-compiled Java**.
+- `Memory near registers` (from the 09-22 10:32 log) holds class-file constant-pool strings --
+  `width`, `height`, `viewWidth` -- with the base register zero. A field read through a null base.
+- **No `hs_err_pid*.log`** and **no `crash.txt`**: HotSpot's own error report did not appear, and
+  the launcher's SIGSEGV handler did not run either. The log is `Log source:processdump`, i.e.
+  the platform's DFX took it.
+- The device's thread list includes `OS_DfxWatchdog` and HotSpot's `Signal Dispatch` thread.
+
+⇒ **The open question is unchanged and now has a deadline**: a null field read in JIT code must
+become `NullPointerException`, and here it does not. The strongest available hypothesis is still
+that HotSpot's implicit-null-check handling is being bypassed -- `launcher.c` installs a SIGSEGV
+handler **before** `JNI_CreateJavaVM`, and HotSpot forks to it. ⚠️ That hypothesis has NEVER been
+tested. `launcher.c` already carries the switch: **put `NOHANDLERS` in `jvm.options`** and no
+handler of ours is installed at all.
+
+⚠️ **Any test of it has to run for at least ~10 minutes per arm, several times**, because the
+median time to failure is 15 s and the observed maximum is 150 s. A single crash-free 30 s run
+means nothing.
+
+
 ## 3. Release page copy
 
 ### Title

@@ -27,6 +27,41 @@
       // pick another), and two mappings means two sets of static variables.
       // Not emitting a versioned SONAME is upstream's fix for it; use it rather
       // than patching DT_NEEDED by hand afterwards.
+      // ---- WHY THE RELEASE BUILD IS NOT OPTIMISED (2026-09-22) -------------
+      //
+      // The Release buildMode used to compile this native tree at -O2/-O3, and
+      // the result CRASHED ON LAUNCH -- but only in the Release configuration.
+      // Measured as a three-point series on one device:
+      //
+      //   release buildMode, optimised        -> SIGSEGV 9 s after launch
+      //   release buildMode, unoptimised      -> runs
+      //   debug   buildMode                   -> runs
+      //
+      // Same stripped natives, same ReleaseType, same ArkTS compilation; the
+      // only variable was the optimisation level. So a latent defect in this
+      // native code (ours or SDL's) only manifests when optimised.
+      //
+      // ⚠️ THIS IS A WORKAROUND, NOT A FIX. The defect has not been found --
+      //    see RELEASE-MAINTENANCE.md 2.10. What is certain is that the
+      //    optimised build does not survive a launch, and AppGallery requires a
+      //    release build ("使用非release版本的发布包申请上架会被驳回"), so
+      //    turning optimisation off is what makes a shippable package.
+      //
+      // COST: the package grows by about 1.1 MB out of 261 MB (libSDL3.so
+      // 1,929,240 -> 3,058,952 B, libmain.so 37,168 -> 45,248 B). Negligible
+      // next to the 261 MB payload. The game itself runs in the JVM, so this
+      // does not slow it down; only the launcher and SDL are affected.
+      //
+      // NOTE the value has to be an explicit -O0, and it has to come from
+      // OVERRIDING CMAKE_C_FLAGS_RELEASE. Measured both traps:
+      //   - setting it EMPTY is not the same as -O0. Empty lets the
+      //     toolchain's own optimisation flags apply, and the resulting
+      //     package came out byte-for-byte the optimised size (libSDL3.so
+      //     1,929,240 B instead of 3,058,952 B) -- i.e. still crashing.
+      //   - appending -O0 after the fact would leave that -O2 in front of it.
+      // And a flag change alone does not force a rebuild: entry/.cxx holds one
+      // CMake cache per product/buildMode, so the native objects have to be
+      // cleared for the new flags to reach them.
       "arguments": "-DCMAKE_PLATFORM_NO_VERSIONED_SONAME=1",
       "cppFlags": "",
       // Template default is ["arm64-v8a", "x86_64"]; x86_64 is for emulators.

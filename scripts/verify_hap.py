@@ -292,11 +292,29 @@ def main():
     # the only check that cannot be fooled by "a file with the right name exists".
     print("== 5. the shipped C++ shim is the unmodified JDK one ==")
     import hashlib
-    WANT_SHIM = "b605f5863ca1a75170a814ab4054a9867c346e15"
+    # ⚠️ TWO accepted values, not one, and the reason is a buildMode decision.
+    #
+    # entry/build-profile.json5's buildOptionSet entry named "release" sets
+    # strip:true, which OVERRIDES the target-level strip:false -- measured, not
+    # assumed: the same tree gives libjvm_real.so at 25,322,128 B with .symtab
+    # under buildMode=debug and 20,108,408 B with neither under
+    # buildMode=release. So a package's native bytes depend on which buildMode
+    # produced it, and a gate that accepts only one of them FAILS on the other.
+    #
+    # Accepting both is the honest form: the claim being checked is "these are
+    # the bytes we assembled, not something else", and it is true of both. A
+    # gate that fails on a correct package teaches people to ignore it.
+    #
+    # What is NOT accepted is an unknown value -- that is still a MISMATCH, and
+    # the failure prints the hash so it can be identified.
+    WANT_SHIM = (
+        "b605f5863ca1a75170a814ab4054a9867c346e15",   # buildMode=debug, unstripped
+        "ceff66f064a4fee9837b7ea1a2cd9e5997db1d80",   # buildMode=release, stripped
+    )
     shim_path = os.path.join(TMP, "shim.so")
     got_shim = hashlib.sha1(open(shim_path, "rb").read()).hexdigest()
-    print("   expected %s" % WANT_SHIM)
-    print("   actual   %s   %s" % (got_shim, "OK" if got_shim == WANT_SHIM else "MISMATCH"))
+    print("   expected %s" % " or ".join(WANT_SHIM))
+    print("   actual   %s   %s" % (got_shim, "OK" if got_shim in WANT_SHIM else "MISMATCH"))
     print()
 
     # ==================================================================
@@ -382,10 +400,16 @@ def main():
         # NOT the jar's copy: that one is glibc and cannot load here. This is
         # Arc's Android build with its layout dependencies repointed at libc.so;
         # see prep_freetype.py. The hash differs from the jar's on purpose.
-        "libs/arm64-v8a/arc/libarc-freetypearm64.so":
-            "004df783590ce27c79396a6432cfb9820538db7c",
-        "libs/arm64-v8a/arc/libarc-filedialogsarm64.so":
-            "0ac27bdfd455ed1190ff9ba0ce97c7ddeb0cc049",
+        # Both strip states, same reason as WANT_SHIM above. These two live in
+        # libs/ as well, so the release buildMode strips them too.
+        "libs/arm64-v8a/arc/libarc-freetypearm64.so": (
+            "004df783590ce27c79396a6432cfb9820538db7c",   # debug
+            "41537d6980215a0921b403a223c2a9ea1ec04f26",   # release
+        ),
+        "libs/arm64-v8a/arc/libarc-filedialogsarm64.so": (
+            "0ac27bdfd455ed1190ff9ba0ce97c7ddeb0cc049",   # debug
+            "f4f4e8290acf21453d6fef5aa254790897d3b866",   # release
+        ),
     }
     LWJGL.update(ARC)
     # The JDK's time-zone database, shipped under a .so name for the same reason
@@ -434,14 +458,15 @@ def main():
                         break
                     h.update(b)
             got_h = h.hexdigest()
-            ok_h = got_h == want
+            # `want` is either one hash or a tuple of the accepted ones.
+            ok_h = got_h in (want if isinstance(want, tuple) else (want,))
             lwjgl_ok = lwjgl_ok and ok_h
             print("   %-9s %-42s %s"
                   % ("OK" if ok_h else "MISMATCH", entry.split("/")[-1],
                      "" if ok_h else got_h))
     print()
 
-    ok = (got and has_create and not bad and got_shim == WANT_SHIM and dyn_ok
+    ok = (got and has_create and not bad and got_shim in WANT_SHIM and dyn_ok
           and game_ok and lwjgl_ok and helper_ok and ok_ref[0])
     print("RESULT: %s" % ("PASS" if ok else "FAIL"))
     return 0 if ok else 1
