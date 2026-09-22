@@ -31,6 +31,10 @@
     {
       "name": "perm_reason_DOWNLOAD",
       "value": "用于从「下载」目录导入存档（.msav）、蓝图（.msch）与导出的游戏数据（.zip）"
+    },
+    {
+      "name": "perm_reason_CODE_MEMORY",
+      "value": "内置的 Java 运行时需要分配内存给即时编译器（JIT）。"
     }
   ]
 }

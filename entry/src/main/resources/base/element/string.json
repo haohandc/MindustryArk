@@ -31,6 +31,10 @@
     {
       "name": "perm_reason_DOWNLOAD",
       "value": "Used to import save files (.msav), schematics (.msch) and exported game data (.zip) from the Download folder"
+    },
+    {
+      "name": "perm_reason_CODE_MEMORY",
+      "value": "Required by the bundled Java runtime to allocate memory for its just-in-time compiler."
     }
   ]
 }
