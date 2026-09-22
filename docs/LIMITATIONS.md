@@ -110,21 +110,23 @@
 **格式**：`.jar` 或 `.zip`。
 （游戏也接受「内含 `mod.json` 的文件夹」，但那种没法用文件选择器选。）
 
-**两个入口，都在悬浮球菜单里**：
+**三个入口**：
 
 | 方式 | 怎么用 |
 | --- | --- |
-| **导入模组** | 点它，在**系统文件选择器**里选 `.jar` / `.zip`。**不需要任何权限** |
+| **游戏自带的「导入模组」** | 游戏模组界面里那个按钮。✅ **可用**（设备上实测过）。⚠️ 它会先弹一个**网络不可用**的提示 —— 那是它在尝试联网取社区模组，而**联机还没做**，关掉提示继续即可 |
+| **悬浮球菜单 → 导入模组** | 在**系统文件选择器**里选 `.jar` / `.zip`。**不需要任何权限** |
 | **Download 文件夹** | 把模组放进 `Download/MindustryMods/`，**下次启动自动**搬进去 |
 
-⚠️ **导入之后必须重启应用才生效** —— 这**不是偷懒**：游戏**只在启动时扫一次**
+⚠️ **后两个入口导入之后必须重启应用才生效** —— 这**不是偷懒**：游戏**只在启动时扫一次**
 `mods/` 目录（在 `Vars.load()` 里），之后再也不看。文件确实躺在那儿，但游戏看不见它。
+（**游戏自带的那个不用重启**，它自己会触发重载。）
 
-📌 顺带说明一个容易混的点：游戏**自己**也有一套文件浏览器
-（`mindustry/ui/FileChooser` / `FileChooserDialog`，**纯 Java、画在游戏界面里**），
-「导入存档」用的就是它 —— 它和**原生**文件对话框是两回事。后者
-（`libarc-filedialogsarm64.so`，实为 tinyfiledialogs）是个 glibc 桌面库、本平台加载不了，
-但在本平台上**没有任何代码路径会走到它**。
+📌 顺带说明一个容易混的点（我自己在这里搞错过一次）：游戏**自己**那套文件浏览器
+（`mindustry/ui/FileChooser` / `FileChooserDialog`）是**纯 Java、画在游戏界面里**的，
+和**原生**文件对话框是两回事。后者（`libarc-filedialogsarm64.so`，实为 tinyfiledialogs）
+是个 glibc 桌面库、本平台加载不了 —— **但本平台没有任何代码路径会走到它**，
+所以不影响上面任何一个入口。
 
 ⚠️ 开发时注意：用 `deploy.sh` 重新部署会**清空沙箱**，模组和存档一起没。
 
@@ -250,23 +252,26 @@ more.
 **Format**: `.jar` or `.zip`. (The game also accepts a *folder* containing
 `mod.json`, but a picker cannot hand a folder over.)
 
-**Two ways in, both from the floating ball's menu**:
+**Three ways in**:
 
 | Way | How |
 | --- | --- |
-| **导入模组** | tap it and pick a `.jar` / `.zip` in the **system file picker**. **Needs no permission** |
+| **The game's own "import mod"** | the button in the game's mods screen. ✅ **Works** (confirmed on the device). ⚠️ It shows a **network-unavailable** notice first -- it is trying to reach the community mod list, and networking is not ported -- dismiss it and carry on |
+| **导入模组 in the ball's menu** | pick a `.jar` / `.zip` in the **system file picker**. **Needs no permission** |
 | **Downloads folder** | drop the file in `Download/MindustryMods/` and it is taken in **automatically on the next launch** |
 
-⚠️ **Importing requires a restart to take effect** -- and that is not laziness:
+⚠️ **The last two need a restart to take effect** -- and that is not laziness:
 the game scans the `mods/` directory exactly **once**, inside `Vars.load()`, and
 never looks again. The file really is sitting there; the game just cannot see it.
+(The game's own button does not need one -- it triggers the reload itself.)
 
-📌 One thing that is easy to confuse: the game has its **own** file browser
-(`mindustry/ui/FileChooser` / `FileChooserDialog`, **pure Java, drawn inside the
-game**), and that is what "import save" uses. It is a different thing from the
-**native** file dialog. The latter (`libarc-filedialogsarm64.so`, really
-tinyfiledialogs) is a glibc desktop library that does not load here -- but **no
-code path on this platform ever reaches it**.
+📌 One thing that is easy to confuse -- and that this project got wrong once:
+the game's **own** file browser (`mindustry/ui/FileChooser` /
+`FileChooserDialog`) is **pure Java, drawn inside the game**, and is a different
+thing from the **native** file dialog. The latter
+(`libarc-filedialogsarm64.so`, really tinyfiledialogs) is a glibc desktop
+library that does not load here -- but **no code path on this platform ever
+reaches it**, so none of the entries above is affected by it.
 
 ⚠️ For developers: re-deploying with `deploy.sh` **wipes the sandbox**, mods and
 saves together.

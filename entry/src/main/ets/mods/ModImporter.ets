@@ -1,35 +1,41 @@
 /*
  * Getting mod files into the directory the game reads them from.
  *
- * WHAT THIS IS FOR, AND WHAT WAS WRONG ABOUT THE FIRST ANSWER
- *   The first version of this file said the game's own "import mod" button
- *   cannot work here, because it goes through Platform.showFileChooser, whose
- *   default implementation throws:
+ * NOT THE ONLY WAY IN -- and getting that wrong is the point of this note.
+ *
+ *   An earlier revision of this file was built on the claim that the game's own
+ *   "import mod" button cannot work here: it goes through
+ *   Platform.showFileChooser, whose default implementation throws
  *
  *       throw new IllegalArgumentException("Not implemented on this platform!")
  *
  *   and the backend that implements it loads libarc-filedialogsarm64.so, which
  *   is tinyfiledialogs -- zenity/kdialog/popen, glibc-linked, does not load.
  *
- *   The individual measurements were right; the conclusion was not. Read from
- *   the jar: `showFileChooser` is referenced only by DesktopLauncher, and
- *   ModsDialog -- which owns the import button -- references
- *   mindustry/ui/FileChooser instead. That is the game's OWN in-game browser
- *   (FileChooserDialog), pure Java over Arc's Fi, and it needs no native dialog
- *   at all. So nothing on this path ever reaches the throwing default, and the
- *   claim that the button is dead was never supported. Whether it works on the
- *   device is still unverified.
+ *   Every one of those measurements is true. The conclusion built from them was
+ *   not. Read from the jar: `showFileChooser` is referenced only by
+ *   DesktopLauncher, while ModsDialog -- which owns the import button --
+ *   references mindustry/ui/FileChooser, the game's OWN in-game browser
+ *   (FileChooserDialog), pure Java over Arc's Fi, needing no native dialog.
+ *   Nothing on that path reaches the throwing default.
  *
- *   Both documents that repeated that claim have been corrected. This note is
- *   kept because "a true measurement can still be assembled into a false
- *   conclusion" is worth the paragraph.
+ *   ✅ CONFIRMED ON THE DEVICE, by the user: the game's own button works. It
+ *   reports a network error first, which is expected -- it offers to fetch
+ *   community mods and networking is not ported yet (see the INTERNET note in
+ *   module.json5) -- and then browses and imports fine. So mods have three ways
+ *   in, and this file adds two of them.
  *
- * SO WHY THIS ENTRY
- *   The platform picker is a shorter path: pick a file from anywhere the system
- *   can reach and it lands in the mods directory, with no browsing through a
- *   dialog rooted at one folder and no permission needed.
+ *   The note is kept because "true measurements assembled into a false
+ *   conclusion" is the failure mode worth remembering, and because a reader who
+ *   finds only the thrown exception will reach the same wrong answer.
  *
- * TWO WAYS IN, BOTH ASKED FOR
+ * WHAT THIS STILL ADDS
+ *   The platform picker is the shorter path: pick a file from anywhere the
+ *   system can reach, land it in the mods directory, no permission, no browsing
+ *   through a dialog rooted at one folder. The Download folder is for putting a
+ *   batch in ahead of time. Neither replaces the game's own button.
+ *
+ * TWO WAYS IN HERE
  *   A. the HarmonyOS document picker, from the floating ball's menu. No
  *      permission needed: the picker is a system UI and hands back a URI this
  *      app is allowed to read.

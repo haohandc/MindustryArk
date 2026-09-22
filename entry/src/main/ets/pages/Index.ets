@@ -212,20 +212,33 @@ const BALL_MARGIN_VP = 8;
  * this, the slightest finger movement while tapping would be read as a drag and the
  * menu would never open. */
 const BALL_DRAG_SLOP_VP = 8;
-const BALL_MENU_W_VP = 158;
+const BALL_MENU_W_VP = 176;
 /*
- * The menu's height, for the bottom clamp in ballMenuY.
+ * A row's height -- and the reason it is a height at all.
  *
- * Derived from the parts rather than written down. It used to be a bare 64,
- * which was right for one row and would have silently let a two-row menu hang
- * off the bottom edge -- and only when the ball happens to be near it, which is
- * the kind of defect that survives every review that does not put the ball
- * there. A row is one Text at fontSize 14; the padding is the Column's.
+ * The rows used to be bare Rows wrapping a Text at fontSize 14, so the tap
+ * target was whatever the text happened to measure: about 19 vp. Reported from
+ * the device: the options are too small and too close together. A finger cannot
+ * reliably hit 19 vp, and the two targets sat roughly a text line apart.
+ *
+ * So the row carries an explicit height and the text is centred inside it by the
+ * Row's default alignment. The target is now the row, which is what a player
+ * actually aims at, and the spacing falls out of the height rather than being a
+ * margin that has to be guessed.
+ *
+ * BALL_MENU_H_VP is derived from these because ballMenuY clamps against it. It
+ * was once a bare 64 -- right for one row, and it would have let a two-row menu
+ * hang off the bottom edge, but only when the ball happens to be near it, which
+ * is the kind of defect that survives every review that does not put the ball
+ * there.
  */
-const BALL_MENU_ROW_VP = 20;
-const BALL_MENU_GAP_VP = 10;
-const BALL_MENU_PAD_VP = 20;
-const BALL_MENU_H_VP = 2 * BALL_MENU_ROW_VP + BALL_MENU_GAP_VP + BALL_MENU_PAD_VP;
+const BALL_MENU_ROW_VP = 46;
+const BALL_MENU_DIVIDER_VP = 1;
+const BALL_MENU_PAD_VP = 16;
+const BALL_MENU_H_VP = 2 * BALL_MENU_ROW_VP + BALL_MENU_DIVIDER_VP + BALL_MENU_PAD_VP;
+/* One size for both the label and its hint, so the two rows cannot drift apart. */
+const BALL_MENU_FONT_VP = 16;
+const BALL_MENU_HINT_FONT_VP = 14;
 
 /*
  * Auto half-hide.
@@ -1743,35 +1756,52 @@ struct Index {
            */
           Row() {
             Text(this.controlMode === CONTROL_MODE_DESKTOP ? 'PC 模式' : '触屏模式')
-              .fontSize(14)
+              .fontSize(BALL_MENU_FONT_VP)
               .fontColor('#eef2f9')
             Blank()
-            Text('切换').fontSize(13).fontColor('#8fb4ff')
+            Text('切换').fontSize(BALL_MENU_HINT_FONT_VP).fontColor('#8fb4ff')
           }
           .width('100%')
+          .height(BALL_MENU_ROW_VP)
           .onClick(() => { this.toggleControlMode(); })
+
+          /*
+           * A hairline, not a margin.
+           *
+           * Two labels on one card read as one run of text however far apart they
+           * are; the separator is what says these are two choices. It also makes
+           * the vertical span obvious, which is the half of the problem a larger
+           * gap alone would not fix.
+           */
+          Divider()
+            .strokeWidth(BALL_MENU_DIVIDER_VP)
+            .color('#22ffffff')
 
           /*
            * Entry: bring mod files in.
            *
            * A second way in -- a folder in Downloads -- runs at startup; this is
-           * the discoverable one. Neither is the game's own button, which throws
-           * on this platform, and whose only implementing backend is a glibc
-           * desktop library that does not load here. See ModImporter.
+           * the discoverable one.
+           *
+           * ⚠️ This is NOT the only way: the game's own import button works on
+           * the device (confirmed by the user, with our updated JDK -- it uses
+           * the game's own in-game browser over Arc's Fi, not the native dialog).
+           * An earlier revision of this comment claimed the button was dead,
+           * which was wrong. See ModImporter for the measurement and the note.
            */
           Row() {
             Text('导入模组')
-              .fontSize(14)
+              .fontSize(BALL_MENU_FONT_VP)
               .fontColor('#eef2f9')
             Blank()
-            Text('选择文件').fontSize(13).fontColor('#8fb4ff')
+            Text('选择文件').fontSize(BALL_MENU_HINT_FONT_VP).fontColor('#8fb4ff')
           }
           .width('100%')
-          .margin({ top: BALL_MENU_GAP_VP })
+          .height(BALL_MENU_ROW_VP)
           .onClick(() => { this.importMods(); })
         }
         .width(BALL_MENU_W_VP)
-        .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+        .padding({ left: 14, right: 14, top: 8, bottom: 8 })
         .backgroundColor('#e6161c26')
         .borderRadius(10)
         .borderWidth(1)
