@@ -386,16 +386,12 @@ pass). What is certain is that **the code contains no de-duplication**.
 ⚠️ This is **upstream behaviour**, not something this port introduced; it can
 happen on phones and tablets alike.
 
-## ⚠️ On some devices it installs and will not start
+## ⛔ On some devices it installs and will not start
 
 **Symptom**: it installs, you tap it, it exits -- with **no crash report at all**.
 
-**Known condition** (measured 2026-09-22): on a **Huawei-supplied self-check device**
-(**HarmonyOS 6.1.1 / API 24**) the launcher prints the JVM options, calls
-`JNI_CreateJavaVM`, and then produces **no further output ever**; the process
-disappears. The same package runs to the main menu on **HarmonyOS 7 / API 26**.
-
-**Cause (measured)**: that device **refuses all anonymous executable memory**:
+**The condition** (measured 2026-09-22): the device **refuses anonymous executable
+memory**:
 
 ```
 !! mmap(RWX) FAILED: errno=22 (Invalid argument)
@@ -403,68 +399,141 @@ disappears. The same package runs to the main menu on **HarmonyOS 7 / API 26**.
  [2] mprotect RW->RX          -> -1   unexpected
 ```
 
-⇒ **the JVM's JIT cannot start**, so it stops inside `JNI_CreateJavaVM`.
+⇒ the Java runtime cannot start, so the process dies inside `JNI_CreateJavaVM`.
 
-⚠️ **Two possible causes are not yet separated**: ① the platform is too old;
-② that device runs the **release-signed** (store) package while everything we
-install on our own hardware is **debug-signed**. Both explain every observation so far.
+⛔ **AND THERE IS NO FALLBACK THAT SAVES IT.** The next section is the correction --
+this file used to say such a device would run the game *slower*. It does not run
+the game at all.
+
+⚠️ **What is still not separated**: whether the **platform version** matters. The
+device that first showed this was an **API 24 phone running the store package**, so
+two explanations were confounded from the start and this project said so in as many
+words (`RELEASE-MAINTENANCE.md` 2.11, "两个假说从未分离"). What is clear now is that
+the **capability** is what decides, and it is measured on every launch rather than
+inferred from a version.
 
 ⚠️ The app declares a minimum of `compatibleSdkVersion 6.1.1(24)` and **that claim has
 no measurement behind it** -- every "it works" observation is from API 26. Until this
 is settled, an API 24 device may install the app and be unable to run it.
 
-## ⚠️ Compatibility mode: slower when the permission cannot be obtained
+## ⛔ Interpreted mode does NOT rescue a device without executable memory
 
-⭐ **In one line: the slowdown belongs to the STORE package on a phone, not to phones.**
+⚠️⚠️ **This corrects a claim this file used to make.** It said a device refused
+executable memory would run the game **slower** (about 21 s to load instead of
+5-6 s). **That is false, and it was never measured.** Nothing has ever been observed
+running this app interpreted.
+
+**What was measured (2026-09-22).** A package signed with a **device-bound RELEASE
+profile**, carrying **no** executable-memory ACL, produced exactly this in `hilog`
+and then nothing at all:
+
+```
+!! executable memory unavailable (probe=-1) -- FORCING -Xint; the game will be slow but will start
+wrote the verdict for the UI: interp (probe=-1)
+calling JNI_CreateJavaVM (strict) ...
+  opt: ... -Xint
+```
+
+No return, no error, the process gone. The package had **detected the situation
+correctly** and had already done the one thing this project knew to do -- and the
+launcher's own log line says out loud what it expected ("slow but will start"). It
+did not start.
+
+**Why the fallback cannot work.** `-Xint` changes how *bytecode* is run. It does not
+remove the need for executable memory, because HotSpot builds its **startup stubs**
+(`SharedRuntime`, `StubRoutines`) **before** it ever looks at how bytecode will be
+executed. So "interpreted" is not a degraded mode for this situation; it answers a
+question that was never the blocker.
+
+⚠️ **The earlier "verified" was not a test of this.** The fallback was once called
+verified because a test hook (`NOEXEC`) forced the decision -- but the memory was
+available throughout that run. What actually passed was *"the option gets added on a
+device that never needed it"*. **Forcing an option is not the same as being in the
+state the option exists for** — that is the general lesson, and it is written down in
+`RELEASE-MAINTENANCE.md` 2.13b.
+
+### What this means, and what was done about it
 
 | how it was installed | phone | tablet |
 |---|---|---|
 | **self-signed** (this project's GitHub release asks you to sign it yourself) | ✅ **JIT, full speed** | ✅ JIT, full speed |
-| **AppGallery** | ⚠️ no JIT ⇒ interpreted | JIT, if the ACL took effect |
+| **AppGallery** | ⛔ **cannot start** | JIT, if the ACL took effect |
 
-**Why self-signing gets it**: the profile a debug / self-signed install uses **temporarily
-unlocks every permission**, regardless of what the package declares. ✅ **Confirmed by the user
-on 2026-09-22**: a third-party signing tool (小白调试助手, with its own profile) gets the JIT on a
-phone as well. ⇒ ⭐ **for this project's GitHub users a phone runs at full speed and compatibility
-mode never appears.**
+**Why self-signing gets it**: the profile a debug / self-signed install uses
+**temporarily unlocks every permission**, regardless of what the package declares.
+✅ **Confirmed by the user on 2026-09-22**: a third-party signing tool (小白调试助手,
+with its own profile) gets the JIT on a phone as well.
 
-**Why the store package does not, on a phone**: the ACL permission is **for tablets and PC/2in1
-and is not offered to phones at all**.
+**Why the store package cannot, on a phone**: the ACL permission is **for tablets and
+PC/2in1 and is not offered to phones at all**, and per the section above there is no
+interpreted fallback to fall back to.
 
-⚠️⚠️ **This section has been wrong twice, and both ways are worth remembering:**
-1. It first said "**phones below HarmonyOS 7**" -- reading a **confounded observation** (the failing
-   device was both a phone and on an old version; `RELEASE-MAINTENANCE.md` 2.11 records "两个假说从未分离")
-   as a rule.
-2. The first correction then said "**phones will most likely run interpreted**" -- attaching a
-   property of the store package to every way of installing.
+⇒ ⭐ **THERE IS NO PHONE PACKAGE IN THE STORE, ON PURPOSE.** It could only install and
+never start. **To play on a phone, install the self-signed build** -- see the
+installation section of the release notes.
 
-**How it is decided now**: the launcher **measures every launch** whether anonymous
-executable memory is available, and forces interpreted mode when it is not. The
-measurement **outranks** the device/version guess and **corrects itself** -- a stale
-`-Xint` is taken back out on the next launch.
-⇒ ⚠️ **A self-signed install that runs slow is a defect, not an expectation** -- report it.
+### ⚠️ On a phone, "installs and closes instantly" is a SIGNING problem, not this app
 
-**Why**: see the section above. To let the app start at all on those devices, the
-Java runtime runs **interpreted** instead of just-in-time compiled.
+⚠️ **And this is the one place where deleting the notice (above) costs something, so it is
+spelled out here instead.**
 
-**Measured cost** (HarmonyOS 7 tablet, mode forced on by hand):
+A self-signed install gets the JIT **only if the profile you sign with is a DEBUG one** --
+a debug profile *temporarily unlocks every permission*, which is what supplies the memory.
+Measured at both ends:
 
-| | load time |
-| --- | --- |
-| normal (JIT) | about 5-6 s |
-| compatibility mode | **about 21 s** |
+| profile used for signing | phone |
+|---|---|
+| **debug** (`小白调试助手`, or DevEco's automatically generated one) | ✅ JIT, `probe=42` |
+| **non-debug** (`app-distribution-type: internaltesting` -- measured 2026-09-22) | ⛔ installs, closes on launch, **nothing logged** |
 
-**In game it does not slow down uniformly -- it scales with the VISIBLE AREA**:
+⚠️ **The failure is indistinguishable from a bug in this app, from the outside.** There is no
+faultlog, the sandbox logs cannot be read, and -- since the notice was deleted -- **nothing
+appears on screen either**. The app dies inside `JNI_CreateJavaVM` before it can explain itself.
+
+⇒ **If a phone install closes the instant it is tapped, re-sign with a different tool before
+reporting anything.** That is the only diagnostic available, and that is why this paragraph
+exists rather than being folded into the table above: the symptom is silent, so the *symptom
+itself* has to be documented as the thing to match against.
+
+🔶 **Not measured**: whether any particular third-party tool uses a debug or a non-debug
+profile. Only `小白调试助手` was tested (it works). The rule above is about the *profile type*,
+which is what was measured at both ends.
+
+⚠️ The app still contains the compatibility switch (`-Xint`), and two things about it
+are worth knowing:
+- it is **not a rescue**, and is not documented as one;
+- `FORCE_COMPAT_MODE` (a constant in `Index.ets`, default `false`) forces it on every
+  device, which is how the interpreter's **cost** is measured. The store build script
+  refuses to run if that constant is not `false`.
+
+⚠️⚠️ **This section has been wrong three times now, and each way is worth keeping:**
+1. It said "**phones below HarmonyOS 7**" -- reading a **confounded observation** (the
+   failing device was both a phone and on an old version) as a rule.
+2. The first correction said "**phones will most likely run interpreted**" -- attaching
+   a property of the store package to every way of installing.
+3. The second correction said such devices run **slower**, and promised a 21-second
+   load. That number is real, but it was measured by **forcing `-Xint` on a device that
+   did have the memory** -- so it measures what interpretation costs, not what a device
+   without that memory does. It does nothing: the app dies.
+
+**What the 21-second figure is still good for** (HarmonyOS 7 tablet, mode forced on by
+hand): it is the **cost of interpretation** on hardware that can run it, and in game it
+**scales with the VISIBLE AREA** rather than slowing everything uniformly:
 
 - **window shrunk** (roughly phone-sized): high load is **playable**
 - **full screen**: high load **drops frames badly, effectively unplayable**
 
-⇒ because rendering is native (unaffected) while the unit and tile simulation is
-Java: a larger viewport means more work per frame at the same frame budget.
+⇒ because rendering is native while the unit and tile simulation is Java: a larger
+viewport means more work per frame at the same frame budget. This is why a small screen
+tolerates interpretation better -- and it is the reason the phone gamble looked
+plausible. **It was still wrong**, because the app does not reach the point where any
+of this matters.
 
-⚠️ In summary: compatibility mode affects the simulation only -- rendering is
-untouched -- and its cost grows with the VISIBLE AREA, so a larger screen suffers
-more.
+⚠️ **A removed notice.** A full-screen notice used to tell the player about
+interpreted mode. It was armed **before the XComponent mounted**, so on a device in
+this state the player read a promise of "slower" and then watched the app die. It has
+been **deleted** -- the text is preserved in `RELEASE-MAINTENANCE.md` 2.13b, and the
+decision was the user's.
 
 
 ## ✅ The Download folder: on phones the route is the folder the app creates itself

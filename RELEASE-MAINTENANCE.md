@@ -719,14 +719,17 @@ opposite of it sat in the release notes for a while:
 | | phone | tablet |
 |---|---|---|
 | **self-signed** (this project's GitHub release, any debug tool) | ✅ **JIT** | ✅ JIT |
-| **AppGallery** | ⚠️ no JIT ⇒ interpreted | JIT, if the ACL took effect |
+| **AppGallery** | ⛔ **cannot start** (2.13b) | JIT, if the ACL took effect |
 
-⇒ **The phone slowdown is a property of the STORE package, not of phones.** Every
-GitHub user signs the HAP themselves, so they get the JIT on a phone and need never
-see the compatibility notice. ⚠️ It also means **a self-signed install that runs
-slow is a defect, not an expectation** -- which is the opposite of what the release
-notes used to tell people, and would have turned real bugs into "known limitation"
-reports.
+⇒ **The phone problem is a property of the STORE package, not of phones.** Every
+GitHub user signs the HAP themselves, so they get the JIT on a phone. ⚠️ It also means
+**a self-signed install that runs slow is a defect, not an expectation** -- which is the
+opposite of what the release notes used to tell people, and would have turned real bugs
+into "known limitation" reports.
+
+⛔ **THE `⇒ interpreted` THIS TABLE USED TO SAY IS WRONG.** Corrected 2026-09-22 by 2.13b:
+a store-signed phone is not slow, it never reaches the game. When this table was written,
+the notice it refers to had not yet been shown to be a promise the app could not keep.
 
 ⚠️ **WHAT THIS INVALIDATES, STATED PLAINLY.** Every `probe=42 WORKS` measurement
 this project has taken was taken on a debug install, so **none of them says
@@ -736,7 +739,7 @@ anything about the store package**:
 |---|---|---|
 | where the capability comes from | the profile unlocks it | the ACL, if granted |
 | tablet | works | ⚠️ **unknown until the ACL is in effect** |
-| phone | works | expected to fail (ACL excludes phones) ⇒ interpreted |
+| phone | works | ⛔ **measured (2.13b): installs and does not start** |
 
 ⇒ **A debug install cannot be used to decide whether the ACL worked.** The only
 honest test is a store-signed package, which brings us to the next item.
@@ -772,14 +775,16 @@ there:
   - [ ] on a **tablet**, the launcher must log
         `executable memory works (probe=42)` -- **that line is the ACL's only
         visible evidence**
-  - [ ] on a **phone**, expect the fallback instead, and confirm the game starts
+  - [x] ~~on a **phone**, expect the fallback instead, and confirm the game starts~~
+        ⛔ **CLOSED 2026-09-22 -- and the expectation was wrong: the game does not start.**
+        See 2.13b. There is no phone package to test, so this item is closed by deletion
+        rather than by a measurement.
 
-⚠️ Which makes the silent-fallback problem the next one worth closing. If the ACL
-does not take effect, the probe forces `-Xint` and **the game simply runs slowly,
-with nothing on screen to say why** -- the ArkTS compatibility notice only covers
-the API-version case, not the probe. So the ACL's failure mode is a tablet that
-feels slow and a user who reports "it's laggy", not "it's broken".
-**Recorded as a known gap; see the compatibility-mode section.**
+⛔ **THE "SILENT FALLBACK" GAP DESCRIBED HERE IS CLOSED, AND IT WAS NOT THE GAP.** This
+paragraph used to say the ACL's failure mode would be "a tablet that feels slow and a user
+who reports 'it's laggy', not 'it's broken'". It assumed the fallback works. It does not
+(2.13b), so the ACL's failure mode is a tablet that **does not start** -- loud, not silent.
+⚠️ And the ArkTS notice this paragraph points at has since been **deleted** (2.13d).
 ⚠️ Note the ordering: the fallback is what makes B necessary, and B is what makes A
 worth running. B without A has nothing to test on; A without B has nothing to
 read.
@@ -813,6 +818,9 @@ the first explanation that fits both observations without adding an assumption.
 
 And this app declares `deviceTypes = ["phone", "tablet", "2in1", "tv"]` -- verified
 in the built `module.json` **and** in `pack.info`, not just in the source.
+⚠️ **Since 2.13d the STORE package narrows that to `["tablet","2in1"]` at build time, while
+the manifest keeps `"phone"` on purpose** -- `deviceTypes` is enforced at install time, so
+dropping it from the manifest would also block self-signed installs on a phone. See 2.13d.
 
 ⇒ **The reviewer's device was a Mate 60: a phone.** So the ACL is not a route to
 fixing the reviewer's failure on phones, however the application is filled in.
@@ -843,24 +851,33 @@ worse than one that refuses to install. **Still unresolved.**
 | | |
 |---|---|
 | **举证材料 ②** | a **design document in Word format** for the scenario using the permission. Not a paragraph in a form -- a document. |
-| **坚盾守护模式** | *"使用该权限时，如果用户开启坚盾守护模式，系统将禁止应用申请匿名可写可执行内存；应用需考虑该情况的适配，确保应用稳定运行、无闪退"* ⇒ **even with the permission granted, a user setting can remove it.** A fallback is required regardless of whether the ACL is approved. |
+| **坚盾守护模式** | *"使用该权限时，如果用户开启坚盾守护模式，系统将禁止应用申请匿名可写可执行内存；应用需考虑该情况的适配，确保应用稳定运行、无闪退"* ⇒ **even with the permission granted, a user setting can remove it.** ⛔ **And there is no fallback**: 2.13b measured that `-Xint` does not start either, so the *"应用需考虑该情况的适配"* clause is a requirement **this project currently cannot meet**. Not a blocker for the application itself, but the docs must not claim otherwise. |
 | **开发者承诺** | no remote dynamic code delivery or hot-updates; misuse costs the permission *and* the listing. |
 
 #### The three routes, and what was chosen
 
 | | approach | keeps phones? | status |
 |---|---|---|---|
-| **A** | Do not ship to phones at all (drop `phone` from `deviceTypes`) | ✗ | not chosen |
-| **B** ⭐ | detect the platform and switch to `-Xint` (pure interpreter) on phones below API 26 | ✓ | **chosen by the user 2026-09-22** |
+| **A** | Do not ship to phones at all | ✗ | ⛔ **ADOPTED 2026-09-22, but NOT by editing `deviceTypes`** -- see 2.13d |
+| **B** ⭐ | detect the platform and switch to `-Xint` (pure interpreter) on phones below API 26 | ✓ | ⛔ **DEAD -- measured (2.13b): the interpreter does not start either** |
 | **C** | lower `targetSdkVersion` below 26 | ? | **withdrawn** -- (b) above |
 
-**And the ACL application continues** (the user's decision): tablets and 2in1 keep the
-JIT, phones get the interpreter. ⚠️ Note the open question this creates -- if a
-RELEASE-signed package *also* needs the permission on API 26, then the ACL is not
-optional for tablets either, and the split-shipping Huawei asks for becomes mandatory
-rather than merely compliant.
+⛔⛔ **THIS TABLE IS SUPERSEDED -- B was chosen, and B does not work.** The route actually
+taken is **A, implemented at BUILD time rather than in the manifest** (2.13d): the store gets
+a tablet+2in1 package, phones are served by self-signed installs, and the manifest keeps
+`"phone"` so that route stays installable.
 
-#### B in one paragraph, for whoever implements it
+**And the ACL application continues** (the user's decision): tablets and 2in1 keep the JIT --
+and on them it is now **mandatory rather than an optimisation**, because there is no fallback
+left to fall back to. ⚠️ **The open question this paragraph raised -- whether a RELEASE-signed
+package *also* needs the permission on API 26 -- was answered YES** on 2026-09-22: see 2.13b.
+
+#### B in one paragraph, for whoever implements it -- ⛔ SUPERSEDED, KEPT AS RECORD
+
+> ⛔ **This was implemented, and then measured not to work. Read 2.13b before acting on
+> any of it.** The guessing rule below was replaced by the launcher's own probe (strictly
+> better -- it asks the device instead of inferring from a version number), and the `-Xint`
+> it writes **does not rescue a device that was refused executable memory**.
 
 `launcher.c` already reads a `jvm.options` file from three candidate locations, one of
 which ArkTS can write, and the ArkTS→native file bridge is already proven (`ime_cmd`).
@@ -871,11 +888,15 @@ conditional write with a matching delete has a state-transition bug the first ti
 phone is upgraded past 26: the `-Xint` survives and the game runs permanently
 interpreted with nothing to explain why.
 
-⚠️⚠️ **What cannot be verified from here.** `-Xint` cannot be *tested* for effect: no
-API 24 device is available, so whether it avoids the RWX request, and whether Mindustry
-is playable under pure interpretation, are both open. What CAN be tested is that the
-change does not disturb API 26 devices -- and that is what any local check will cover.
-**Do not read "runs on the tablet" as evidence that B works.**
+⭐ **That "rewrite in both directions" rule survived the redesign** and is still what
+`setupCompatMode()` does -- the probe replaces the *source* of the decision, not the
+care taken in applying it.
+
+✅ **What used to be listed here as unverifiable has now been verified the hard way.**
+`-Xint` was finally tested **in the state it exists for** (a profile that genuinely withholds
+the capability), and the answer is that the app does not start -- 2.13b. ⇒ **"Do not read
+'runs on the tablet' as evidence that B works" was exactly right**, and the earlier claim in
+this file that the fallback *was* verified came from violating it.
 
 
 ### 2.13 What compatibility mode costs, and one risk that was accepted knowingly
@@ -948,17 +969,36 @@ above. The asymmetry argument -- "slow is much cheaper than cannot-start" -- was
 made and declined. Recorded here because a decision to accept a risk is only
 useful if the next reader can see that it was one, and what it was.
 
-#### Still unanswered: what "拆分包体" means here
+⛔⛔ **SUPERSEDED WITHIN THE DAY.** The condition was then replaced by the launcher's own
+probe (strictly better: no version threshold left to get wrong), and then the fallback
+itself was measured not to work at all -- 2.13b. ⭐ **Note which fear turned out to be the
+real one**: the risk accepted here was "a phone that installs and cannot start", and what
+actually produced that was **not the threshold being too narrow** -- it was the fallback
+being unable to start a JVM at all. **The condition was never the load-bearing part**, and
+the whole narrow/wide/middle debate was about the wrong variable.
 
-Huawei's requirement is that an app which ships to phones must **split its package**
-so the ACL permission is not used by the phone build. What that means in
-HarmonyOS terms -- separate HAPs, per-device builds, separate listings -- has
-**not been determined**, and the permission is not an optional feature that can be
-lifted into a module: it is what the launcher needs to start the JVM at all.
+#### ✅ "拆分包体" -- the requirement dissolved rather than being implemented
 
-A question has been drafted for Huawei's ACL channel. Until it is answered, the
-split is a requirement with no implementation, and that is a larger unknown than
-anything left in the app.
+Huawei's requirement is **conditional on distribution**, and the policy above is quoted
+verbatim. Read as two conditions:
+
+> ① 应用若未上架过，"支持设备"请勿勾选手机
+> ② 应用若已上架且勾选手机设备分发，请拆分包体……
+
+**Condition ① is the one that applies here** -- this app has never been listed. So the
+answer is not to split anything; it is **not to tick phones**, which is exactly what 2.13d
+does by narrowing the store package to tablet + 2in1.
+
+⭐ **The phone distribution was the requirement; the split was only ever its remedy.**
+Huawei's concern is a phone build carrying a permission phones cannot be granted, and the
+cheapest way to satisfy that concern is to have no phone build. ⚠️ So the question drafted
+for Huawei's ACL channel was asking about a constraint this project can simply decline to be
+subject to. Worth sending if the answer is free; **nothing is blocked on it.**
+
+⚠️ **But the reason "split the package" looked impossible still stands**, for anyone who
+revisits this: the permission is not an optional feature that can be lifted into a module,
+because it is what the launcher needs to start the JVM at all. There is no arrangement of
+HAPs in which the phone half works.
 
 #### Corroboration, and what has now been checked by eye
 
@@ -1018,9 +1058,11 @@ application code will be run. So the premise this whole feature was built on,
 2. ⇒ **The ACL is MANDATORY for any build that must start on a device without that
    memory.** There is no fallback, and the "we always have a degraded path" assumption
    recorded in 2.12 is wrong for the store case.
-3. ⇒ **The phone package, as currently planned, cannot work at all** -- not slowly,
-   not at all. The ACL does not cover phones, and without it the JVM does not start.
-   This has to be settled before the split package is uploaded.
+3. ⇒ **The phone package, as planned, cannot work at all** -- not slowly, not at all.
+   The ACL does not cover phones, and without it the JVM does not start.
+   ✅ **SETTLED 2026-09-22, by the user**: the `phone` mode was deleted from
+   `scripts/make_store_app.sh` and the store gets a tablet+2in1 package only.
+   See **2.13d**, which also records what happened to the on-screen notice.
 4. ⭐ **It explains the reviewer's "installs and will not start"**: installs, flashes
    and closes on tap, and produces no faultlog. That is exactly this signature.
 
@@ -1060,6 +1102,7 @@ Measured, with an internaltesting package installed, on the phone:
 | `<sandbox>/files/stderr.log` | readable | **Permission denied** |
 | `pidof <bundle>` / `ps -A \| grep` | works | **empty** |
 | `/data/log/faultlog/faultlogger` | has entries | **no entry for it** |
+| `hilog` | works, **but see the retention warning below** | works, **but see the retention warning below** |
 
 ⇒ For a release-signed install the **only** readable channel is **hilog**, which is
 why `launcher.c` now mirrors every `SDL_Log` there through
@@ -1072,6 +1115,165 @@ log full of `<private>` instead of the values.
 
 **Keep this when changing the launcher.** A diagnostic that only a debug build can
 read does not describe the build that ships.
+
+#### ⚠️⚠️ BUT READ IT AT ONCE -- the hilog window is about a MINUTE
+
+**Measured 2026-09-22, on the phone, from the debug install**: `hilog -x` returned
+**7,536 lines dated today, of which 7,531 fell inside a single minute** (21:40). Nothing
+survived from 21:38 or earlier. Our app had logged throughout 21:34-21:38 -- including
+`executable memory works (probe=42)` -- and **every one of those lines was already gone.**
+
+⇒ **hilog is a ring buffer sized by VOLUME, not by time.** A busy neighbour app (Bilibili
+was producing ~7,000 lines/minute on this device) rotates it in well under a minute. So:
+
+| | |
+|---|---|
+| is the app logging? | ✅ yes -- `stdout.log` / `stderr.log` in the sandbox confirm it |
+| is it in hilog? | ✅ yes, **for about a minute** |
+| what it looked like afterwards | **0 hits, indistinguishable from "the app never logged"** |
+
+⚠️ **This nearly produced a wrong conclusion.** The empty grep was read as "our app does
+not write to hilog at all", which would have meant the 2.13c mirror is broken. The probe
+that settled it was comparing **which domains and apps ARE present** (`A00000` works --
+Bilibili is in it) and **how the counts are distributed over time**. ⭐ **An empty result
+from a ring buffer is a statement about the buffer, not about the writer.**
+
+**How to actually read it** (any of these; the first is the one that matters):
+- `hilog -x | grep MindustryLauncher` **while the app is doing the thing** -- for the
+  release case in 2.13b that worked because the app was mid-crash-loop.
+- Or read `hilog` as a **stream** with the app starting after the reader is attached.
+- ⭐ For a **debug** build, none of this is necessary: `stderr.log` is readable and
+  persists. **hilog only matters for the release-signed package**, where it is the only
+  channel -- which is exactly the case where it is also the most perishable.
+
+
+### 2.13d THE DECISIONS THAT FOLLOWED FROM 2.13b
+
+**User's call, 2026-09-22.** Two of them, and the second overrode a plan that was already
+half-built.
+
+#### 1. The compatibility notice was DELETED
+
+A full-screen notice used to explain interpreted mode to the player. It was armed in
+`aboutToAppear` -- i.e. **before the XComponent mounted**, therefore before the launcher had
+even tried to create the JVM -- so on a device in the state 2.13b describes, it appeared,
+promised a slower game, and the app died behind it. A notice that explains a degraded mode
+on a device that has no degraded mode is worse than no notice: it turns a mystery crash into
+a *contradicted* mystery crash.
+
+The user's words: **「整个删掉（可以留下这段代码作为备份），应用不上手机平台了。」**
+
+**Removed**: the render block, the five `@State`/timer fields, the three helper methods
+(`compatNoticeAlreadyShown` / `armCompatNoticeLater` / `dismissCompatNotice`), the marker
+file `compat_notice_shown`, and the four `compat_*` strings from **both** locales
+(`base` and `zh_CN`). `compatMode` went too -- it was assigned and never read, which is not
+a record of anything.
+
+**Kept on purpose**: `setupCompatMode()`, the launcher's `execmem` verdict, and the `-Xint`
+write. They are not a rescue and are no longer described as one, but they are the honest
+behaviour when the launcher finds itself in that state, and `FORCE_COMPAT_MODE` is how the
+interpreter's **cost** is measured (2.13).
+
+⭐ **The backup is git, not dead code.** Reviving this as commented-out ArkTS would leave a
+notice that looks live and is not -- the thing this file argues against elsewhere. The exact
+text is preserved here instead:
+
+| string | English |
+|---|---|
+| `compat_title` | `Compatibility mode` |
+| `compat_body` | `This device was not granted the executable-memory permission, so Java's just-in-time compiler (JIT) cannot be used and the game runs interpreted instead.` + two more paragraphs: that it is a system restriction, and the consequences (slower; 5-6 s to ~20 s to load; a smaller window helps) |
+| `compat_dismiss` | `Tap anywhere to close -- it will not be shown again` |
+| `compat_dismiss_wait` | `Closes in %d s -- it will not be shown again` |
+
+The Chinese originals are in the commit that removed them
+(`git show <sha>:entry/src/main/resources/zh_CN/element/string.json`).
+
+⚠️ **Do not restore it as written.** Every claim in `compat_body` is false for the devices
+it appeared on -- see 2.13b. It is kept so the *wording* need not be reinvented, not
+because it was right.
+
+#### 2. There is no phone package, and the store script's phone mode is GONE
+
+`scripts/make_store_app.sh` used to take `tablet` or `phone`. The `phone` mode built a
+package declaring **no** executable-memory permission and targeting `["phone"]`, on the
+assumption that the JVM would run interpreted there. 2.13b killed that assumption, so the
+mode was **removed rather than fixed** -- it produced a package that installs and never
+starts.
+
+- `bash scripts/make_store_app.sh phone` now **refuses with an explanation**, rather than
+  reporting a usage error. Someone typing `phone` is not mistyping; they are asking for the
+  artifact this project decided not to build, and the answer they need is *why*.
+- The build-time gate is now the load-bearing one: **`deviceTypes` must be exactly
+  `["tablet","2in1"]`**, checked on the **built `.app`** rather than on the manifest -- the
+  package is what gets uploaded. That check is what keeps the store from offering the app to
+  a device that cannot run it.
+
+⚠️⚠️ **`module.json5` still lists `"phone"` in `deviceTypes`, and that is deliberate.**
+`deviceTypes` is enforced at **install** time, not only at listing time. Removing `"phone"`
+from the manifest would make the **self-signed** build uninstallable on a phone as well --
+destroying the one route phones have, which is the route the user chose to keep:
+**「只能告知别人想在手机上玩，需要自己调试安装了。」**
+
+⇒ The narrowing belongs at **build time** (what the store offers), not in the manifest (what
+can be installed at all). "Not shipping to phones" must not be implemented by tightening the
+manifest, or it silently breaks the supported workaround along with the unsupported one.
+
+#### 3. What the docs now say
+
+`docs/LIMITATIONS.md`, `RELEASE.md` (both halves), `docs/BUILDING.md`/`docs/PERMISSIONS.md`
+where they describe the store build, and the store script's own header all state: **no phone
+package in the store, self-signed installs for phones.** The 21-second figure is still
+published, but relabelled -- it is the *cost of interpretation on hardware that can run it*,
+not a description of a device that was refused the memory.
+
+⚠️ **The bilingual divergence was real, and was found while making this change**: the English
+changelog for 0.3.0.1 was missing the "the probe measures instead of guessing" entry that the
+Chinese one carried. Both have it now.
+
+⛔ **And the `compat_body` claim reached the public docs, not just the app.** It was published
+in `docs/LIMITATIONS.md` as "Compatibility mode: slower when the permission cannot be
+obtained". It is now a correction section, and the correction says explicitly that the
+earlier wording was never measured.
+
+#### 4. The phone INSTALL CHANNEL is deliberately kept, and the warning is tied to a symptom
+
+The user's instruction: **「还是保留安装渠道，别人手机也要可以调试安装，不过告知风险（有必要吗）。」**
+
+**The channel was already kept** -- see item 2 above: `module.json5` keeps `"phone"` in
+`deviceTypes` precisely so a self-signed install still works there. Verified at the code level
+too: `createModFolder()`'s route A (`Environment.getUserDownloadDir()`, which throws on a phone)
+is wrapped in a `try/catch` that falls through to route B (the DOWNLOAD-mode picker, the route
+that works on phones), so nothing on the phone path throws.
+
+**On "有必要吗" -- yes, but not as a risk warning.** A blanket "phones are risky" notice would be
+wrong: the self-signed route is **measured working** (`probe=42`, both devices), and this project
+has already had to correct that same over-generalisation three times (the numbered list in
+`docs/LIMITATIONS.md`). Warning people about a problem they will not have is how items 1-3 of that
+list got written.
+
+**What is needed instead is a symptom-tied troubleshooting entry**, and the reason is a gap that
+**deleting the notice created**: a phone install signed with a **non-debug** profile dies inside
+`JNI_CreateJavaVM` and, now that the notice is gone, says **nothing at all** -- no faultlog,
+unreadable sandbox logs, nothing on screen. From the outside that is indistinguishable from a bug
+in this app.
+
+⇒ So the entry reads "**installs and closes the instant you tap it? change your signing tool**",
+and it names the discriminating variable -- **debug vs non-debug profile** -- which is measured at
+both ends:
+
+| profile used for signing | phone |
+|---|---|
+| debug (小白调试助手, DevEco's auto-generated one) | ✅ JIT, `probe=42` |
+| non-debug (`internaltesting`, measured 2026-09-22) | ⛔ installs, closes, **nothing logged** |
+
+⚠️ **What is NOT claimed**: that any particular third-party tool uses one kind of profile. Only
+`小白调试助手` was tested. The measured variable is the **profile type**, and that is what the docs
+say. Recorded in `RELEASE.md` (both halves), `dist/RELEASE-BODY-v0.3.0.1.md` (both halves) and
+`docs/LIMITATIONS.md`.
+
+⭐ **The generalisable bit**: when a failure produces no output, the *symptom* has to be the
+documented interface. "Here is why it fails" is useless to someone who cannot see a reason;
+"if it looks like this, do that" is actionable.
 
 
 ### 2.14 Why nobody had enabled networking, and what it cost

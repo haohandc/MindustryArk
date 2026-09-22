@@ -43,12 +43,18 @@
 2. **File → Project Structure → Signing Configs → Automatically generate signature**
 3. `bash deploy.sh`
 
-⭐ **本构建不申请让沙箱可执行的受限权限**
+⭐ **本构建不声明那条「让沙箱可执行」的受限权限**
 （`ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY`），
-所以**本地安装只要自动生成的证书就够了**。
+所以**平板和手机都只要一张自动生成的证书就能装**。
 
-⚠️ 这只针对**本地安装**。若你要**上架应用市场**，另一条已申请的权限
-（`READ_WRITE_DOWNLOAD_DIRECTORY`）必须走 ACL 流程 —— 见
+⭐⭐ **而且在手机上它也能全速跑。** 调试签名 / 自签名用的 profile 会**临时解禁所有权限**
+（不管你声明了什么），Java 运行时因此拿得到 JIT 需要的内存 —— 实测确认：
+第三方签名工具（小白调试助手，用它自己的 profile）在手机上一样拿到 JIT。
+⭐ **这是手机唯一的安装途径**：应用市场里**没有手机包**，原因见下面「已知限制」。
+
+⚠️ **上架应用市场用的是另一份产物**，由 `bash scripts/make_store_app.sh tablet` 生成：
+它**会**声明那条权限，所以需要一份带 ACL 授权的 Release Profile ——
+因为商店签名**不带**调试签名那个临时解禁。见
 [BUILDING.md](docs/BUILDING.md) 的「ACL（受限权限）」。
 
 ### 只想装、不想构建
@@ -79,7 +85,18 @@ HarmonyOS 7 / API 26 真机验证：**HUAWEI MatePad Pro 12.2" 2025** 平板、
 **完整的限制清单（附实测证据）在 [docs/LIMITATIONS.md](docs/LIMITATIONS.md)。**
 这里只留**下载前就该知道的**：
 
-- ⛔ **没有多人联机、没有成就、没有模组浏览器**（与桌面版相比）。
+- ⛔ **应用市场里没有手机包，这是有意为之。** 手机的**商店签名拿不到 JIT 需要的内存**
+  （那条 ACL 权限只覆盖平板和 PC/2in1），而**「改用解释执行」并不能救** —— 实测：
+  装得上，**永远起不来**（解释执行同样需要可执行内存：HotSpot 要先建启动用的桩代码）。
+  ⇒ **手机上想玩，请装自签名版本**（见上面「怎么安装」），那条路是好的。
+- ⚠️ **手机上自签名后「点开即退」？先换签名工具，别急着当 bug 报。**
+  自签名能不能拿到 JIT，取决于**你签名用的 profile 是不是【调试】类型** ——
+  **调试 profile 会临时解禁全部权限**，所以 JIT 可用（✅ 实测：小白调试助手在手机上正常，
+  启动器报告 `probe=42`）。⚠️ 但**如果工具用的是非调试类型的 profile，应用就会「装得上、点开闪退」，
+  而且不给任何线索**：没有 faultlog，沙箱日志也读不到，屏幕上也不会有提示。
+  ⇒ **症状是这样，就换一个按调试 profile 签名的工具再试。**（这一条**只能这样描述**：
+  失败时应用来不及说任何话，所以判据只有「换工具」这一个动作。）
+- ⛔ **没有成就、没有模组浏览器**（与桌面版相比）。
 - ⚠️ **实体键盘在「应用自己的输入框不在屏幕上」时只能打 ASCII** ——
   **点一下游戏里的输入框**，让应用自己的输入框弹出（它接系统输入法），实体键盘**也能打中文**。
 - **导入游戏数据后游戏会主动退出** —— 这是 Mindustry 的设计（用新数据重启），**看起来像崩溃但不是**。
@@ -110,22 +127,33 @@ bash deploy.sh          # 构建 + 校验 + 安装 + 启动 + 收日志
 
 ### 0.3.0.1 — 2026-09-22
 
-**多人联机、模组、以及让老手机也能跑起来。**
+**多人联机与模组。**
 
 - ⭐ **多人联机可用。** 此前整条线被**一个缺失的网络权限**挡住 —— 联机代码一直在包里，
   只是每次启动都因为拿不到权限而失败。局域网联机、搜索公网服务器、在本机开服都已验证。
 - ⭐ **模组可以加载了。** 三个入口：游戏自带的「导入模组」按钮、悬浮球菜单的「导入模组」、
   以及应用在「下载」里创建的文件夹 `Download/com.haohandc.mindustryark/`。
   把 `.jar` / `.zip` 丢进去、重启游戏即可生效。
-- ⭐ **API 24 及更早的手机不再「装了却打不开」。** 这类设备拒绝给应用匿名可执行内存，
-  JIT 起不来。现在会自动改用解释执行并**提前告诉你**。代价是变慢，实测加载 5~6 秒 → 约 21 秒。
+- ⛔ **订正：「改用解释执行」救不了拿不到可执行内存的设备 —— 这条是实测推翻的。**
+  之前这里写的是「手机不再『装了却打不开』，会自动改用解释执行，代价是变慢（5~6 秒 → 约 21 秒）」。
+  **那是错的，而且从来没有测过。**
+  实测（2026-09-22，绑定设备 UDID 的 Release profile、不带可执行内存 ACL）：启动器**正确探到了**
+  拿不到内存、也**照做了**加上 `-Xint`，然后**死在 `JNI_CreateJavaVM` 里，此后再无任何输出**。
+  根因：**解释执行同样需要可执行内存** —— HotSpot 要先建启动用的桩代码
+  （`SharedRuntime` / `StubRoutines`），早于它关心字节码怎么跑。所以那不是「降级模式」，
+  而是答错了题。⚠️ 那个 21 秒是**在内存可用的设备上强行打开解释模式**量出来的，
+  它证明的是**解释执行的代价**，不是**没内存的设备会怎样**。
+  ⇒ 手机的应用市场签名拿不到 ACL（只覆盖平板与 PC/2in1），**商店里因此没有手机包**；
+  手机上请装**自签名版本**（调试签名临时解禁全部权限，JIT 可用）。详见
+  [docs/LIMITATIONS.md](docs/LIMITATIONS.md)。
 - ⭐ **不再靠「机型 + 系统版本」猜这件事了 —— 启动器现在自己探。**
   原先的规则是「手机且 API < 26 才降级」，那对**已测过的那一台**是对的，**一般情况是错的**：
   手机在 API 26 上、用的是应用市场签名、又拿不到 ACL 时，系统**一样**拒绝可执行内存，
   JIT 一样起不来，而规则**不会触发** —— 装上去就是**卡在启动**。
   （另一面：平板**没有** ACL 时也会这样，而机型规则**根本不管平板**。）
   现在启动器直接测「能不能拿到可执行内存」，拿不到就强制解释执行。
-  ⇒ **四种情况全对**：手机无 JIT→降级｜手机的调试安装有 JIT→保留提速｜平板有 ACL→JIT｜平板无 ACL→降级。
+  ⚠️ **但这个强制是「如实照做」，不是「救回来」** —— 见上一条：拿不到内存的设备，
+  加了 `-Xint` 依然起不来。探针的价值在于**如实报告**，不在于它能修好什么。
 - 修：悬浮球菜单**选项太小、挨得太近** —— 可点区域原来只有约 19vp。
 - 修：拿不到「下载」目录时，游戏的文件浏览器会打开在**文件系统根目录**
   （实测：空值等于「显式设置成空」，而不是「不设置」）。
@@ -194,13 +222,22 @@ Embedded game version: **Mindustry `v8 Build 160.4`** (in-game: `release build 1
 2. **File → Project Structure → Signing Configs → Automatically generate signature**
 3. `bash deploy.sh`
 
-⭐ **This build does not request the restricted permission that makes the sandbox
-executable** (`ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY`), so **for a
-local install an automatically generated certificate is sufficient**.
+⭐ **This build does not declare the restricted permission that makes the sandbox
+executable** (`ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY`), so **an
+automatically generated certificate is sufficient to install it** — on a tablet
+**or on a phone**.
 
-⚠️ That is the local install. For an **AppGallery submission**, the other
-permission this app declares (`READ_WRITE_DOWNLOAD_DIRECTORY`) has to go through
-the ACL route — see "ACL (restricted permissions)" in
+⭐⭐ **And on a phone it runs at full speed.** A debug / self-signed profile
+*temporarily unlocks every permission*, regardless of what the package declares, so
+the Java runtime gets the memory its JIT needs — measured and confirmed: a
+third-party signing tool (小白调试助手, with its own profile) gets the JIT on a phone.
+⭐ **This is the only route phones have**: there is **no phone package in the store**,
+for the reason under "Known limitations" below.
+
+⚠️ **The AppGallery submission is a different artifact**, built by
+`bash scripts/make_store_app.sh tablet`. It **does** declare that permission, so it
+needs a Release Profile carrying the matching ACL grant — a store signature does not
+come with the debug unlock. See "ACL (restricted permissions)" in
 [BUILDING.md](docs/BUILDING.md).
 
 ### Install only, without building
@@ -231,7 +268,21 @@ HarmonyOS 7 / API 26.
 **The full list, with the measurements behind it, is in [docs/LIMITATIONS.md](docs/LIMITATIONS.md).**
 Only what you should know *before downloading* is kept here:
 
-- ⛔ **No multiplayer, achievements or mod browser**, compared with the desktop release.
+- ⛔ **There is no phone package in the store, and that is deliberate.** A store-signed phone
+  cannot be granted the memory the JIT needs (the ACL covers tablet and PC/2in1 only), and
+  **"fall back to interpreted" does not save it** — measured: it installs and **never starts**
+  (the interpreter needs executable memory too: HotSpot builds its startup stubs first).
+  ⇒ **To play on a phone, install the self-signed build** (see "Installing" above); that route works.
+- ⚠️ **Phone, self-signed, closes the instant you tap it? Change your signing tool before
+  reporting a bug.** Whether a self-signed install gets the JIT depends on **whether the profile
+  you sign with is a DEBUG one** — a debug profile *temporarily unlocks every permission*, so the
+  JIT works (✅ measured: 小白调试助手 is fine on a phone; the launcher reports `probe=42`).
+  ⚠️ But if the tool signs with a non-debug profile, the app **installs and closes on launch with
+  no clues at all**: no faultlog, the sandbox logs are unreadable, and nothing appears on screen.
+  ⇒ **If that is your symptom, re-sign with a tool that uses a debug profile.**
+  (This is the only way the problem *can* be described: the app never gets far enough to say
+  anything, so the only available action is "try another tool".)
+- ⛔ **No achievements or mod browser**, compared with the desktop release.
 - ⚠️ **A physical keyboard is ASCII-only while the app's own text field is NOT on screen** —
   **tap a text field in the game** so the app's own field comes up (it is wired to the system
   input method) and the physical keyboard **types Chinese too**.
@@ -267,7 +318,7 @@ bash deploy.sh          # build + verify + install + launch + collect log
 
 ### 0.3.0.1 — 2026-09-22
 
-**Multiplayer, mods, and making older phones work.**
+**Multiplayer and mods.**
 
 - ⭐ **Multiplayer works.** The whole feature was blocked by **one missing network
   permission** -- the multiplayer code has always been in the jar, and fail it did on every
@@ -276,10 +327,30 @@ bash deploy.sh          # build + verify + install + launch + collect log
 - ⭐ **Mods load.** Three ways in: the game's own "import mod" button, "导入模组" in the
   floating ball's menu, and the folder the app creates in Downloads at
   `Download/com.haohandc.mindustryark/`. Drop a `.jar` / `.zip` in and restart the game.
-- ⭐ **Phones on API 24 and below no longer "install and cannot start".** Those devices
-  refuse an app anonymous executable memory, so the JIT cannot come up. The app now falls
-  back to interpreted mode and **says so before the game starts**. The cost is real:
-  loading goes from about 5-6 s to about 21 s.
+- ⛔ **Correction: "fall back to interpreted mode" does NOT save a device that was refused
+  executable memory.** An earlier draft of these notes said phones on API 24 and below would
+  merely load more slowly (about 21 s instead of 5-6 s). **That was wrong, and it was never
+  measured.** Measured 2026-09-22 on a device-bound RELEASE profile with no executable-memory
+  ACL: the launcher **correctly detected** the refusal, **did** add `-Xint`, and then **died
+  inside `JNI_CreateJavaVM` with no further output at all**. The interpreter needs executable
+  memory too -- HotSpot builds its startup stubs (`SharedRuntime` / `StubRoutines`) before it
+  ever looks at how bytecode will run -- so interpreted is not a degraded mode, it answers a
+  question that was never the blocker. ⚠️ And the 21-second figure was measured by forcing
+  interpretation **on a device that did have the memory**: it is the *cost of interpretation*,
+  not what a device without the memory does.
+  ⇒ A store-signed phone cannot be granted the ACL (which covers tablet and PC/2in1 only), so
+  **the store has no phone package**; on a phone, install the **self-signed build** -- a debug
+  profile unlocks every permission, so the JIT works. See
+  [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
+- ⭐ **Whether the JIT is available is now MEASURED, not guessed from device type and system
+  version.** The old rule ("phone and API < 26") was right for the one device it came from and
+  wrong in general: a phone at API 26 with a store signature and no ACL is refused the memory
+  just the same, its JIT fails just the same, and the rule **would not fire**. (The mirror
+  case: a tablet without the ACL, which the device rule did not consider at all.) The launcher
+  now probes the capability directly and adds the interpreter option when it is absent.
+  ⚠️ **That is honest compliance, not a rescue** -- see the bullet above: on a device that was
+  refused the memory, adding `-Xint` still does not start. The probe's value is that it reports
+  the truth.
 - Fixed: the floating ball's menu options were **too small and too close together** -- the
   tap target was about 19 vp.
 - Fixed: with no Download directory available, the game's file browser opened at the
