@@ -27,18 +27,6 @@ const TAG = 'MindustryLauncher';
  */
 const JVM_OPTIONS_FILE_NAME = 'jvm.options';
 const COMPAT_NOTICE_FILE_NAME = 'compat_notice_shown';
-/*
- * The launcher redirects the JVM's stdout here (DEST_ROOT in launcher.c), and
- * Mindustry prints this line when it has finished loading.
- *
- * WHY A LOG LINE. It is the only signal there is: the launcher cannot report
- * "the game has started", because the call that starts it does not return until
- * the game exits. See start_jvm() in launcher.c.
- */
-const STDOUT_LOG_PATH = '/data/storage/el2/base/files/stdout.log';
-const GAME_LOADED_MARKER = 'Total time to load';
-const LOAD_WATCH_INTERVAL_MS = 500;
-const LOAD_WATCH_GIVE_UP_MS = 5 * 60 * 1000;
 /* API level at which this platform grants anonymous executable memory without an
  * ACL. Below it the JIT cannot start. */
 const MIN_API_FOR_JIT = 26;
@@ -324,8 +312,6 @@ struct Index {
   /* Compatibility mode, and whether its one-time notice is on screen. */
   private compatMode: boolean = false;
   @State compatNotice: boolean = false;
-  private loadWatchTimer: number = -1;
-  private loadWatchStartedAt: number = 0;
   /*
    * Ball diameter, recomputed from the window. A @State field rather than a getter
    * because the render reads it: a plain field derived from winW/winH would change
@@ -1277,8 +1263,25 @@ struct Index {
        * starting at all. Better to keep going than to throw out of aboutToAppear. */
     }
 
+    /*
+     * SHOWN NOW, AT THE START -- not when the game finishes loading.
+     *
+     * It used to wait for the game's own "loaded" line, because that is the first
+     * moment there is a picture to talk over. That was wrong twice, and the user
+     * found both:
+     *
+     *   1. It caused a HITCH exactly at the end of loading. Watching for that line
+     *      meant re-reading stdout.log on a timer, and that file grows throughout
+     *      loading -- so the reads got steadily more expensive and the biggest one
+     *      landed at the worst possible moment.
+     *   2. The notice belongs BEFORE the game, not after it. Told afterwards, the
+     *      player has already spent twenty seconds wondering why it is so slow.
+     *
+     * With the timing changed, the whole watch -- the timer, the deadline, the
+     * file reads -- has nothing left to do and is gone.
+     */
     if (want && !this.compatNoticeAlreadyShown()) {
-      this.startLoadWatch();
+      this.compatNotice = true;
     }
   }
 
@@ -1289,65 +1292,6 @@ struct Index {
     } catch (e) {
       return false;
     }
-  }
-
-  private startLoadWatch(): void {
-    this.loadWatchStartedAt = Date.now();
-    this.loadWatchTimer = setInterval(() => { this.checkGameLoaded(); },
-      LOAD_WATCH_INTERVAL_MS);
-  }
-
-  private stopLoadWatch(): void {
-    if (this.loadWatchTimer >= 0) {
-      clearInterval(this.loadWatchTimer);
-      this.loadWatchTimer = -1;
-    }
-  }
-
-  /*
-   * Watch for the game's own "loaded" line, then put the notice up.
-   *
-   * The deadline matters: if the game dies during startup nothing would ever stop
-   * this, and a poll that runs for the life of the process is the kind of thing
-   * that is invisible until it is a battery complaint.
-   */
-  private checkGameLoaded(): void {
-    if (this.loadWatchTimer < 0) {
-      return;
-    }
-    if (Date.now() - this.loadWatchStartedAt > LOAD_WATCH_GIVE_UP_MS) {
-      hilog.warn(DOMAIN, TAG, 'game never reported that it loaded -- stopping the watch');
-      this.stopLoadWatch();
-      return;
-    }
-    let text: string = '';
-    try {
-      if (!fs.accessSync(STDOUT_LOG_PATH)) {
-        return;                        /* the launcher has not created it yet */
-      }
-      text = fs.readTextSync(STDOUT_LOG_PATH);
-    } catch (e) {
-      return;                          /* a half-written read; try again next tick */
-    }
-    const at: number = text.indexOf(GAME_LOADED_MARKER);
-    if (at < 0) {
-      return;
-    }
-    this.stopLoadWatch();
-    /*
-     * Log the game's own load time, not just the fact that it loaded.
-     *
-     * This is the only number that says what interpreted mode COSTS, and it is
-     * the one measurement that is otherwise impossible here: the file it comes
-     * from is not readable over hdc on this device (permission denied), so the
-     * app is the only thing that can report it.
-     *
-     * Baseline with the JIT, same device and same package: 5201 ms and 6301 ms.
-     */
-    const eol: number = text.indexOf('\n', at);
-    const line: string = text.substring(at, eol > 0 ? eol : at + 40);
-    hilog.info(DOMAIN, TAG, 'compat mode: game loaded -> %{public}s', line);
-    this.compatNotice = true;
   }
 
   private dismissCompatNotice(): void {
