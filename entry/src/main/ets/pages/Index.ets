@@ -44,6 +44,15 @@ const TAG = 'MindustryLauncher';
  */
 const JVM_OPTIONS_FILE_NAME = 'jvm.options';
 const COMPAT_NOTICE_FILE_NAME = 'compat_notice_shown';
+/*
+ * How long the compatibility notice must stay up before it can be dismissed.
+ *
+ * The notice explains that the game will be slow, and the player's first instinct
+ * on seeing an unexpected card is to tap it away -- which would leave them with
+ * exactly the unexplained slowness the notice exists to prevent. Five seconds is
+ * roughly the time it takes to read the two short paragraphs.
+ */
+const COMPAT_NOTICE_MIN_MS = 5000;
 
 /*
  * Where the LAUNCHER records whether the JVM actually got executable memory.
@@ -573,6 +582,28 @@ struct Index {
   private compatMode: boolean = false;
   @State compatNotice: boolean = false;
   /*
+   * Whether the notice may be dismissed yet.
+   *
+   * It stays FALSE for COMPAT_NOTICE_MIN_MS after the notice appears, and the tap
+   * does nothing until it flips. The player can read the notice, but not flick it
+   * away before the first word of it lands.
+   *
+   * ⚠️ The tap is IGNORED rather than the overlay being un-clickable, and the hint
+   * changes while waiting. An inert overlay with a live-looking "tap to close"
+   * line is indistinguishable from a frozen app, and the whole point of this
+   * notice is to explain a delay the player is already annoyed by.
+   */
+  @State compatNoticeArmed: boolean = false;
+  /*
+   * Whole seconds left before the notice can be dismissed.
+   *
+   * Shown to the player, so it has to be honest about being a countdown rather
+   * than a generic "please wait": a number going down says the app is working and
+   * says how long this lasts, and neither of those is something a spinner says.
+   */
+  @State compatCountdown: number = 0;
+  private compatArmTimer: number = -1;
+  /*
    * Ball diameter, recomputed from the window. A @State field rather than a getter
    * because the render reads it: a plain field derived from winW/winH would change
    * without the component ever being told to re-render.
@@ -909,6 +940,10 @@ struct Index {
     if (this.imeTimer >= 0) {
       clearInterval(this.imeTimer);
       this.imeTimer = -1;
+    }
+    if (this.compatArmTimer >= 0) {
+      clearInterval(this.compatArmTimer);
+      this.compatArmTimer = -1;
     }
     this.cancelBallHide();
     if (this.imeWindow !== undefined) {
@@ -1812,6 +1847,7 @@ struct Index {
     const alreadyShown: boolean = this.compatNoticeAlreadyShown();
     if (want && !alreadyShown) {
       this.compatNotice = true;
+      this.armCompatNoticeLater();
       hilog.info(DOMAIN, TAG, 'compat notice shown (before the game starts)');
     } else {
       /*
@@ -1840,7 +1876,43 @@ struct Index {
     }
   }
 
+  /**
+   * Let the notice be dismissed COMPAT_NOTICE_MIN_MS after it appeared, counting
+   * the seconds down in the meantime.
+   *
+   * An interval rather than one timeout, because the countdown IS the displayed
+   * text -- a single timeout would leave the player looking at a number that never
+   * moves, which is worse than no number at all. The handle is kept so it can be
+   * cancelled: a live interval writing to state after the page is gone is a real
+   * leak, and "it only runs for five seconds" is not a reason to leave one behind.
+   */
+  private armCompatNoticeLater(): void {
+    this.compatNoticeArmed = false;
+    this.compatCountdown = Math.ceil(COMPAT_NOTICE_MIN_MS / 1000);
+    if (this.compatArmTimer >= 0) {
+      clearInterval(this.compatArmTimer);
+    }
+    this.compatArmTimer = setInterval(() => {
+      this.compatCountdown -= 1;
+      if (this.compatCountdown > 0) {
+        return;
+      }
+      clearInterval(this.compatArmTimer);
+      this.compatArmTimer = -1;
+      this.compatNoticeArmed = true;
+      hilog.info(DOMAIN, TAG, 'compat notice is now dismissable');
+    }, 1000);
+  }
+
   private dismissCompatNotice(): void {
+    if (!this.compatNoticeArmed) {
+      /* Deliberately silent to the player, but not to the log: a tap that does
+       * nothing is otherwise indistinguishable from one that was never received. */
+      hilog.info(DOMAIN, TAG,
+        'compat notice tap ignored (%{public}d ms minimum not elapsed yet)',
+        COMPAT_NOTICE_MIN_MS);
+      return;
+    }
     this.compatNotice = false;
     /*
      * Recorded on DISMISS, not on show: an app killed while the notice is up has
@@ -2226,7 +2298,15 @@ struct Index {
             .fontSize(14)
             .fontColor('#E0FFFFFF')
             .margin({ top: 14 })
-          Text($r('app.string.compat_dismiss'))
+          /*
+           * Two different lines, not one: while the tap is ignored the player has
+           * to be able to see that it is ignored on purpose. A card that says
+           * "tap to close" and then does nothing reads as a frozen app, and this
+           * notice exists precisely to explain a delay rather than add a puzzle.
+           */
+          Text(this.compatNoticeArmed
+            ? $r('app.string.compat_dismiss')
+            : $r('app.string.compat_dismiss_wait', this.compatCountdown))
             .fontSize(12)
             .fontColor('#80FFFFFF')
             .margin({ top: 20 })

@@ -719,17 +719,38 @@ anything about the store package**:
 ⇒ **A debug install cannot be used to decide whether the ACL worked.** The only
 honest test is a store-signed package, which brings us to the next item.
 
-#### ✅ The store package CAN be tested: AppTest
+#### ✅ Two separate things, which this file used to run together
 
-The user's finding: **Huawei's AppTest tests your own published app**, so the
-release-signed package does have a verification path after all. This is what
-resolves the "the store package has never been run on any device" item -- the
-oldest unknown in this file.
+The user caught the conflation: **how the package reaches a device** and **what
+you look at once it is running** are different questions with different answers,
+and writing them as one item made both harder to check off.
 
-  - [ ] after the first upload, run an **AppTest** round and check the launcher
-        log line on a tablet: `executable memory works (probe=42)` -- **that line
-        is the ACL's only visible evidence**
-  - [ ] on a phone, expect the fallback instead, and confirm the game still starts
+**A. How a release-signed package reaches a device -- AppTest**
+
+The user's finding: **Huawei's AppTest tests your own published app.** This is the
+answer to "the store package has never been run on any device", the oldest unknown
+in this file, and it matters because sideloading is impossible: measured, the
+inner HAP extracted from a store `.app` gives
+`code:9568320 error: no signature file`.
+
+  - [ ] after the first upload, run an **AppTest** round to get the release-signed
+        package onto a tablet
+  - [ ] and onto a phone
+  - ⚠️ unverified by this project: whether a test version needs a full upload
+        first, whether it is reviewed, and whether its quota or lifetime is
+        limited. The pages exist (AppGallery Connect → AppTest 邀请测试) but the
+        docs are client-rendered and could not be read from here, so nothing about
+        its mechanics is claimed.
+
+**B. What you look at once it is running -- the probe line**
+
+Independent of A, and it applies to ANY release-signed install, however it got
+there:
+
+  - [ ] on a **tablet**, the launcher must log
+        `executable memory works (probe=42)` -- **that line is the ACL's only
+        visible evidence**
+  - [ ] on a **phone**, expect the fallback instead, and confirm the game starts
 
 ⚠️ Which makes the silent-fallback problem the next one worth closing. If the ACL
 does not take effect, the probe forces `-Xint` and **the game simply runs slowly,
@@ -737,6 +758,9 @@ with nothing on screen to say why** -- the ArkTS compatibility notice only cover
 the API-version case, not the probe. So the ACL's failure mode is a tablet that
 feels slow and a user who reports "it's laggy", not "it's broken".
 **Recorded as a known gap; see the compatibility-mode section.**
+⚠️ Note the ordering: the fallback is what makes B necessary, and B is what makes A
+worth running. B without A has nothing to test on; A without B has nothing to
+read.
 
 ### 2.12 The executable-memory ACL does not cover phones, and three corrections
 
