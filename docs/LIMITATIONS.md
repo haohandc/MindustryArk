@@ -172,6 +172,39 @@ provisionEnable: true
 
 ⇒ 能确定的只有：**在这台手机上，这个权限拿不到，且用户看不到任何提示。**
 
+### ⭐⭐ 后来把它拆成了两个独立的原因
+
+用 `atm perm --grant` **手动**授予，返回 `Success`，`reqPermissionStates` 从 `[0, -1]`
+变成 **`[0, 0]`** ⇒ **这台手机是能给这个权限的**，权限本身没有问题。
+
+重启应用后：
+
+```text
+permission ... state before = 0                              <- 已授予
+permission request: ... -> auth=0 dialogShown=false          <- 变成 0 了
+```
+
+**但同一份日志里：**
+
+```text
+user_dirs.txt : download=<threw>                             <- 仍然抛异常
+launcher      : no user download dir available
+```
+
+⇒ **`Environment.getUserDownloadDir()` 抛异常【与权限无关】** —— 权限给足了它照样抛
+「The device doesn't support this api」。**同一个设备上 `getUserDocumentDir()` 也抛。**
+
+| | 原因 | 能否修 |
+| --- | --- | --- |
+| **A** | 未授权时应用的请求返回 `auth=2`、**不弹窗** ⇒ 玩家**永远无法通过应用授权** | ⚠️ 权限本身可授（手动证实），是**弹窗那条路**的问题 |
+| **B** | `Environment.getUser*Dir()` **恒抛异常**，与权限无关 | ❌ **不是本应用能改的** —— 这组 API 在该机型上不可用 |
+
+⭐ **B 才是真正的墙，而且它吻合「按设备类型区分」的猜想** —— 两机权限定义逐字相同，
+但**API 的可用性不同**（那行错误信息就是字面意思）。
+
+**影响**：这台手机上，`Download/MindustryMods/` 与「从下载目录导入存档」**用不了**。
+**不受影响**：悬浮球菜单里的**「导入模组」走系统文件选择器，不需要任何权限**，照常可用。
+
 
 **影响**：在这类机型上，
 「存档从下载目录导入/导出」与「Downloads 文件夹放模组」**用不了**。
@@ -404,6 +437,43 @@ is therefore still unexplained**; only the outcome is known.
 
 ⇒ What is certain: **on this phone the permission cannot be obtained, and the
 player is shown nothing.**
+
+### ⭐⭐ Two independent causes, later separated
+
+Granting it **by hand** with `atm perm --grant` returns `Success`, and
+`reqPermissionStates` goes from `[0, -1]` to **`[0, 0]`** -- so **this phone can
+be granted this permission**; the permission itself is fine.
+
+After restarting the app:
+
+```text
+permission ... state before = 0                              <- granted
+permission request: ... -> auth=0 dialogShown=false          <- now 0
+```
+
+**and in the same log:**
+
+```text
+user_dirs.txt : download=<threw>                             <- still throws
+launcher      : no user download dir available
+```
+
+⇒ **`Environment.getUserDownloadDir()` throwing is INDEPENDENT of the
+permission** -- with the permission granted it still throws "The device doesn't
+support this api". `getUserDocumentDir()` throws on the same device too.
+
+| | cause | fixable |
+| --- | --- | --- |
+| **A** | when not yet granted, the app's request returns `auth=2` and **shows no dialog** ⇒ the player can never grant it through the app | ⚠️ the permission IS grantable (proven by hand); the problem is the dialog path |
+| **B** | `Environment.getUser*Dir()` **always throws**, permission or not | ❌ **not something this app can change** -- the API is unavailable on this model |
+
+⭐ **B is the real wall**, and it fits the "differs by device type" guess: the
+permission definitions are byte-identical across the two devices, but the **API's
+availability is not** (that error message says so literally).
+
+**Effect**: on this phone, `Download/MindustryMods/` and importing a save from the
+Download directory **do not work**. **Unaffected**: "导入模组" in the floating
+ball's menu goes through the **system file picker, which needs no permission**.
 
 
 **What it costs**: on such a device, "import/export a save via the Download
