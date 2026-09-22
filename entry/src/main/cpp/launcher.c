@@ -27,6 +27,7 @@
  */
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
+#include <hilog/log.h>
 
 #include "jni/jni.h"
 
@@ -3044,9 +3045,89 @@ static int start_jvm(void)
     return 0;
 }
 
+/*
+ * ---------------------------------------------------------------------------
+ * MIRROR EVERY SDL_Log TO HILOG.
+ *
+ * WHY THIS EXISTS, and it is not convenience.
+ *
+ *   All of this launcher's diagnostics go to SDL_Log, which writes to
+ *   stdout/stderr, which the launch redirects into files inside the app sandbox.
+ *   That works for a DEBUG-signed build, and it is how every measurement in this
+ *   project was taken.
+ *
+ *   It does NOT work for a release-signed build. Measured on the device, with an
+ *   internaltesting (release) package installed:
+ *
+ *       hdc shell cat <sandbox>/files/stderr.log   -> Permission denied
+ *       hdc shell pidof <bundle>                   -> (empty)
+ *       hdc shell ps -A | grep <bundle>            -> (empty)
+ *       faultlog                                    -> no entry for it
+ *
+ *   So the first time a store-signed package was ever run -- 2026-09-22, on a
+ *   phone whose profile grants no executable memory -- it fell back to -Xint and
+ *   then CRASHED, and there was nothing to read. Every question about what the
+ *   store package does is unanswerable in that state, which is the worst possible
+ *   position for the one build that ships to users.
+ *
+ *   hilog is readable for any app, whatever signed it, so the diagnostics have to
+ *   go there as well.
+ *
+ * WHY A CALLBACK AND NOT A MACRO AROUND EVERY CALL SITE
+ *   SDL3 lets the process replace its log sink, so one function catches every
+ *   SDL_Log in this file AND everything SDL itself logs -- including the SDL and
+ *   linker messages that only appear on the paths that fail. Replacing call sites
+ *   would have missed those, and there are hundreds of them.
+ *
+ * WHY %{public}s AND NOT THE MESSAGE DIRECTLY
+ *   hilog masks unmarked format specifiers as <private>, so passing SDL's format
+ *   string through would have produced a log full of <private> instead of the
+ *   values. The message arrives already formatted, so it is passed as a single
+ *   public string.
+ *
+ * The default output is kept as well, so the sandbox files still get everything
+ * for the debug builds that can read them.
+ * ---------------------------------------------------------------------------
+ */
+#define MX_LOG_DOMAIN 0x0000
+#define MX_LOG_TAG    "MindustryLauncher"
+
+static SDL_LogOutputFunction g_prev_log_output = NULL;
+static void *g_prev_log_userdata = NULL;
+
+static void SDLCALL mirror_log_to_hilog(void *userdata, int category,
+                                        SDL_LogPriority priority, const char *message)
+{
+    /* Keep the original behaviour first: if this ever throws, the file still
+     * has the line. */
+    if (g_prev_log_output != NULL) {
+        g_prev_log_output(g_prev_log_userdata, category, priority, message);
+    }
+
+    LogLevel level;
+    switch (priority) {
+        case SDL_LOG_PRIORITY_VERBOSE:
+        case SDL_LOG_PRIORITY_DEBUG:   level = LOG_DEBUG; break;
+        case SDL_LOG_PRIORITY_WARN:    level = LOG_WARN;  break;
+        case SDL_LOG_PRIORITY_ERROR:
+        case SDL_LOG_PRIORITY_CRITICAL: level = LOG_ERROR; break;
+        default:                        level = LOG_INFO;  break;
+    }
+    /* One call, one public string -- see the note above on %{private}. */
+    OH_LOG_Print(LOG_APP, level, MX_LOG_DOMAIN, MX_LOG_TAG, "%{public}s", message);
+}
+
+static void install_hilog_mirror(void)
+{
+    SDL_GetLogOutputFunction(&g_prev_log_output, &g_prev_log_userdata);
+    SDL_SetLogOutputFunction(mirror_log_to_hilog, NULL);
+}
+
 int main(int argc, char *argv[])
 {
     (void)argc; (void)argv;
+
+    install_hilog_mirror();
 
     /*
      * Stop SDL from turning touches into mouse events.

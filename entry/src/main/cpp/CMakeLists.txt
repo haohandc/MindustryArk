@@ -154,4 +154,9 @@ include_directories(${NATIVEAPP_ROOT_PATH}
 
 # This is libmain.so -- the library name must be "main"
 add_library(main SHARED launcher.c)
-target_link_libraries(main PUBLIC SDL3::SDL3 dl)
+# libhilog_ndk.z.so: the launcher mirrors its diagnostics there, because a
+# RELEASE-signed build's sandbox log files cannot be read over hdc -- measured,
+# "Permission denied", and with no faultlog entry either. Without this the store
+# package is undiagnosable, which 2026-09-22 showed is exactly the package whose
+# failures matter most.
+target_link_libraries(main PUBLIC SDL3::SDL3 dl hilog_ndk.z)
