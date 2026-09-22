@@ -117,7 +117,13 @@ NEW = (indent + "// STORE BUILD ONLY -- injected by scripts/make_store_app.sh an
        + indent + "// again on exit. See RELEASE-MAINTENANCE.md 2.11 for why this cannot be\n"
        + indent + "// declared unconditionally. Never commit a module.json5 containing this.\n"
        + indent + '{ "name": "%s", "reason": "$string:perm_reason_CODE_MEMORY", '
-                  '"usedScene": { "abilities": [ "EntryAbility" ], "when": "inuse" } },\n' % perm)
+                  # `always`, not `inuse`. The JVM's JIT needs this memory from
+                  # process start to process exit, and which ability is in the
+                  # foreground has nothing to do with it. It also has to MATCH the
+                  # AGC ACL form, where 调用时机 is set to always -- a package whose
+                  # usedScene disagrees with its own ACL application is a
+                  # disagreement not worth shipping.
+                  '"usedScene": { "abilities": [ "EntryAbility" ], "when": "always" } },\n' % perm)
 io.open(path, "w", encoding="utf-8", newline="\n").write(src[:line_start] + NEW + src[line_start:])
 print("   injected %s" % perm)
 PYEOF
