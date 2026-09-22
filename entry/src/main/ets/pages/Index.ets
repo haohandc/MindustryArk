@@ -1217,10 +1217,13 @@ struct Index {
    */
   private setupCompatMode(): void {
     let want: boolean = FORCE_COMPAT_MODE;
+    let kind: string = '?';
+    let api: number = -1;
     if (!want) {
       try {
-        want = deviceInfo.deviceType === 'phone'
-          && deviceInfo.sdkApiVersion < MIN_API_FOR_JIT;
+        kind = deviceInfo.deviceType;
+        api = deviceInfo.sdkApiVersion;
+        want = kind === 'phone' && api < MIN_API_FOR_JIT;
       } catch (e) {
         const err = e as BusinessError;
         /*
@@ -1230,10 +1233,26 @@ struct Index {
          */
         hilog.error(DOMAIN, TAG,
           'deviceInfo unavailable (%{public}s) -- assuming the JIT works', err.message);
+        kind = 'unavailable';
         want = false;
       }
     }
     this.compatMode = want;
+    /*
+     * Logged UNCONDITIONALLY, including the inputs.
+     *
+     * The first version only logged when compat mode turned on, which made its
+     * own correctness unverifiable: "the options file was not written" is also
+     * what a method that never ran produces. A decision needs to report the
+     * inputs it was made from, or the absence of its effect proves nothing.
+     *
+     * Measured, on the tablet: "compat mode: device=tablet api=26 ->
+     * interpreted=false", alongside the launcher's "(no options file found;
+     * tried 3 locations)". Two independent observations, agreeing.
+     */
+    hilog.info(DOMAIN, TAG,
+      'compat mode: device=%{public}s api=%{public}d -> interpreted=%{public}s',
+      kind, api, String(want));
 
     const ctx = getContext(this) as common.UIAbilityContext;
     const path: string = ctx.filesDir + '/' + JVM_OPTIONS_FILE_NAME;

@@ -66,6 +66,39 @@ HAP_BASE="$("${PY[@]}" -c 'import sys; sys.path.insert(0,"scripts"); import conf
 SIGNED="entry/build/default/outputs/default/$HAP_BASE.hap"
 [ -f "$SIGNED" ] || { echo "!! no signed HAP at $SIGNED" >&2; exit 1; }
 
+# ---------------------------------------------------------------------------
+# REFUSE A STALE PACKAGE
+#
+# This script installs a PREBUILT HAP -- it does not build one. That is
+# deliberate (it is the only way to install a store-configuration package, which
+# verify_hap.py rejects by design), but it means an edit made after the last
+# build is silently not tested: the app installs, launches, and behaves exactly
+# as the OLD code did, which reads as "my change did nothing".
+#
+# Measured, and it cost a round: Index.ets was edited at 11:56 and the HAP on
+# disk was from 11:51, so the "new" build under test was five minutes old, and
+# the log line that would have proved the new code had run was simply absent.
+# Absence of evidence was then mistaken for evidence about the code.
+#
+# Same shape as the rule this project already has: a deploy step that does not
+# fail on staleness hands you the previous build and calls it this one.
+# ---------------------------------------------------------------------------
+STALE=""
+for src in entry/src/main/ets/pages/Index.ets entry/src/main/cpp/launcher.c \
+           entry/src/main/module.json5 entry/src/main/ets/entryability/EntryAbility.ets; do
+    [ -f "$src" ] || continue
+    if [ "$src" -nt "$SIGNED" ]; then STALE="$STALE
+       $src"; fi
+done
+if [ -n "$STALE" ]; then
+    echo "!! this script does not build, and the package is OLDER than:" >&2
+    printf '%s\n' "$STALE" >&2
+    echo "!!" >&2
+    echo "!! build first, or you will be testing the previous package:" >&2
+    echo "!!   bash build.sh assembleHap --mode module -p product=default -p buildMode=release" >&2
+    exit 1
+fi
+
 echo
 echo "===== packaged as ====="
 "${PY[@]}" - "$SIGNED" <<'EOF'
