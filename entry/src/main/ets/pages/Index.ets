@@ -5,7 +5,7 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { KeyCode } from '@kit.InputKit';
 import { window } from '@kit.ArkUI';
 import { pickMods, ensureModFolder, scanModFolder, ModImportReport,
-         lastDownloadScan } from '../mods/ModImporter';
+         takeLastScan } from '../mods/ModImporter';
 /* `focusControl` needs no import: it is an ArkTS framework global, like
  * getContext. Importing it from @kit.ArkUI does not compile. */
 
@@ -434,6 +434,26 @@ const IME_DISMISS_MS = 1500;
  */
 const IME_FIELD_MARGIN_VP = 24;
 
+/**
+ * What to say after files landed in the mods directory during startup.
+ *
+ * Deliberately does NOT name Downloads. The file may equally have come from the
+ * folder being created for the first time, and what matters to the player is
+ * where the mod ended up -- the mods directory inside the sandbox -- not the
+ * folder it was staged in. The previous wording said "已从 Download 导入", which
+ * read as though the import had stopped half way, in Downloads.
+ *
+ * No restart is mentioned either, and that is not an oversight: every caller of
+ * this runs before the game scans the directory, so the mod is already live on
+ * this launch. The picker's message in importMods is worded differently for
+ * exactly that reason -- it lands files after the scan, so it has to ask.
+ */
+function importedMessage(report: ModImportReport): string {
+  return report.landed.length === 1
+    ? '已导入 ' + report.landed[0].name
+    : '已导入 ' + report.landed.length + ' 个模组';
+}
+
 @Entry
 @Component
 struct Index {
@@ -598,7 +618,51 @@ struct Index {
      * the picker mode needs no permission, so there is nothing to wait for.
      */
     ensureModFolder(ctx, ctx.filesDir + '/mod_folder')
-      .then(() => { scanModFolder(ctx.filesDir + '/mod_folder'); })
+      .then(() => {
+        /*
+         * Report whatever this launch imported, then forget it.
+         *
+         * ⚠️ INSIDE the then, and TAKEN rather than read. Both halves are bug
+         * fixes, and they cover different failures:
+         *
+         *   inside   the ability already scanned during onCreate, and this page
+         *            scans again just below. Reading synchronously out here --
+         *            before this chain resolves -- reported the ability's scan
+         *            and never this page's, and on a first launch the page's is
+         *            the one that matters: the folder did not exist yet when the
+         *            ability ran, so it is created during this very call.
+         *
+         *   taken    takeLastScan clears what it returns. As a plain getter it
+         *            stayed readable forever, so aboutToAppear -- which runs
+         *            again whenever the page comes back to the foreground,
+         *            including on the way back from the system picker -- kept
+         *            replaying "imported <mod>" long after the import, on every
+         *            reopen. Reported from the device in those words.
+         *
+         * Nothing landed means nothing to say, and that is the normal case: an
+         * already-present file is skipped, so this fires on the launch after one
+         * was dropped in, and not again.
+         */
+        scanModFolder(ctx.filesDir + '/mod_folder');
+        const imported: ModImportReport = takeLastScan();
+        /*
+         * Logged on BOTH branches, because "said nothing" and "never ran" are
+         * otherwise indistinguishable -- a rule this project already learned the
+         * hard way on the scan line below.
+         *
+         * It is here specifically because of this bug. A toast is pixels: no log
+         * records that one was shown, so a toast replayed on every return to the
+         * foreground looked exactly like a toast shown once, and the only
+         * detector was the player's eye. This line is what makes the decision
+         * checkable without one -- count these against one launch.
+         */
+        hilog.info(DOMAIN, TAG, 'mods: %{public}d imported this launch, %{public}s',
+                   imported.landed.length,
+                   imported.landed.length > 0 ? 'announcing' : 'staying quiet');
+        if (imported.landed.length > 0) {
+          this.toast(importedMessage(imported));
+        }
+      })
       .catch((e: BusinessError) => {
         hilog.warn(DOMAIN, TAG, 'mod folder setup failed: %{public}s', e.message);
       });
@@ -625,22 +689,6 @@ struct Index {
      * during Vars.load(), and that is also downstream of the XComponent
      * mounting. See the note on seedProbeMod. */
     this.seedProbeMod();
-    /*
-     * Report what the startup scan of Downloads brought in, if anything.
-     *
-     * This is the only feedback that entry has -- it runs in the ability's
-     * onCreate, before this page exists, and it happens before the game looks
-     * at the mods directory, so unlike the picker there is no restart to
-     * mention. Nothing landed means nothing to say, and that is the normal
-     * case: already-present files are skipped, so this fires once, on the
-     * launch after a file was dropped in.
-     */
-    const scanned: ModImportReport = lastDownloadScan();
-    if (scanned.landed.length > 0) {
-      this.toast(scanned.landed.length === 1
-        ? '已从 Download 导入 ' + scanned.landed[0].name
-        : '已从 Download 导入 ' + scanned.landed.length + ' 个模组');
-    }
   }
 
   /*

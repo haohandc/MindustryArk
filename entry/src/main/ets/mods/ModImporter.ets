@@ -270,7 +270,7 @@ export async function pickMods(ctx: common.UIAbilityContext): Promise<ModImportR
 }
 
 /**
- * Copy anything in <Downloads>/MindustryMods into the mods directory.
+ * Copy anything in the app's own folder in Downloads into the mods directory.
  *
  * Runs at startup, before the game scans, so a mod dropped in Downloads is live
  * on the next launch with no further ceremony.
@@ -284,7 +284,7 @@ export async function pickMods(ctx: common.UIAbilityContext): Promise<ModImportR
  * refusal here must not affect anything else -- the picker entry still works.
  */
 /*
- * The last startup scan's result, for the page to report.
+ * The last startup scan's result, waiting to be reported by the page.
  *
  * KEPT IN MEMORY RATHER THAN LOGGED, because this app's own hilog lines are not
  * reliably readable: the game writes thousands of lines a second into a ring
@@ -293,17 +293,53 @@ export async function pickMods(ctx: common.UIAbilityContext): Promise<ModImportR
  * project already works around that for native logs by reading files out of the
  * sandbox. Here there is a better answer than either: a player cannot read
  * hilog, but a player can read a toast.
+ *
+ * ⚠️ READ IT WITH takeLastScan, NOT WITH A PLAIN GETTER. This is the second
+ * revision of this idea and the reason for the shape. The first was a getter,
+ * which made the same report readable any number of times -- and the page's
+ * aboutToAppear runs again whenever the page comes back to the foreground
+ * (returning from the system picker is enough), so "imported <mod>" was
+ * replayed long after the import, on every reopen. Reported from the device in
+ * those words. Consuming the report as it is read is what makes this a
+ * notification rather than a piece of state.
  */
 let lastScan: ModImportReport = { landed: [], error: '', cancelled: false };
 
-/** What the startup scan did, so the page can say so. */
-export function lastDownloadScan(): ModImportReport {
-  return lastScan;
+/**
+ * The startup scan's result, clearing it.
+ *
+ * The clearing is the entire reason this is a function with a side effect
+ * rather than a getter -- see the note above. A second call in the same process
+ * gets the empty default, which is the truth: there is no new startup to report.
+ */
+export function takeLastScan(): ModImportReport {
+  const report: ModImportReport = lastScan;
+  lastScan = { landed: [], error: '', cancelled: false };
+  return report;
+}
+
+/**
+ * Remember a scan's landings for the page, accumulating across scans.
+ *
+ * ACCUMULATES, because one launch scans more than once and the player should
+ * hear about an import once rather than once per scan: the ability scans early
+ * so that the game sees the files in time, and the page scans again after
+ * ensureModFolder, which may have just created the folder and imported into it
+ * itself. Whichever scan finds the file, the page reports it.
+ *
+ * ⚠️ Only landings are accumulated. Errors are not: the page reports what
+ * arrived, and a scan that only failed to read the folder has nothing to tell
+ * the player that the picker's own error cannot tell them better.
+ */
+function publish(report: ModImportReport): void {
+  if (report.landed.length > 0) {
+    lastScan.landed = lastScan.landed.concat(report.landed);
+  }
 }
 
 export function scanModFolder(statePath: string): ModImportReport {
   const report: ModImportReport = scanModFolderInner(statePath);
-  lastScan = report;
+  publish(report);
   return report;
 }
 
