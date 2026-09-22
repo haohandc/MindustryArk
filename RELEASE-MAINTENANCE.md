@@ -1477,6 +1477,32 @@ player deletes the mod?** The old answer was "it comes back".
 built HAP, checked by searching its entries. A 2.4-second build is exactly the kind of result
 that makes this check necessary.
 
+#### ✅ AND THE BEHAVIOUR ITSELF, CONFIRMED ON THE DEVICE (2026-09-23)
+
+The user, after running it:
+
+> **「我验证过了，不会回来的。」**
+
+⭐ **This is the end-to-end answer to the question that removed the feature** ("what happens when
+the player deletes the mod?"), and it is the only check that could answer it. Everything else in
+this section is upstream of it:
+
+| what was checked | what it proves | what it does not |
+|---|---|---|
+| the strings are gone from the HAP | the code cannot run | that deleting a mod behaves |
+| the sandbox `mods/` is empty after a wipe | nothing planted it at launch | ditto |
+| the absence of `scanModFolder` in the source | no other path copies files in | ditto |
+
+⇒ **Only the user can close this loop**, because it needs a tap inside the game -- the same rule
+that cost `tools/probe-mod/` its reason to exist (see "The one capability genuinely lost" above).
+Recorded because the loss is only acceptable if what replaced it actually happens, and now it has.
+
+⚠️ **What is still NOT verified**: that a mod *deleted from the game* is also gone from the
+**staged copy in `Download/Mindustry Ark/`**. It should be -- nothing reads that folder any more --
+but nothing has looked. If the file is still sitting there, the player can re-import it by hand,
+which is the intended behaviour and not a resurrection; the distinction is that it takes a
+deliberate pick rather than happening at launch.
+
 
 ### 2.13f THE FILE BROWSER'S ROOT: ONE LAUNCH OF GAP, AND A FALLBACK THAT MADE IT WORSE
 
