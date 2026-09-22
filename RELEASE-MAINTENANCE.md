@@ -706,6 +706,28 @@ declares no such permission, on **both** the tablet and the phone. The user also
 notes that the profile DevEco calls "release" when generated automatically is
 **also a debug profile**; the name is not the type.
 
+#### ✅ And it is not only DevEco: ANY self-signed install gets it
+
+**Confirmed by the user, 2026-09-22**: a third-party signing tool (小白调试助手,
+which carries its own profile) produces the same result on a phone -- **the JIT
+works**. So the property belongs to **self-signing in general**, not to DevEco's
+particular profile.
+
+Which sharpens the whole picture into something worth stating plainly, because the
+opposite of it sat in the release notes for a while:
+
+| | phone | tablet |
+|---|---|---|
+| **self-signed** (this project's GitHub release, any debug tool) | ✅ **JIT** | ✅ JIT |
+| **AppGallery** | ⚠️ no JIT ⇒ interpreted | JIT, if the ACL took effect |
+
+⇒ **The phone slowdown is a property of the STORE package, not of phones.** Every
+GitHub user signs the HAP themselves, so they get the JIT on a phone and need never
+see the compatibility notice. ⚠️ It also means **a self-signed install that runs
+slow is a defect, not an expectation** -- which is the opposite of what the release
+notes used to tell people, and would have turned real bugs into "known limitation"
+reports.
+
 ⚠️ **WHAT THIS INVALIDATES, STATED PLAINLY.** Every `probe=42 WORKS` measurement
 this project has taken was taken on a debug install, so **none of them says
 anything about the store package**:

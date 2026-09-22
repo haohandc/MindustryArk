@@ -94,22 +94,31 @@
 所有"能跑"的证据都来自 API 26。修好之前，在 API 24 设备上可能出现"装得上、跑不起来"。
 
 
-## ⚠️ 手机（以及拿不到那项权限的平板）会明显变慢：兼容模式
+## ⚠️ 兼容模式：拿不到那项权限时会明显变慢
 
-⚠️ **这一节原来写的是「HarmonyOS 7 以下的手机」，那个因果是错的** ——
-**决定因素是【设备类型】，不是系统版本。** 用户 2026-09-22 确认：
-**平板一直都没问题，旧版本也是。**
+⭐ **一句话：变慢是【应用商店包在手机上】的事，不是「手机」的事。**
 
-客观事实是：那台测出失败（`errno=22`）的设备**同时也是一台手机**，而本项目
-**从未把两个解释分开过**（`RELEASE-MAINTENANCE.md` §2.11 原文就写着「两个假说从未分离」）。
-确定的是：**那项 ACL 权限只面向平板与 PC/2in1，不向手机开放**。
-⇒ **「系统版本 < 26」是个被混淆的观测被当成了规则。** 现在它只是**首次启动的猜测**，
-真正的判据是启动器的测量（见下）。
+| 安装方式 | 手机 | 平板 |
+|---|---|---|
+| **自签名**（本项目的 GitHub release 就是让你自己签） | ✅ **有 JIT，全速** | ✅ 有 JIT，全速 |
+| **应用商店** | ⚠️ 无 JIT ⇒ 解释执行 | 看 ACL 是否生效 |
+
+**为什么自签名就有**：调试 / 自签名用的 profile 会**临时放开全部权限**，与包里声明了什么无关。
+✅ **用户 2026-09-22 确认**：第三方签名工具（小白调试助手，自带一套 profile）装到手机上**同样有 JIT**。
+⇒ ⭐ **对本项目的 GitHub 用户，手机上是全速的，兼容模式根本不会出现。**
+
+**为什么商店包在手机上没有**：那项权限（ACL）**只面向平板与 PC/2in1，不向手机开放**。
+
+⚠️⚠️ **这一节改过两次，两次的错法值得记：**
+1. 最初写「**HarmonyOS 7 以下的手机**」—— 把**被混淆的观测**（那台失败设备同时是手机、又是旧版本，
+   `RELEASE-MAINTENANCE.md` §2.11 原文写着「两个假说从未分离」）**当成了规则**。
+2. 改完之后又写成「**手机大概率是解释执行**」—— 这次是**把商店包的性质安到了所有安装方式上**。
 
 **现在怎么判**：启动器**每次启动实测**「能不能拿到匿名可执行内存」，拿不到就强制解释执行。
 ⇒ 测量结果**覆盖**机型与版本猜测，而且**会自我纠正**（陈旧的 `-Xint` 会在下一次启动被取回）。
+⇒ ⚠️ **自签名安装如果变慢，那是缺陷，不是预期** —— 请报出来。
 
-**为什么**：详见上一节。为了让应用能在这些设备上启动，Java 运行时改成了「解释执行」
+**为什么**：为了让应用能在拿不到该权限的设备上启动，Java 运行时改成了「解释执行」
 而不是即时编译。
 
 **实测代价**（HarmonyOS 7 平板，人工开启该模式）：
@@ -404,23 +413,36 @@ install on our own hardware is **debug-signed**. Both explain every observation 
 no measurement behind it** -- every "it works" observation is from API 26. Until this
 is settled, an API 24 device may install the app and be unable to run it.
 
-## ⚠️ Noticeably slower on phones, and on tablets that cannot be granted the permission
+## ⚠️ Compatibility mode: slower when the permission cannot be obtained
 
-⚠️ **This section used to say "phones below HarmonyOS 7", and that causal claim was
-wrong** -- what decides it is the **device class, not the system version**. The user
-confirmed on 2026-09-22 that **tablets have always been fine, old versions included.**
+⭐ **In one line: the slowdown belongs to the STORE package on a phone, not to phones.**
 
-The fact behind the old wording: the device that measured the failure (`errno=22`) was
-**also a phone**, and this project **never separated the two explanations**
-(`RELEASE-MAINTENANCE.md` 2.11 says as much: "两个假说从未分离"). What IS established:
-**the ACL permission is for tablets and PC/2in1 and is not offered to phones at all.**
-So "system version < 26" was a confounded observation read as a rule. It is now only the
-**first-launch guess**; the real answer is the launcher's measurement (below).
+| how it was installed | phone | tablet |
+|---|---|---|
+| **self-signed** (this project's GitHub release asks you to sign it yourself) | ✅ **JIT, full speed** | ✅ JIT, full speed |
+| **AppGallery** | ⚠️ no JIT ⇒ interpreted | JIT, if the ACL took effect |
+
+**Why self-signing gets it**: the profile a debug / self-signed install uses **temporarily
+unlocks every permission**, regardless of what the package declares. ✅ **Confirmed by the user
+on 2026-09-22**: a third-party signing tool (小白调试助手, with its own profile) gets the JIT on a
+phone as well. ⇒ ⭐ **for this project's GitHub users a phone runs at full speed and compatibility
+mode never appears.**
+
+**Why the store package does not, on a phone**: the ACL permission is **for tablets and PC/2in1
+and is not offered to phones at all**.
+
+⚠️⚠️ **This section has been wrong twice, and both ways are worth remembering:**
+1. It first said "**phones below HarmonyOS 7**" -- reading a **confounded observation** (the failing
+   device was both a phone and on an old version; `RELEASE-MAINTENANCE.md` 2.11 records "两个假说从未分离")
+   as a rule.
+2. The first correction then said "**phones will most likely run interpreted**" -- attaching a
+   property of the store package to every way of installing.
 
 **How it is decided now**: the launcher **measures every launch** whether anonymous
 executable memory is available, and forces interpreted mode when it is not. The
 measurement **outranks** the device/version guess and **corrects itself** -- a stale
 `-Xint` is taken back out on the next launch.
+⇒ ⚠️ **A self-signed install that runs slow is a defect, not an expectation** -- report it.
 
 **Why**: see the section above. To let the app start at all on those devices, the
 Java runtime runs **interpreted** instead of just-in-time compiled.
