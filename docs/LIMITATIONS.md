@@ -78,6 +78,30 @@
 所有"能跑"的证据都来自 API 26。修好之前，在 API 24 设备上可能出现"装得上、跑不起来"。
 
 
+## ⚠️ 在 HarmonyOS 7 以下的手机上会明显变慢（兼容模式）
+
+**为什么**：详见上一节。为了让应用能在这些设备上启动，Java 运行时改成了「解释执行」
+而不是即时编译。
+
+**实测代价**（HarmonyOS 7 平板，人工开启该模式）：
+
+| | 加载时间 |
+| --- | --- |
+| 正常（JIT） | 约 5~6 秒 |
+| 兼容模式 | **约 21 秒** |
+
+**游戏内的表现不是均匀变慢，而是随【视野范围】放大**：
+
+- **窗口缩小**（约手机大小）：高负载下**基本能玩**
+- **全屏**：高负载下**掉帧严重，基本不能玩**
+
+⇒ 原因是「渲染」是原生的（不受影响），而「单位与瓦片的模拟」跑在 Java 上：
+屏幕越大，每帧要更新的东西越多，而帧预算不变。
+
+⚠️ 所以：**平板请更新到 HarmonyOS 7**（或使用本应用在应用市场分发的版本），
+手机在相容的屏幕尺寸下体验是可接受的。
+
+
 # English
 
 - **Text entry, and what each route can do.** Touch a text field inside the game
@@ -166,3 +190,25 @@ install on our own hardware is **debug-signed**. Both explain every observation 
 no measurement behind it** -- every "it works" observation is from API 26. Until this
 is settled, an API 24 device may install the app and be unable to run it.
 
+## ⚠️ Noticeably slower on phones below HarmonyOS 7 (compatibility mode)
+
+**Why**: see the section above. To let the app start at all on those devices, the
+Java runtime runs **interpreted** instead of just-in-time compiled.
+
+**Measured cost** (HarmonyOS 7 tablet, mode forced on by hand):
+
+| | load time |
+| --- | --- |
+| normal (JIT) | about 5-6 s |
+| compatibility mode | **about 21 s** |
+
+**In game it does not slow down uniformly -- it scales with the VISIBLE AREA**:
+
+- **window shrunk** (roughly phone-sized): high load is **playable**
+- **full screen**: high load **drops frames badly, effectively unplayable**
+
+⇒ because rendering is native (unaffected) while the unit and tile simulation is
+Java: a larger viewport means more work per frame at the same frame budget.
+
+⚠️ So: **update tablets to HarmonyOS 7** (or use the build distributed through
+AppGallery), and phones are acceptable at a comparable screen size.

@@ -764,6 +764,89 @@ change does not disturb API 26 devices -- and that is what any local check will 
 **Do not read "runs on the tablet" as evidence that B works.**
 
 
+### 2.13 What compatibility mode costs, and one risk that was accepted knowingly
+
+#### The number
+
+`FORCE_COMPAT_MODE` exists so the cost can be felt on hardware that does not need
+the fallback. Flipped on for one build on the HarmonyOS 7 tablet, same device and
+same package:
+
+| | `Total time to load` |
+|---|---|
+| JIT | 5201 ms, 6301 ms (two separate runs) |
+| `-Xint` | **21457 ms** |
+
+That is 3.4x to 4.1x on load alone. It is logged by the app because it is the only
+thing that can read the file it comes from -- `stdout.log` is not readable over
+hdc on this device.
+
+#### The mechanism, and who found it
+
+⭐ **The cost scales with the VISIBLE AREA, not with the level's size.** The user
+tested this directly, on the tablet, in compatibility mode:
+
+| | high load |
+|---|---|
+| full screen | **unplayable** -- "掉帧太重了" |
+| window shrunk to phone size | **acceptable** -- "好不少，基本能玩" |
+
+The reason is which half of the work is interpreted. Rendering is native (SDL3 +
+GLES, unaffected by `-Xint`); the simulation and update logic is Java, and it runs
+per visible tile and per visible unit. A bigger viewport means more Java work per
+frame, at the same frame budget.
+
+⭐ **That observation is what settled the tablet question.** It is not "the tablet
+is probably fast enough" -- it is a measured answer to the exact question the ACL
+decision needed: the tablet is where interpreted mode hurts most, so the tablet is
+the device that must have the JIT. The ACL route is worth its process for the
+tablet, and this is why.
+
+It also explains why the phone is a fair bet: a phone's screen is close to the
+"window shrunk to phone size" case that was measured as acceptable.
+
+#### The decision, and the risk inside it
+
+The condition is **`deviceType === 'phone' && sdkApiVersion < MIN_API_FOR_JIT`**,
+with `MIN_API_FOR_JIT = 26`. API 24 was the only level where the RWX refusal was
+ever observed, so 26 is the lowest defensible threshold that the evidence supports.
+
+⚠️ **BUT 2.11 NEVER SEPARATED THE TWO EXPLANATIONS, and this condition depends on
+one of them.** The refusal could be (A) the platform version, or (B) the fact that
+the failing device ran the **RELEASE-signed** package while everything we test on
+our own hardware is debug-signed. If B is true, then an **API 26 phone running the
+store package** would also fail to start -- and this condition would let it through
+to exactly the outcome the whole feature exists to prevent.
+
+The "market-signed package on API 26" cell has never been tested and cannot be: a
+release-signed `.app` is not sideloadable.
+
+Three options were put to the user, with the asymmetry spelled out:
+
+| | condition | consequence if wrong |
+|---|---|---|
+| narrow | `phone && api < 26` | a phone that installs and cannot start |
+| **wide** | `phone` | every phone runs interpreted, including ones that did not need to |
+| middle | `phone && api < 28` | neither, and no evidence for 28 either |
+
+⇒ **The user chose NARROW, knowingly** (2026-09-22), having been told the reasoning
+above. The asymmetry argument -- "slow is much cheaper than cannot-start" -- was
+made and declined. Recorded here because a decision to accept a risk is only
+useful if the next reader can see that it was one, and what it was.
+
+#### Still unanswered: what "拆分包体" means here
+
+Huawei's requirement is that an app which ships to phones must **split its package**
+so the ACL permission is not used by the phone build. What that means in
+HarmonyOS terms -- separate HAPs, per-device builds, separate listings -- has
+**not been determined**, and the permission is not an optional feature that can be
+lifted into a module: it is what the launcher needs to start the JVM at all.
+
+A question has been drafted for Huawei's ACL channel. Until it is answered, the
+split is a requirement with no implementation, and that is a larger unknown than
+anything left in the app.
+
+
 ## 3. Release page copy
 
 ### Title
