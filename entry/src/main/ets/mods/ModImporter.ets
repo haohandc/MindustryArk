@@ -615,8 +615,12 @@ async function createModFolder(ctx: common.UIAbilityContext): Promise<ModFolder>
             hilog.info(DOMAIN, TAG, 'mods: created %{public}s', dir);
           } catch (e) {
             const err = e as BusinessError;
-            hilog.warn(DOMAIN, TAG, 'mods: cannot create %{public}s (%{public}s, code=%{public}d)',
-                       dir, err.message, err.code);
+            /* INFO, not warn. On a device where the permission is denied -- which
+             * is every device this project owns -- this is the expected outcome,
+             * not a problem: the picker route below needs no permission and does
+             * the work. A warning here would cry wolf on every launch. */
+            hilog.info(DOMAIN, TAG, 'mods: cannot create %{public}s (%{public}s)',
+                       dir, err.message);
           }
         }
         const folder: ModFolder = { path: dir, uri: '' };

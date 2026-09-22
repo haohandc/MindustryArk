@@ -152,10 +152,14 @@
 | --- | --- | --- |
 | `Environment.getUserDownloadDir()` | 返回 `/storage/Users/currentUser/Download` | **抛「The device doesn't support this api」** |
 | 往那里 `mkdir` 我们的子目录 | **EPERM 被拒**（`13900001`） | 走不到 —— 上一行就抛了 |
-| `DocumentPickerMode.DOWNLOAD` | **失败**（`13900042`） | ✅ **成功**，建出 `Download/<包名>/` |
+| `DocumentPickerMode.DOWNLOAD` | ✅ **成功**（修好窗口问题后，见下） | ✅ **成功** |
+| **实际生效的是哪条** | **选择器模式** | **选择器模式** |
 
-⇒ **两条路是互补的**：平板能拿到路径但**写不进去**，手机拿不到路径但**选择器模式能建**。
-应用现在**两条都试**，哪条通用哪条。
+⚠️ **并且它不需要任何权限** —— 平板上的权限**是被用户拒绝的**，选择器模式照样建出了文件夹。
+
+⇒ ⭐ **`READ_WRITE_DOWNLOAD_DIRECTORY` 对本应用【完全没有用】**：
+路线 A **从来没有成功过一次**（手机上是 API 不支持，平板上是权限被拒 + `mkdir` EPERM）。
+它**仍然声明在包里** ⇒ **上架审核风险**，应当撤掉。
 
 ⚠️ **平板上那个 EPERM 的原因，用户确认了：权限是【他手动拒绝】的。**
 ⇒ 不是平台故障，也不是解不开的矛盾。但**留下一个有用的发现**：
@@ -165,19 +169,11 @@
 （这和另一处记录呼应：权限请求返回的三个字段互相矛盾 —— 见上文。
 **鸿蒙的权限状态字段在本项目上两次都不可靠。**）
 
-### ⚠️ 所以：文件夹**每次启动都会检查**，但不保证建得出来
+### ✅ 所以：文件夹**每次启动都会检查**，缺失就重建
 
 行为是「**每次启动检查在不在，不在就重建**」（这正是其他应用的做法，也是用户要求的）。
-⇒ 在**手机**上有效（重建走 DOWNLOAD 模式）。
-⇒ 在**平板上**，应用**两条路都试过并都失败**，于是**建不出来**，日志会明说：
-
-```text
-mods: cannot create .../Download/com.haohandc.mindustryark (Operation not permitted, code=13900001)
-mods: DOWNLOAD mode failed: Unknown error (code=13900042)
-mods: could not create the mod folder on this device -- the picker in the ball menu still works
-```
-
-⇒ **平板上的入口是悬浮球菜单的「导入模组」**（系统文件选择器，不需要权限，一直可用）。
+✅ **两台设备（平板 + 手机）实测都能建出来**，且**都不需要任何权限**。
+⇒ 玩家把文件丢进去、重启应用即可。
 
 ### ⭐ `13900042` 是「**现在没有可用的 UI 窗口**」
 
@@ -409,11 +405,16 @@ review risk** worth removing.
 | --- | --- | --- |
 | `Environment.getUserDownloadDir()` | returns `/storage/Users/currentUser/Download` | **throws "The device doesn't support this api"** |
 | `mkdir` our subdirectory there | **refused, EPERM** (`13900001`) | never reached -- the line above throws |
-| `DocumentPickerMode.DOWNLOAD` | **fails** (`13900042`) | ✅ **works**, creates `Download/<bundle>/` |
+| `DocumentPickerMode.DOWNLOAD` | ✅ **works** (once the window problem was fixed) | ✅ **works** |
+| **which one actually does the work** | **the picker mode** | **the picker mode** |
 
-⇒ **The two routes are complementary**: the tablet can be told where the directory
-is but **cannot write into it**, and the phone cannot be told but its **picker mode
-can create the folder**. The app now tries **both** and uses whichever works.
+⚠️ **And it needs no permission at all** -- the tablet's permission is **denied by
+the user**, and the picker mode still created the folder.
+
+⇒ ⭐ **`READ_WRITE_DOWNLOAD_DIRECTORY` has NO use in this app**: route A has never
+succeeded once (on the phone the API does not exist, on the tablet the permission is
+denied and `mkdir` returns EPERM). It is **still declared** ⇒ a **store review
+risk**, and should be removed.
 
 ⚠️ **That EPERM on the tablet is now explained -- the user DENIED the permission
 by hand.** So it is not a platform fault and not a contradiction. But it leaves a
@@ -425,22 +426,12 @@ permission was granted.** This is the second time on this project that a Huawei
 permission-status field has disagreed with reality -- see the three contradictory
 fields on the request result above. **Do not trust them; test the operation.**
 
-### ⚠️ So: the folder is CHECKED every launch, but is not guaranteed to be creatable
+### ✅ So: the folder is CHECKED every launch, and recreated if missing
 
-The behaviour is "check on every launch whether it is there, and recreate it if
-not" -- which is what other apps do, and what the user asked for.
-⇒ On the **phone** this works (recreation goes through DOWNLOAD mode).
-⇒ On the **tablet** the app tries both routes and both fail, so no folder is made,
-and the log says so plainly:
-
-```text
-mods: cannot create .../Download/com.haohandc.mindustryark (Operation not permitted, code=13900001)
-mods: DOWNLOAD mode failed: Unknown error (code=13900042)
-mods: could not create the mod folder on this device -- the picker in the ball menu still works
-```
-
-⇒ **On the tablet the way in is "导入模组" in the floating ball's menu** -- the
-system picker, which needs no permission and has always worked.
+The behaviour is "check on every launch whether it is there, and recreate it if not"
+-- what other apps do, and what the user asked for. ✅ **Both devices (tablet and
+phone) create it**, and **neither needs any permission**. The player drops files in
+and restarts the app.
 
 ### ⭐ `13900042` is "there is no usable UI window right now"
 
