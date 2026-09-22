@@ -21,9 +21,15 @@ const TAG = 'MindustryLauncher';
  * takes the JIT out of the picture, so nothing needs that memory.
  * See RELEASE-MAINTENANCE.md 2.11 and 2.12.
  *
- * THE COST IS LARGE. Everything runs interpreted, and this is a game; expect a
- * big slowdown. The player is told once, after the game reports that it loaded,
- * which is the first moment there is a picture to talk over.
+ * THE COST IS LARGE, AND IT IS MEASURED. Everything runs interpreted and this is
+ * a game: load time goes from ~5-6 s to ~21 s on the tablet, and on the user's own
+ * verdict "low load is fine, high load halves the frame rate and drops frames".
+ * They judged it acceptable; that judgement is the reason phone support survives
+ * at all, and it is not one a benchmark could have made.
+ *
+ * The player is told once, BEFORE the game starts -- the performance is obvious
+ * from the first seconds, so a notice afterwards only explains a wait they have
+ * already sat through.
  */
 const JVM_OPTIONS_FILE_NAME = 'jvm.options';
 const COMPAT_NOTICE_FILE_NAME = 'compat_notice_shown';
@@ -1282,6 +1288,7 @@ struct Index {
      */
     if (want && !this.compatNoticeAlreadyShown()) {
       this.compatNotice = true;
+      hilog.info(DOMAIN, TAG, 'compat notice shown (before the game starts)');
     }
   }
 
