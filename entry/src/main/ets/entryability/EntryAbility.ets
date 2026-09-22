@@ -4,8 +4,8 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { window } from '@kit.ArkUI';
 import { i18n } from '@kit.LocalizationKit';
 import { inputMethod } from '@kit.IMEKit';
-import { fileIo as fs, fileUri, Environment } from '@kit.CoreFileKit';
-import { ensureModFolder, scanModFolder } from '../mods/ModImporter';
+import { fileIo as fs, Environment } from '@kit.CoreFileKit';
+import { ensureModFolder, scanModFolder, modFolderPath } from '../mods/ModImporter';
 import pointer from "@ohos.multimodalInput.pointer"
 import sdl from 'libSDL3.so';
 
@@ -113,12 +113,9 @@ function writeUserDirs(filesDir: string): void {
    * itself is held by the process, so the path is enough for our own code.
    */
   try {
-    const uriPath = filesDir + '/mod_folder_uri';
-    if (fs.accessSync(uriPath)) {
-      const stored: string = fs.readTextSync(uriPath).trim();
-      if (stored.length > 0) {
-        lines.push('mods=' + new fileUri.FileUri(stored).path);
-      }
+    const where: string = modFolderPath(filesDir + '/mod_folder');
+    if (where !== '') {
+      lines.push('mods=' + where);
     }
   } catch (e) {
     lines.push('mods=<threw>');
@@ -256,8 +253,8 @@ export default class EntryAbility extends UIAbility {
      * the picker before JVM options are written, which delays the start for no
      * gain.
      */
-    ensureModFolder(this.context, this.context.filesDir + '/mod_folder_uri')
-      .then(() => scanModFolder(this.context.filesDir + '/mod_folder_uri'))
+    ensureModFolder(this.context, this.context.filesDir + '/mod_folder')
+      .then(() => scanModFolder(this.context.filesDir + '/mod_folder'))
       .catch((e: BusinessError) => {
         hilog.warn(DOMAIN, 'SDL/STARTUP',
                    'mod folder setup failed: %{public}s', e.message);

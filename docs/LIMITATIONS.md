@@ -145,6 +145,36 @@
 ⚠️ **顺带**：`READ_WRITE_DOWNLOAD_DIRECTORY` 现在**没有任何用途**了（机器上那条路用不到它），
 但**仍然声明在包里** —— 这是**上架审核的风险**，考虑撤掉。
 
+### ⭐⭐ 逐设备的精确实测（2026-09-22，两台机器都测了）
+
+| | 平板 MatePad | 手机 M80P |
+| --- | --- | --- |
+| `Environment.getUserDownloadDir()` | 返回 `/storage/Users/currentUser/Download` | **抛「The device doesn't support this api」** |
+| 往那里 `mkdir` 我们的子目录 | **EPERM 被拒**（`13900001`） | 走不到 —— 上一行就抛了 |
+| `DocumentPickerMode.DOWNLOAD` | **失败**（`13900042`） | ✅ **成功**，建出 `Download/<包名>/` |
+
+⇒ **两条路是互补的**：平板能拿到路径但**写不进去**，手机拿不到路径但**选择器模式能建**。
+应用现在**两条都试**，哪条通用哪条。
+
+⚠️ **一个解不开的矛盾，如实记下**：平板的 `READ_WRITE_DOWNLOAD_DIRECTORY` 在系统里
+**显示为已授予**（`reqPermissionStates [0, 0]`），但实际 `mkdir` 仍被 `EPERM` 拒。
+**权限状态与实际文件系统行为不一致**，原因不明。**没有下结论，也没有绕开 ——
+只是把两个观测值都留在这里。**
+
+### ⚠️ 所以：文件夹**每次启动都会检查**，但不保证建得出来
+
+行为是「**每次启动检查在不在，不在就重建**」（这正是其他应用的做法，也是用户要求的）。
+⇒ 在**手机**上有效（重建走 DOWNLOAD 模式）。
+⇒ 在**平板上**，应用**两条路都试过并都失败**，于是**建不出来**，日志会明说：
+
+```text
+mods: cannot create .../Download/com.haohandc.mindustryark (Operation not permitted, code=13900001)
+mods: DOWNLOAD mode failed: Unknown error (code=13900042)
+mods: could not create the mod folder on this device -- the picker in the ball menu still works
+```
+
+⇒ **平板上的入口是悬浮球菜单的「导入模组」**（系统文件选择器，不需要权限，一直可用）。
+
 ## ⚠️ 模组：导入后要重启，文件在沙箱内
 
 **模组文件放在**（应用沙箱内）：
@@ -339,6 +369,42 @@ the device.
 ⚠️ **Also**: `READ_WRITE_DOWNLOAD_DIRECTORY` now has **no use at all** (the working
 route does not need it) yet is **still declared** in the package -- a **store
 review risk** worth removing.
+
+### ⭐⭐ Precise, per device (2026-09-22, both machines measured)
+
+| | Tablet (MatePad) | Phone (M80P) |
+| --- | --- | --- |
+| `Environment.getUserDownloadDir()` | returns `/storage/Users/currentUser/Download` | **throws "The device doesn't support this api"** |
+| `mkdir` our subdirectory there | **refused, EPERM** (`13900001`) | never reached -- the line above throws |
+| `DocumentPickerMode.DOWNLOAD` | **fails** (`13900042`) | ✅ **works**, creates `Download/<bundle>/` |
+
+⇒ **The two routes are complementary**: the tablet can be told where the directory
+is but **cannot write into it**, and the phone cannot be told but its **picker mode
+can create the folder**. The app now tries **both** and uses whichever works.
+
+⚠️ **One contradiction left standing, recorded rather than explained**: on the
+tablet `READ_WRITE_DOWNLOAD_DIRECTORY` **reads as granted** in the system's own
+record (`reqPermissionStates [0, 0]`) and the `mkdir` is still refused with
+`EPERM`. **The permission state and the filesystem's behaviour disagree** and the
+reason is unknown. No conclusion is drawn and nothing is worked around -- both
+observations are simply kept here.
+
+### ⚠️ So: the folder is CHECKED every launch, but is not guaranteed to be creatable
+
+The behaviour is "check on every launch whether it is there, and recreate it if
+not" -- which is what other apps do, and what the user asked for.
+⇒ On the **phone** this works (recreation goes through DOWNLOAD mode).
+⇒ On the **tablet** the app tries both routes and both fail, so no folder is made,
+and the log says so plainly:
+
+```text
+mods: cannot create .../Download/com.haohandc.mindustryark (Operation not permitted, code=13900001)
+mods: DOWNLOAD mode failed: Unknown error (code=13900042)
+mods: could not create the mod folder on this device -- the picker in the ball menu still works
+```
+
+⇒ **On the tablet the way in is "导入模组" in the floating ball's menu** -- the
+system picker, which needs no permission and has always worked.
 
 ## ⚠️ Mods: a restart applies them, and the files live in the sandbox
 

@@ -39,7 +39,7 @@
  *   A. the HarmonyOS document picker, from the floating ball's menu. No
  *      permission needed: the picker is a system UI and hands back a URI this
  *      app is allowed to read.
- *   B. the folder the app creates in Downloads (see chooseModFolder below),
+ *   B. the folder the app creates in Downloads (see createModFolder below),
  *      scanned at startup. Also no permission -- that is the whole point of the
  *      DOWNLOAD picker mode. A is the discoverable one; B is the one that lets a
  *      player drop a batch of files in with any file manager.
@@ -67,10 +67,10 @@
  *   starts again, and the caller has to say so rather than let the player think
  *   the button did nothing.
  */
-import { common } from '@kit.AbilityKit';
+import { bundleManager, common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { fileIo as fs, picker, fileUri } from '@kit.CoreFileKit';
+import { fileIo as fs, picker, fileUri, Environment } from '@kit.CoreFileKit';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
@@ -94,7 +94,7 @@ export const MODS_DIR: string =
  * thing that happens to name the same directory -- and would not carry the
  * grant.
  */
-const MOD_FOLDER_URI_FILE: string = 'mod_folder_uri';
+const MOD_FOLDER_FILE: string = 'mod_folder';
 
 /* What the game accepts. Mods.load() keeps files whose extension is "jar" or
  * "zip", or directories containing one of mod.json / mod.hjson / plugin.json /
@@ -301,42 +301,28 @@ export function lastDownloadScan(): ModImportReport {
   return lastScan;
 }
 
-export function scanModFolder(uriFilePath: string): ModImportReport {
-  const report: ModImportReport = scanModFolderInner(uriFilePath);
+export function scanModFolder(statePath: string): ModImportReport {
+  const report: ModImportReport = scanModFolderInner(statePath);
   lastScan = report;
   return report;
 }
 
-function scanModFolderInner(uriFilePath: string): ModImportReport {
+function scanModFolderInner(statePath: string): ModImportReport {
   const report: ModImportReport = { landed: [], error: '', cancelled: false };
 
-  const uri: string = readModFolderUri(uriFilePath);
-  if (uri === '') {
-    hilog.info(DOMAIN, TAG, 'mods: no folder chosen yet -- nothing to scan');
+  const folder: ModFolder = readModFolder(statePath);
+  if (folder.path === '' && folder.uri === '') {
+    hilog.info(DOMAIN, TAG, 'mods: no folder yet -- nothing to scan');
     return report;
   }
 
-  let dir: string = '';
-  try {
-    dir = new fileUri.FileUri(uri).path;
-  } catch (e) {
-    const err = e as BusinessError;
-    hilog.error(DOMAIN, TAG, 'mods: stored folder URI is unusable (%{public}s)',
-                err.message);
-    return report;
-  }
-
-  let names: Array<string> = [];
-  try {
-    names = fs.listFileSync(dir);
-  } catch (e) {
-    /* Not an error worth showing: this is the normal state on a device where
-     * the permission was refused, and on every device until the folder is made.
-     * Logged at info so it is still findable when someone asks why B did
-     * nothing. */
-    const err = e as BusinessError;
-    hilog.info(DOMAIN, TAG, 'mods: %{public}s not readable (%{public}s) -- skipping',
-               dir, err.message);
+  /* Listed through listModFolder, which tries the URI and then the path. The
+   * scan used to go straight at the path, which is only correct for one of the
+   * two ways the folder can have been made. */
+  const names: Array<string> = listModFolder(folder);
+  const dir: string = folder.path;
+  if (names.length === 0 && !modFolderUsable(folder)) {
+    hilog.info(DOMAIN, TAG, 'mods: %{public}s is not readable -- nothing to scan', dir);
     return report;
   }
 
@@ -429,118 +415,280 @@ function scanModFolderInner(uriFilePath: string): ModImportReport {
  */
 
 /** Read the stored folder URI, or '' if the player has not chosen one yet. */
-function readModFolderUri(uriFilePath: string): string {
+/**
+ * Where the mod folder is, as a path plus an optional URI.
+ *
+ * FIRST LINE IS ALWAYS THE PATH, so the user_dirs.txt bridge can take the first
+ * line without knowing about the rest.
+ *
+ * The URI is kept when there is one because the permission travels with it: on
+ * the phone the folder is only reachable through the grant that the picker
+ * handed back, and a path alone would name the same directory without carrying
+ * the right to read it. On the tablet there is no URI and the path is enough --
+ * that route goes through the platform's own Download directory.
+ */
+interface ModFolder {
+  path: string;
+  uri: string;
+}
+
+function readModFolder(statePath: string): ModFolder {
+  const none: ModFolder = { path: '', uri: '' };
   try {
-    if (!fs.accessSync(uriFilePath)) {
-      return '';
+    if (!fs.accessSync(statePath)) {
+      return none;
     }
-    const text: string = fs.readTextSync(uriFilePath).trim();
-    return text;
+    const lines: Array<string> = fs.readTextSync(statePath).split('\n');
+    const path: string = lines.length > 0 ? lines[0].trim() : '';
+    const uri: string = lines.length > 1 ? lines[1].trim() : '';
+    if (path === '') {
+      return none;
+    }
+    return { path: path, uri: uri };
   } catch (e) {
     const err = e as BusinessError;
-    hilog.warn(DOMAIN, TAG, 'mods: reading the stored folder URI failed: %{public}s',
+    hilog.warn(DOMAIN, TAG, 'mods: reading the stored folder failed: %{public}s',
                err.message);
-    return '';
+    return none;
   }
 }
 
-function writeModFolderUri(uriFilePath: string, uri: string): void {
-  const f: fs.File = fs.openSync(uriFilePath,
+/**
+ * The folder's path, or '' if there is none.
+ *
+ * Exported because the user_dirs.txt bridge needs exactly this and should not
+ * have to know the file's format. It used to read the URI and resolve it with
+ * fileUri, which stops being right the moment the path is stored directly -- the
+ * kind of duplicate knowledge that drifts.
+ */
+export function modFolderPath(statePath: string): string {
+  return readModFolder(statePath).path;
+}
+
+function writeModFolder(statePath: string, folder: ModFolder): void {
+  const text: string = folder.uri === ''
+    ? folder.path + '\n'
+    : folder.path + '\n' + folder.uri + '\n';
+  const f: fs.File = fs.openSync(statePath,
     fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
   try {
-    fs.writeSync(f.fd, uri);
+    fs.writeSync(f.fd, text);
   } finally {
     fs.closeSync(f);
   }
 }
 
 /**
- * Create (or re-find) the app's own folder in Downloads, and remember it.
+ * Can this folder actually be listed right now?
  *
- * pickerMode = DOWNLOAD makes save() skip its UI entirely -- there is no dialog
- * to answer, the system creates Download/<bundle name>/ and hands back the
- * directory URI. That is why this can be offered as a menu item rather than a
- * first-run wizard.
+ * The URI is tried first and the path second, because they are not
+ * interchangeable: a folder handed over by the picker is reachable through its
+ * grant, and a folder we made ourselves under the platform's Download directory
+ * is reachable by path. Trying both means one check covers both routes.
  *
- * NOTE: with DOWNLOAD mode the other DocumentSaveOptions fields are ignored --
- * newFileNames and fileSuffixChoices have no effect (stated in the guide, and
- * repeated in every write-up of the mode). Setting them here would read as if
- * they did something.
+ * Listing, not `access`: this has to answer "can I read it", and existence is
+ * not that. A folder that exists and cannot be listed is one this app cannot use.
  */
-export async function chooseModFolder(ctx: common.UIAbilityContext,
-                                    uriFilePath: string): Promise<ModImportReport> {
-  const report: ModImportReport = { landed: [], error: '', cancelled: false };
-
-  const options: picker.DocumentSaveOptions = new picker.DocumentSaveOptions();
-  options.pickerMode = picker.DocumentPickerMode.DOWNLOAD;
-
-  let uris: Array<string> = [];
-  try {
-    const view: picker.DocumentViewPicker = new picker.DocumentViewPicker(ctx);
-    uris = await view.save(options);
-  } catch (e) {
-    const err = e as BusinessError;
-    hilog.error(DOMAIN, TAG, 'mods: DOWNLOAD-mode save failed: %{public}s (code=%{public}d)',
-                err.message, err.code);
-    report.error = '无法创建模组文件夹';
-    return report;
+function listModFolder(folder: ModFolder): Array<string> {
+  const targets: Array<string> = [];
+  if (folder.uri !== '') {
+    targets.push(folder.uri);
   }
-
-  if (uris === undefined || uris.length === 0 || uris[0] === '') {
-    report.cancelled = true;
-    return report;
+  if (folder.path !== '') {
+    targets.push(folder.path);
   }
-
-  let where: string = '';
-  try {
-    where = new fileUri.FileUri(uris[0]).path;
-  } catch (e) {
-    where = '(unresolved)';
+  for (const target of targets) {
+    try {
+      return fs.listFileSync(target);
+    } catch (e) {
+      const err = e as BusinessError;
+      hilog.info(DOMAIN, TAG, 'mods: %{public}s not listable (%{public}s)',
+                 target, err.message);
+    }
   }
-  hilog.info(DOMAIN, TAG, 'mods: mod folder is %{public}s', where);
-
-  try {
-    writeModFolderUri(uriFilePath, uris[0]);
-  } catch (e) {
-    const err = e as BusinessError;
-    hilog.error(DOMAIN, TAG, 'mods: storing the folder URI failed: %{public}s', err.message);
-    report.error = '无法保存模组文件夹位置';
-    return report;
-  }
-
-  const scanned: ModImportReport = scanModFolder(uriFilePath);
-  return scanned;
+  return [];
 }
 
+/** True when the folder is there and this app can read it. */
+function modFolderUsable(folder: ModFolder): boolean {
+  if (folder.path === '' && folder.uri === '') {
+    return false;
+  }
+  const targets: Array<string> = [];
+  if (folder.uri !== '') {
+    targets.push(folder.uri);
+  }
+  if (folder.path !== '') {
+    targets.push(folder.path);
+  }
+  for (const target of targets) {
+    try {
+      fs.listFileSync(target);
+      return true;
+    } catch (e) {
+      /* try the next target */
+    }
+  }
+  return false;
+}
 
 /**
- * Make sure the app's folder in Downloads exists, creating it if this is a
- * fresh install. Safe to call on every launch.
+ * Create the app's folder in Downloads, by whichever of the two routes this
+ * device supports.
  *
- * WHY THIS IS NOT A BUTTON ANY MORE
- *   It was one -- a "模组文件夹" row in the ball's menu -- and the user is right
- *   that it should not be: creating a folder is not something to make a player
- *   ask for. It is also needed EARLIER than any menu could provide it, because
- *   the launcher points the game's file browser at that folder when the JVM
- *   starts, and the folder has to exist by then.
+ * The two are complementary -- measured, and it is why neither alone is enough:
  *
- * So it runs at startup, before the browser is told where to open. DOWNLOAD mode
- * shows no UI, so there is nothing to answer and nothing to wait for.
+ *   platform Download directory   getUserDownloadDir() works on the tablet and
+ *                                 throws on the phone
+ *   DOWNLOAD-mode picker          works on the phone, and fails on the tablet
+ *                                 with 13900042
  *
- * If a URI is already stored, the folder was created on an earlier launch --
- * this returns without touching the picker. If the stored URI has gone stale the
- * scan is what notices, and this will not silently replace it with a new one:
- * re-creating a folder the player may have filled is a worse failure than
- * reporting nothing.
+ * Route A goes through the platform's own Download directory, which the tablet
+ * reports and the phone does not. It needs READ_WRITE_DOWNLOAD_DIRECTORY for the
+ * mkdir, and on the tablet that grant is already held. Note the API only returns
+ * the PATH -- it checks no permission at all (the documentation says so), so a
+ * mkdir that fails with EPERM is the real test, not the call succeeding.
+ *
+ * Route B is the picker in DOWNLOAD mode: no permission, no UI, and it creates
+ * Download/<bundle name>/ itself. It returns a URI, and the grant travels with
+ * that URI, which is why the URI is stored alongside the path.
+ *
+ * Returns whether a usable folder exists afterwards.
+ */
+async function createModFolder(ctx: common.UIAbilityContext): Promise<ModFolder> {
+  const none: ModFolder = { path: '', uri: '' };
+
+  /*
+   * A. the platform's Download directory + our own subdirectory.
+   *
+   * A no-op if it is already there, which is the normal case from the second
+   * launch on -- the check is what makes "deleted it by hand" recoverable.
+   */
+  try {
+    const base: string = Environment.getUserDownloadDir();
+    /*
+     * Reported separately from the mkdir below. "the platform Download directory
+     * is unusable" covers three different failures -- the API being unsupported,
+     * the directory not being reachable, and the write being refused -- and they
+     * mean different things. Measured on the tablet: the API ANSWERS (it returns
+     * /storage/Users/currentUser/Download) and the write is refused with EPERM,
+     * which is not the same problem as the phone's "no such api".
+     */
+    if (base !== '') {
+      let name: string = '';
+      try {
+        const info: bundleManager.BundleInfo = await bundleManager.getBundleInfoForSelf(
+          bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT);
+        name = info.name;
+      } catch (e) {
+        const err = e as BusinessError;
+        hilog.warn(DOMAIN, TAG, 'mods: no bundle name (%{public}s)', err.message);
+      }
+      if (name !== '') {
+        const dir: string = base + '/' + name;
+        let present: boolean = false;
+        try {
+          present = fs.accessSync(dir);
+        } catch (e) {
+          const err = e as BusinessError;
+          hilog.info(DOMAIN, TAG, 'mods: %{public}s not statable (%{public}s)',
+                     dir, err.message);
+        }
+        if (!present) {
+          try {
+            fs.mkdirSync(dir, true);
+            hilog.info(DOMAIN, TAG, 'mods: created %{public}s', dir);
+          } catch (e) {
+            const err = e as BusinessError;
+            hilog.warn(DOMAIN, TAG, 'mods: cannot create %{public}s (%{public}s, code=%{public}d)',
+                       dir, err.message, err.code);
+          }
+        }
+        const folder: ModFolder = { path: dir, uri: '' };
+        if (modFolderUsable(folder)) {
+          return folder;
+        }
+        hilog.info(DOMAIN, TAG, 'mods: %{public}s exists but is not listable', dir);
+      }
+    }
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.info(DOMAIN, TAG, 'mods: platform Download directory unusable (%{public}s)',
+               err.message);
+  }
+
+  /* B. the picker in DOWNLOAD mode. */
+  const options: picker.DocumentSaveOptions = new picker.DocumentSaveOptions();
+  options.pickerMode = picker.DocumentPickerMode.DOWNLOAD;
+  try {
+    const view: picker.DocumentViewPicker = new picker.DocumentViewPicker(ctx);
+    const uris: Array<string> = await view.save(options);
+    if (uris !== undefined && uris.length > 0 && uris[0] !== '') {
+      const uri: string = uris[0];
+      let path: string = '';
+      try {
+        path = new fileUri.FileUri(uri).path;
+      } catch (e) {
+        hilog.warn(DOMAIN, TAG, 'mods: could not resolve %{public}s to a path', uri);
+      }
+      const folder: ModFolder = { path: path, uri: uri };
+      if (modFolderUsable(folder)) {
+        hilog.info(DOMAIN, TAG, 'mods: DOWNLOAD mode gave %{public}s', path);
+        return folder;
+      }
+      hilog.warn(DOMAIN, TAG, 'mods: DOWNLOAD mode returned %{public}s, not listable', uri);
+    } else {
+      hilog.info(DOMAIN, TAG, 'mods: DOWNLOAD mode returned nothing');
+    }
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.error(DOMAIN, TAG, 'mods: DOWNLOAD mode failed: %{public}s (code=%{public}d)',
+                err.message, err.code);
+  }
+
+  return none;
+}
+
+/**
+ * Make sure the folder exists, every launch.
+ *
+ * ⚠️ THIS CHECKS, IT DOES NOT MERELY REMEMBER. An earlier revision stored the
+ * folder's location once and then trusted it forever, so a folder the player
+ * deleted -- or one that was never created because that device's route failed --
+ * stayed gone, and the feature quietly did nothing. Reported from the device:
+ * "it should check every launch and recreate it if it is missing, like other
+ * apps do". That is right, and it is also the only behaviour that survives an
+ * uninstall, which takes the folder and the grant with it.
+ *
+ * Doing nothing when it is fine keeps the cost at one listing per launch.
  */
 export async function ensureModFolder(ctx: common.UIAbilityContext,
-                                    uriFilePath: string): Promise<void> {
-  if (readModFolderUri(uriFilePath) !== '') {
+                                    statePath: string): Promise<void> {
+  const existing: ModFolder = readModFolder(statePath);
+  if (modFolderUsable(existing)) {
     return;
   }
-  const report: ModImportReport = await chooseModFolder(ctx, uriFilePath);
-  if (report.error !== '') {
-    hilog.warn(DOMAIN, TAG, 'mods: could not create the mod folder: %{public}s',
-               report.error);
+  if (existing.path !== '' || existing.uri !== '') {
+    hilog.info(DOMAIN, TAG, 'mods: %{public}s is gone -- recreating it', existing.path);
+  }
+
+  const folder: ModFolder = await createModFolder(ctx);
+  if (folder.path === '' && folder.uri === '') {
+    hilog.warn(DOMAIN, TAG,
+               'mods: could not create the mod folder on this device -- '
+               + 'the picker in the ball menu still works');
+    return;
+  }
+  try {
+    writeModFolder(statePath, folder);
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.error(DOMAIN, TAG, 'mods: storing the folder failed: %{public}s', err.message);
+  }
+
+  const scanned: ModImportReport = scanModFolder(statePath);
+  if (scanned.landed.length > 0) {
+    hilog.info(DOMAIN, TAG, 'mods: %{public}d file(s) taken from the new folder',
+               scanned.landed.length);
   }
 }
