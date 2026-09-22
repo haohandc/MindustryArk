@@ -1782,6 +1782,55 @@ Five rules, each of them a rejection of a way this file was written before:
 same tables, row for row. ⚠️ They diverged once already (the English changelog was missing an
 entry the Chinese had, 2.13d) and that was found only by accident.
 
+#### ⭐ THE ENGLISH IS A SEPARATE FILE, LINKED FROM THE TOP OF THE BODY
+
+**Set by the user, 2026-09-23**: *「英文部分的单独分离到一个文件里面，不在正文里面。链接放在正文最上方，
+让外国用户自己看。」*
+
+| | |
+|---|---|
+| **The GitHub release body** | Chinese only — it is the page the Chinese-speaking audience reads |
+| **The English** | `release-notes/<version>.en.md` **in the repository**, linked from the body's first line |
+
+The link goes first, before anything else, so an English reader finds it without scrolling:
+
+```markdown
+> **English: [1.0.0.1 (RC 1) release notes](https://github.com/haohandc/MindustryArk/blob/master/release-notes/1.0.0.1.en.md)**
+```
+
+⚠️ **WHY IT CANNOT LIVE IN `dist/` LIKE THE BODY DOES**: `dist/` is gitignored, so a link to it
+would 404 for every reader. The English copy has to be committed.
+
+⚠️⚠️ **ORDERING, AND THIS IS A REAL FOOTGUN**: the link only works once that file is **pushed**.
+So a release whose body links to `release-notes/<version>.en.md` must be published **after** the
+commit is on `master`. Publishing first gives every English reader a 404, and nothing about the
+release page will look wrong while it happens.
+
+⭐ **One copy of the English, not two.** Do not also keep an English half inside
+`dist/RELEASE-BODY-*.md`: two copies of the same prose drift, and this file already records one
+bilingual divergence that was found only by accident (2.13d). The repo file is the source; the
+body is Chinese only.
+
+**Generating the split** (do not retype the English by hand — it is a move, not a rewrite):
+
+```bash
+python - <<'PY'
+import io, os
+body = "dist/RELEASE-BODY-v1.0.0.1.md"          # adjust the version
+s = io.open(body, encoding="utf-8").read()
+zh, en = s.split("# English", 1)
+en = en.lstrip("\n")
+os.makedirs("release-notes", exist_ok=True)
+io.open("release-notes/1.0.0.1.en.md", "w", encoding="utf-8", newline="\n").write(
+    "# Mindustry Ark 1.0.0.1 (RC 1) — release notes\n\n" + en.rstrip() + "\n")
+link = ("> **English: [1.0.0.1 (RC 1) release notes]"
+        "(https://github.com/haohandc/MindustryArk/blob/master/release-notes/1.0.0.1.en.md)**\n\n")
+io.open(body, "w", encoding="utf-8", newline="\n").write(link + zh.rstrip() + "\n")
+PY
+```
+
+Then check the two still agree — same section count, same table rows per section:
+
 
 ⚠️ **The pointer line is not decoration.** The downloaded artifact is an *unsigned* HAP,
 which **will not install**. Dropping the install steps without saying where they are
