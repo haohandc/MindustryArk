@@ -867,6 +867,103 @@ B is verified end to end except for the one thing it can never verify here, whic
 is whether `-Xint` rescues an actual API 24 device.
 
 
+### 2.14 Why nobody had enabled networking, and what it cost
+
+#### The whole blocker was one commented-out line
+
+ArcNet (37 classes) and `mindustry/net` (45) have been in the jar since the
+first build. Pure Java, pure NIO, no native code, nothing platform-specific. The
+feature was not gated on work; it was gated on a permission that was never
+declared while the code that needs it ran and failed at every launch:
+
+```
+Failed to fetch community servers:
+  java.net.SocketException: Operation not permitted
+    at java.base/sun.nio.ch.Net.socket0(Native Method)
+```
+
+`Operation not permitted` at `socket0` is the kernel refusing `socket()` with
+EPERM, which is what a missing `INTERNET` grant looks like. The line sat
+commented out in `module.json5` with the other template permissions, and the log
+that said so was printed at every single launch.
+
+#### Why the game's own error was not enough to act on
+
+It said a socket could not be opened. It did not say whether a *selector* could.
+ArcNet is ALL NIO -- `Selector.open()`, `SocketChannel`, `DatagramChannel`, with
+no blocking-socket fallback anywhere -- so the two answers cost very different
+amounts of work: one is a configuration change, the other is 37 classes of
+native-bridge rewrite. Inferring the second from an error about the first is the
+kind of conclusion this project has already had to retract twice.
+
+So `probe_network()` in `launcher.c` asks directly, one syscall at a time, each
+with its own errno. After the permission was declared, on the HarmonyOS 7 tablet:
+
+```
+ --- network syscalls ---
+   socket(AF_INET, SOCK_STREAM) : OK
+   socket(AF_INET, SOCK_DGRAM)  : OK
+   epoll_create1(0)             : OK
+   eventfd(0, NONBLOCK|CLOEXEC) : OK
+   getaddrinfo(<literal ip>)    : OK
+   /etc/resolv.conf             : readable
+        nameserver 114.114.114.114
+        nameserver 8.8.8.8
+   getaddrinfo(github.com:443)  : OK
+   connect(github.com:443)      : OK
+ --- end network syscalls ---
+```
+
+`epoll_create1` is the one that mattered, and it works: `EPollSelectorImpl` has
+what it needs, so ArcNet runs here.
+
+#### The strongest evidence is not the probe
+
+The probe proves syscalls. What proves the *stack* is the game's own Java side,
+which went from EPERM to a complete HTTPS round trip:
+
+```
+mindustrytool.services.HttpException:
+  https://api.mindustry-tool.com/api/v4/chats/channels
+  HTTP 401: {"statusCode":401,...,"Fail to verify token","Unauthorized"}
+```
+
+That is DNS, TCP, TLS, an HTTP request, and a JSON response produced by a real
+server. The 401 is the server rejecting a token. Nothing in it is a refusal by
+the sandbox. The other messages that remain -- `ConnectException: Connection
+refused` for Mindustry's own server list, `SocketTimeoutException` from the mod --
+are ordinary network and service conditions, and they are what a broken sandbox
+does *not* look like.
+
+#### Two traps this avoided
+
+**Do not measure the sandbox from a shell.** `/etc/resolv.conf` reads fine from
+`hdc shell`, and `ping github.com` resolves and answers from there. A shell and
+an app are different security contexts. The probe reads `resolv.conf` from
+*inside the app's process*, and the app's own `getaddrinfo` is what it reports.
+This project already has this lesson on record for `stat` on bundle paths, where
+the tool said "Permission denied" for paths that demonstrably work.
+
+**Do not hardcode an address into a reachability test.** The first version
+connected to a literal IP sampled from the device minutes earlier. That works
+exactly once. The probe now resolves a name and connects to what comes back,
+which is also what Java does, in the same order.
+
+⚠️ **One thing deliberately not claimed.** The first launch after the permission
+was added *still* showed DNS failures -- `EAI_AGAIN` in the probe,
+`UnknownHostException` in Java -- and the next launch, after an unrelated
+reinstall, showed none. Which of those two changed it is not established, and one
+sample of each is not a measurement. It is recorded because "it worked the second
+time" is exactly the observation that later gets remembered as "it always
+worked".
+
+#### What is still unknown
+
+**An actual multiplayer match has never been tried.** The platform is no longer
+the open question; a match is. Everything above says the pieces are present and
+reachable, which is a different claim from "joining a server works".
+
+
 ## 3. Release page copy
 
 ### Title

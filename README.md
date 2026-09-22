@@ -34,6 +34,7 @@ saves can be imported from the Download folder.
 | Save import/export | Works, from/to the Download folder |
 | Mods | Work. Three ways in: the game's own "import mod" button, "导入模组" in the floating ball's menu, or drop the file in `Download/MindustryMods/`. The latter two **need an app restart** — see [limitations](docs/LIMITATIONS.md) |
 | Desktop/mobile mode switch | Switches, but needs an app restart — see the [FAQ](docs/FAQ.md) |
+| Networking / multiplayer | **The platform side works** — `socket`, `epoll`, DNS, TCP, TLS and HTTP all measured working here. ⚠️ **But no actual multiplayer match has been tried yet** |
 
 ## How to download and install
 
