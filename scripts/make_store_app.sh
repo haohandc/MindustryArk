@@ -97,7 +97,7 @@ echo "   gate: FORCE_COMPAT_MODE = false"
 # 1. PRECONDITION, BACKUP, INJECT
 # ---------------------------------------------------------------------------
 "${PY[@]}" - "$MODJSON" "$PERM" "$BACKUP" <<'PYEOF' || exit 1
-import hashlib, io, os, sys
+import hashlib, io, os, re, sys
 path, perm, backup = sys.argv[1], sys.argv[2], sys.argv[3]
 src = io.open(path, encoding="utf-8").read()
 
@@ -119,24 +119,31 @@ digest = hashlib.sha256(src.encode("utf-8")).hexdigest()
 io.open(backup + ".sha256", "w").write(digest)
 print("   original saved: sha256 %s" % digest[:16])
 
-# ⚠️ The anchor is found, then the WHOLE LINE is checked. module.json5 carries
-# commented-out permission entries (MICROPHONE, CAMERA, INTERNET, ...), and a
-# bare substring search would happily match one of those -- inserting the new
-# permission inside a comment, where it would have no effect and would look
-# like it had been added.
-ANCHOR = '{ "name": "ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY"'
-i = src.find(ANCHOR)
-if i < 0:
-    print("!! could not find the DOWNLOAD permission entry to insert before")
+# ⚠️ THE ANCHOR IS THE ARRAY, NOT A PERMISSION ENTRY.
+#
+# This used to insert before the READ_WRITE_DOWNLOAD_DIRECTORY entry, which was
+# convenient because that entry existed and was unmistakably not a comment. It
+# was also a trap: any revision that removed or renamed that permission would
+# take this script down with it, at the worst possible moment -- the ACL has just
+# been granted and the store build is what you are trying to produce.
+#
+# The array itself is structural. It does not move when permissions are added or
+# removed, and if it is gone then module.json5 is not a manifest any more and
+# failing loudly is the correct answer.
+m = re.search(r'"requestPermissions"\s*:\s*\[', src)
+if not m:
+    print("!! could not find the requestPermissions array in %s" % path)
+    print("!! this script injects INTO that array; without it there is nowhere to")
+    print("!! put the permission, and the manifest is not what this expects.")
     sys.exit(1)
-line_start = src.rfind("\n", 0, i) + 1
-line = src[line_start:src.find("\n", i)]
-if line.lstrip().startswith("//"):
-    print("!! the DOWNLOAD permission is COMMENTED OUT, so inserting before it")
-    print("!! would put the new one inside a comment:")
-    print("!!   %s" % line.strip()[:100])
-    sys.exit(1)
-indent = src[line_start:i]
+after = m.end()
+
+# Indentation taken from the array's first entry, so the injected text lines up
+# with whatever is already there. Falls back to the manifest's usual six spaces
+# for an empty array.
+nm = re.search(r'\n([ \t]+)\S', src[after:])
+indent = nm.group(1) if nm else '      '
+
 NEW = (indent + "// STORE BUILD ONLY -- injected by scripts/make_store_app.sh and removed\n"
        + indent + "// again on exit. See RELEASE-MAINTENANCE.md 2.11 for why this cannot be\n"
        + indent + "// declared unconditionally. Never commit a module.json5 containing this.\n"
@@ -144,11 +151,24 @@ NEW = (indent + "// STORE BUILD ONLY -- injected by scripts/make_store_app.sh an
                   # `always`, not `inuse`. The JVM's JIT needs this memory from
                   # process start to process exit, and which ability is in the
                   # foreground has nothing to do with it. It also has to MATCH the
-                  # AGC ACL form, where 调用时机 is set to always -- a package whose
-                  # usedScene disagrees with its own ACL application is a
+                  # AGC ACL form, where the timing is set to always -- a package
+                  # whose usedScene disagrees with its own ACL application is a
                   # disagreement not worth shipping.
                   '"usedScene": { "abilities": [ "EntryAbility" ], "when": "always" } },\n' % perm)
-io.open(path, "w", encoding="utf-8", newline="\n").write(src[:line_start] + NEW + src[line_start:])
+
+# Inserted as the FIRST entry rather than last: the closing bracket of an array
+# written as `[]` sits immediately after the `[`, and a first-entry insert works
+# the same way whether the array was empty or populated.
+out = src[:after] + "\n" + NEW + src[after:]
+
+# Cheap sanity on the write itself, before it reaches the disk. The build gate
+# below checks the ARTIFACT; this one catches a mangled edit while the backup is
+# still fresh.
+if ('"name": "%s"' % perm) not in out:
+    print("!! the injection produced a file without the permission in it")
+    sys.exit(1)
+
+io.open(path, "w", encoding="utf-8", newline="\n").write(out)
 print("   injected %s" % perm)
 PYEOF
 
@@ -172,7 +192,7 @@ grep -Ei "BUILD (SUCCESSFUL|FAILED)" /tmp/store_app.log | head -1
 echo
 echo "############ gate: the ARTIFACT declares the permission ############"
 "${PY[@]}" - "$APPPATH" "$PERM" <<'PYEOF'
-import hashlib, io, json, os, sys, zipfile
+import hashlib, io, json, os, re, sys, zipfile
 app, perm = sys.argv[1], sys.argv[2]
 if not os.path.exists(app):
     sys.exit("!! no .app at %s" % app)
@@ -184,10 +204,57 @@ h = zipfile.ZipFile(io.BytesIO(z.read(inner[0])))
 mod = json.loads(h.read("module.json").decode())["module"]
 names = [p["name"] for p in mod.get("requestPermissions", [])]
 print("   declared permissions: %s" % names)
-missing = [p for p in (perm, "ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY")
-           if p not in names]
+
+# ---------------------------------------------------------------------------
+# TWO CHECKS, AND THE SECOND ONE IS THE STRONGER
+#
+# 1. The injected permission is in the package. That is this script's job, and
+#    injecting a file and hoping it reached the package is the same mistake as
+#    trusting a build log -- the package is what gets uploaded.
+#
+# 2. Every permission module.json5 declares on an UNCOMMENTED line is in the
+#    package. This is the invariant that would have caught the trap this script
+#    used to have: it anchored the injection on the DOWNLOAD permission entry, so
+#    removing that permission would have broken the build. It also catches the
+#    general case -- a manifest edited in a way the package does not reflect --
+#    which nothing checked before.
+#
+# Check 1 used to also require READ_WRITE_DOWNLOAD_DIRECTORY. It no longer does,
+# because that permission has no use in this app any more (see the manifest) and
+# is going to be removed; requiring it would have made removing it break the
+# store build. Check 2 still covers it for as long as it is declared.
+# ---------------------------------------------------------------------------
+missing = [p for p in [perm] if p not in names]
 if missing:
-    sys.exit("!! THE PACKAGE IS MISSING: %s -- do not upload this" % missing)
+    sys.exit("!! THE PACKAGE IS MISSING THE INJECTED PERMISSION: %s -- do not upload"
+             % missing)
+
+# The script cds to the project root at the top, so this is already the right
+# base -- computing "../.." hops from the .app's directory is how the first
+# version of this got the depth wrong by one.
+manifest = "entry/src/main/module.json5"
+declared = []
+if os.path.exists(manifest):
+    for line in io.open(manifest, encoding="utf-8"):
+        stripped = line.strip()
+        if stripped.startswith("//"):
+            continue
+        # Anchored on "ohos.permission." ON PURPOSE. A bare `"name": "..."` also
+        # matches the module name, the ability names and the extension names --
+        # measured, they all came back in the first version of this and would
+        # have been reported as "declared but missing from the package", failing
+        # the build for three things that are not permissions at all.
+        for nm in re.findall(r'"name"\s*:\s*"(ohos\.permission\.[^"]+)"', stripped):
+            if nm not in declared:
+                declared.append(nm)
+    # The injected one is not in module.json5 -- it is added by this script.
+    absent = [p for p in declared if p not in names]
+    print("   module.json5 declares %d, package carries %d" % (len(declared), len(names)))
+    if absent:
+        sys.exit("!! DECLARED IN THE MANIFEST BUT NOT IN THE PACKAGE: %s -- do not upload"
+                 % absent)
+else:
+    print("   (module.json5 not found at %s -- skipped the manifest cross-check)" % manifest)
 v = json.loads(z.read("pack.info").decode())["summary"]["app"]["version"]
 print()
 print("   %s" % inner[0])

@@ -32,21 +32,23 @@
  * WHAT THIS STILL ADDS
  *   The platform picker is the shorter path: pick a file from anywhere the
  *   system can reach, land it in the mods directory, no permission, no browsing
- *   through a dialog rooted at one folder. The Download folder is for putting a
- *   batch in ahead of time. Neither replaces the game's own button.
+ *   through a dialog rooted at one folder. The app's own folder in Downloads is
+ *   for putting a batch in ahead of time. Neither replaces the game's own button.
  *
  * TWO WAYS IN HERE
  *   A. the HarmonyOS document picker, from the floating ball's menu. No
  *      permission needed: the picker is a system UI and hands back a URI this
  *      app is allowed to read.
- *   B. a folder in Downloads, scanned at startup. Reuses the
- *      READ_WRITE_DOWNLOAD_DIRECTORY grant and the Environment API that
- *      user_dirs.txt already exercises. A is the discoverable one; B is the one
- *      that keeps working if the picker is unavailable.
+ *   B. the folder the app creates in Downloads (see chooseModFolder below),
+ *      scanned at startup. Also no permission -- that is the whole point of the
+ *      DOWNLOAD picker mode. A is the discoverable one; B is the one that lets a
+ *      player drop a batch of files in with any file manager.
  *
- *   B fails soft on the permission, always -- it is an ACL permission and the
- *   profile that grants it is in flux -- so a refusal there is logged and
- *   returns empty rather than surfacing. A is unaffected.
+ *   ⚠️ Neither uses Environment.getUserDownloadDir(), and neither uses
+ *   READ_WRITE_DOWNLOAD_DIRECTORY. An earlier revision of B did, and it could
+ *   never work on a phone: that API is 2in1-only. It also meant B failed
+ *   whenever that ACL permission was not granted, which on the phone was always.
+ *   Both of those are gone, not worked around.
  *
  * WHY THE MODS PATH IS AN ABSOLUTE LITERAL
  *   Same reason as the IME bridge in Index.ets: this is the APPLICATION-level

@@ -50,38 +50,64 @@ const MIN_API_FOR_JIT = 26;
 const FORCE_COMPAT_MODE = false;
 
 /**
- * The permission the game's own file browsing needs: import/export of saves and
- * game data goes through files the player puts in Download, and without this
- * grant the app's opendir() on that path fails with EPERM.
+ * ⚠️ THIS PERMISSION HAS NO USE IN THIS APP ANY MORE, AND IS ABOUT TO BE REMOVED.
+ * Read this before acting on the list below.
  *
- * ⚠️ NOT AVAILABLE ON EVERY DEVICE, and the failure is silent.
+ *   It was declared so the app could reach the user's Download directory with
+ *   Environment.getUserDownloadDir(). That API is documented as needing
+ *   SystemCapability.FileManagement.File.Environment.FolderObtain and as being
+ *   "currently 2in1 devices only" -- so on a phone it throws "The device doesn't
+ *   support this api" no matter what the permission state is (measured with the
+ *   grant applied by hand, so the grant is not the variable).
  *
- *   This file used to say "reinstalling resets the grant: the dialog comes back
- *   after every deploy". That was true on the tablet and is false on the phone,
- *   and the difference is the device rather than the build. Measured, same HAP,
- *   same signature (identical appId):
+ *   The route that works on a phone is DocumentPickerMode.DOWNLOAD, which creates
+ *   Download/<bundle name>/ and needs NO permission at all. See
+ *   mods/ModImporter.ets. Nothing calls getUserDownloadDir() any more.
+ *
+ *   It is left declared until the ACL work is finished, because the store build
+ *   and its profile are being touched then anyway. Removing a permission is not
+ *   the one-line change it looks like: scripts/make_store_app.sh used to anchor
+ *   its injection on this very entry.
+ *
+ * WHAT IS STILL TRUE, AND WHAT IS NOT
+ *   Measured, same HAP, same signature (identical appId):
  *
  *     tablet : reqPermissionStates [0, 0]  -- both granted
  *     phone  : reqPermissionStates [0, -1] -- this one NOT granted
  *
- *   On the phone, requestPermissionsFromUser returns authResults = 2, which is
- *   not "denied" but "INVALID REQUEST" -- the system refuses to consider it, so
- *   no dialog is ever shown and re-asking at every launch cannot help. The same
- *   device says "The device doesn't support this api" from
- *   Environment.getUserDownloadDir(), which is the same fact from the other side
- *   and matches the SDK's own build-time warning that this API "is not supported
- *   on all devices".
+ *   ⚠️ An earlier version of this comment explained that as authResults = 2
+ *   meaning "INVALID REQUEST", so the system never showed a dialog and re-asking
+ *   could not help. That reading is WITHDRAWN: the same call also returns
+ *   dialogShown = true and errorReason = 0 ("this request is valid"), and returns
+ *   about 170 ms after it is made, which is far too fast for anyone to have
+ *   answered a dialog. The three fields do not agree and no cause is claimed. See
+ *   docs/LIMITATIONS.md.
  *
- *   So the request is a best-effort: on hardware that offers it the player is
- *   asked once, and on hardware that does not, nothing happens and nothing
- *   breaks -- the mods folder in Downloads is simply unavailable there, and the
- *   picker in the ball's menu still works. See docs/LIMITATIONS.md.
+ *   The request stays best-effort: on hardware that offers the grant the player is
+ *   asked once, and on hardware that does not, nothing happens and nothing breaks.
  */
 const WANTED: Permissions[] = [
   'ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY'
 ];
 
 async function requestPerms(ctx: common.UIAbilityContext): Promise<void> {
+  /*
+   * Nothing to ask for means nothing to do.
+   *
+   * This list is now down to one entry and is on its way to empty -- the
+   * permission has no use in this app any more, because the route that works on
+   * a phone (DocumentPickerMode.DOWNLOAD) needs no permission at all. See
+   * mods/ModImporter.ets.
+   *
+   * So the empty case is not hypothetical. What requestPermissionsFromUser()
+   * does with an empty array is not documented anywhere this project has looked,
+   * and the answer does not matter: the call is skipped until there is something
+   * to ask for.
+   */
+  if (WANTED.length === 0) {
+    hilog.info(DOMAIN, TAG, 'permissions: nothing to request');
+    return;
+  }
   try {
     const atm = abilityAccessCtrl.createAtManager();
     const bundleInfo = await bundleManager.getBundleInfoForSelf(
