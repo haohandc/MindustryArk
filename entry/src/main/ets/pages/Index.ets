@@ -129,12 +129,30 @@ async function requestPerms(ctx: common.UIAbilityContext): Promise<void> {
         'permission request: %{public}s -> auth=%{public}d dialogShown=%{public}s errorReason=%{public}d',
         res.permissions[i], res.authResults[i], shown, reason);
       if (res.authResults[i] === 2) {
-        /* Not "denied" -- the system refused to consider the request at all, so
-         * there will never be a dialog and re-asking every launch cannot help.
-         * The reason code above says which of the causes applies. */
+        /*
+         * Reported as 2 (not granted) -- but do NOT narrate a cause here.
+         *
+         * The first version of this warning said "the system rejected this
+         * request as invalid, so no dialog will appear", reasoning from the SDK
+         * note that 2 "usually" means an invalid request. The measured tuple on
+         * the phone contradicts that reading:
+         *
+         *     auth=2   dialogShown=true   errorReason=0
+         *
+         * and errorReason 0 means "this request is valid". A dialog cannot have
+         * been answered either: the whole call returns about 170 ms after it is
+         * made, which is far too fast for a person. So the three fields do not
+         * fit one story, and guessing which is authoritative is how a wrong
+         * explanation ends up in a log that someone later trusts.
+         *
+         * The line above records all four values unchanged. What is certain is
+         * only the outcome: not granted, and the player sees no prompt.
+         */
         hilog.warn(DOMAIN, TAG,
-          '  %{public}s: the system rejected this request as invalid; no dialog '
-          + 'will appear (reason %{public}d)', res.permissions[i], reason);
+          '  %{public}s: NOT GRANTED (authResult 2). dialogShown=%{public}s, '
+          + 'errorReason=%{public}d -- the three fields do not agree, so no cause '
+          + 'is claimed here; see docs/LIMITATIONS.md',
+          res.permissions[i], shown, reason);
       }
     }
   } catch (e) {
@@ -283,13 +301,20 @@ const BALL_MENU_W_VP = 176;
  * actually aims at, and the spacing falls out of the height rather than being a
  * margin that has to be guessed.
  *
+ * 46 was the first attempt and it overcorrected: reported from the device again,
+ * the rows are now too far apart and the gap should be about half. 32 keeps the
+ * text at 16 vp and roughly halves the whitespace above and below it, which is
+ * the part that reads as a gap -- the rows are adjacent, so the space between
+ * the two labels IS the padding inside each row. Still well clear of the 19 vp
+ * that started this, so the tap target stays usable.
+ *
  * BALL_MENU_H_VP is derived from these because ballMenuY clamps against it. It
  * was once a bare 64 -- right for one row, and it would have let a two-row menu
  * hang off the bottom edge, but only when the ball happens to be near it, which
  * is the kind of defect that survives every review that does not put the ball
  * there.
  */
-const BALL_MENU_ROW_VP = 46;
+const BALL_MENU_ROW_VP = 32;
 const BALL_MENU_DIVIDER_VP = 1;
 const BALL_MENU_PAD_VP = 16;
 const BALL_MENU_H_VP = 2 * BALL_MENU_ROW_VP + BALL_MENU_DIVIDER_VP + BALL_MENU_PAD_VP;

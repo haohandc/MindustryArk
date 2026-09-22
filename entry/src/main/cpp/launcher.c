@@ -1818,6 +1818,12 @@ static void probe_mark(const char *what)
  * because "socket() succeeds and connect() says ENETUNREACH" and "connect() gets
  * a connection refused" are very different answers and only one of them means the
  * sandbox is the problem.
+ *
+ * WARNING: IT MUST NOT BE ALLOWED TO SLOW DOWN A LAUNCH. It runs before the JVM is
+ * created, and name resolution can block for seconds on a network whose first
+ * nameserver does not answer. The name/connect steps are therefore opt-in via
+ * DEST_ROOT/netprobe; the syscall checks above them are local, instant, and
+ * always on. See the note at the branch.
  */
 static void probe_network(void)
 {
@@ -1904,6 +1910,38 @@ static void probe_network(void)
         }
     }
 
+    /*
+     * WARNING: THE NETWORK I/O BELOW IS OPT-IN, AND THAT IS NOT A STYLE CHOICE.
+     *
+     * Everything above this line is a local kernel operation and returns
+     * immediately. Resolution and connection do not: `getaddrinfo` consults the
+     * nameservers in /etc/resolv.conf in order, and on a network where the first
+     * one is unreachable the call sits there until that resolver's timeout
+     * expires before trying the next. Connecting adds a TCP handshake on top.
+     *
+     * This function runs BEFORE JNI_CreateJavaVM, so every millisecond spent
+     * here is a millisecond the player spends looking at a black window with
+     * nothing but the floating ball on it. Measured consequence, reported from
+     * the phone: the app opens to a black screen and takes a noticeable while
+     * before loading starts. On the tablet the same build was fine, because the
+     * resolver there answers.
+     *
+     * A diagnostic that makes the thing it measures worse is not a diagnostic.
+     * So the fast checks run always, and the two that can block run only when
+     * this file exists:
+     *
+     *     hdc shell "touch /data/storage/el2/base/files/netprobe"
+     *
+     * Delete it and the next launch is fast again. This is the same shape as
+     * NOHANDLERS in jvm.options -- an opt-in switch for something that changes
+     * timing.
+     */
+    if (access(DEST_ROOT "/netprobe", F_OK) != 0) {
+        SDL_Log("   (name resolution and connect skipped -- create %s to enable)",
+                DEST_ROOT "/netprobe");
+        goto done;
+    }
+
     int gai = getaddrinfo("github.com", "443", &hints, &res);
     SDL_Log("   getaddrinfo(github.com:443) : %s", gai == 0 ? "OK" : "FAILED");
     if (gai != 0) SDL_Log("        %s (EAI code %d)", gai_strerror(gai), gai);
@@ -1923,6 +1961,10 @@ static void probe_network(void)
      * neither distinguishes the sandbox from the network -- a device with no
      * route fails both. What WOULD distinguish them is errno: EPERM or EACCES on
      * socket() means refused by policy, which is what this probe is really for.
+     *
+     * Resolved ONCE. An earlier revision resolved the name here as well as
+     * above, which doubled the cost of the slowest step for nothing -- the
+     * address is the same both times.
      */
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
@@ -1944,6 +1986,7 @@ static void probe_network(void)
     }
     if (res) freeaddrinfo(res);
 
+done:
     if (tcp >= 0) close(tcp);
     if (udp >= 0) close(udp);
     if (ep  >= 0) close(ep);

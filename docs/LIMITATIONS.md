@@ -102,7 +102,10 @@
 且代价随**视野面积**放大 —— 屏幕越大越吃力。
 
 
-## ⚠️「下载」目录：部分机型上这个功能根本不存在
+## ⚠️「下载」目录：文件夹在，但有些机型上应用**够不到它**
+
+⚠️ **说清楚一件事**：这台手机的**「下载」目录是存在且正常的**（用户确认）——
+**不是**「这个机型没有下载目录」。缺的是**应用拿到它路径的那条路**。
 
 **现象**：在 **Mate 80 Pro 手机**上，应用申请「下载目录」权限时**不弹窗**，
 权限列表里也看不到它，而且**「Download/MindustryMods/」这个入口用不了**。
@@ -119,13 +122,23 @@
 
 ```text
 mods: no Downloads directory (The device doesn't support this api)
-requestPermissionsFromUser: ....READ_WRITE_DOWNLOAD_DIRECTORY -> 2
+permission request: ....READ_WRITE_DOWNLOAD_DIRECTORY -> auth=2 dialogShown=true errorReason=0
 ```
 
-`authResults = 2` **不是「被拒绝」**，而是**「无效请求」**（SDK：
-`security/PermissionRequestResult.d.ts`）—— 系统直接不受理，**所以永远不会弹窗**，
-再申请多少次也没用。同一个设备上 `Environment.getUserDownloadDir()` 抛出的
-「The device doesn't support this api」是同一件事的另一面。
+⚠️ **这三个值互相矛盾，所以这里只报事实、不解释原因**：
+
+| 字段 | 值 | SDK 的说法 |
+| --- | --- | --- |
+| `authResults` | `2` | 「无效请求」（未声明 / 名字无效 / 申请条件不满足）|
+| `dialogShownResults` | `true` | 「系统**弹了**授权弹窗」|
+| `errorReasons` | `0` | 「**本次请求有效**」|
+
+而且整个调用在发出后约 **170 毫秒**就返回了 —— 人不可能这么快看完并关掉一个弹窗。
+**三个字段凑不出一个自洽的故事**，所以本文件不声称知道原因。
+
+⭐ 这里曾经写过「`authResults = 2` 是无效请求，所以永远不会弹窗」—— 那是**从 SDK 的
+字段说明推出来的**，而上面的实测组合**不支持**这个推断。已撤回。**能确定的是结果**：
+**权限没授予，玩家看不到任何提示。**
 
 ⇒ 这是**设备能力差异**，不是包坏了、也不是签名问题。
 
@@ -279,7 +292,11 @@ untouched -- and its cost grows with the VISIBLE AREA, so a larger screen suffer
 more.
 
 
-## ⚠️ The Download folder does not exist on every device
+## ⚠️ The Download folder is there; on some devices the app cannot reach it
+
+⚠️ **One thing to be precise about**: on that phone the **Download folder exists
+and is perfectly normal** (confirmed by the user) -- it is **not** a device
+without a Downloads folder. What is missing is the **app's route to its path**.
 
 **What happens**: on the **Mate 80 Pro phone**, requesting the Download-directory
 permission shows **no dialog**, the permission does not appear in the permission
@@ -297,14 +314,27 @@ The app's own log from the phone:
 
 ```text
 mods: no Downloads directory (The device doesn't support this api)
-requestPermissionsFromUser: ....READ_WRITE_DOWNLOAD_DIRECTORY -> 2
+permission request: ....READ_WRITE_DOWNLOAD_DIRECTORY -> auth=2 dialogShown=true errorReason=0
 ```
 
-`authResults = 2` is **not "denied"** -- it is **INVALID REQUEST** (SDK,
-`security/PermissionRequestResult.d.ts`), so the system refuses to consider the
-request at all and **no dialog will ever appear**, however many times it is
-asked. `Environment.getUserDownloadDir()` throwing "The device doesn't support
-this api" on the same device is the same fact from the other side.
+⚠️ **Those three values contradict each other, so this file reports the facts and
+claims no cause**:
+
+| field | value | what the SDK says |
+| --- | --- | --- |
+| `authResults` | `2` | "invalid request" (not declared / bad name / conditions unmet) |
+| `dialogShownResults` | `true` | "the system **has shown** the authorization dialog" |
+| `errorReasons` | `0` | "this request **is valid**" |
+
+and the whole call returns about **170 ms** after it is made -- far too fast for
+a person to have read and dismissed a dialog. **The three fields do not add up to
+one story**, so no explanation is offered here.
+
+⭐ An earlier version of this section said "`authResults = 2` means invalid
+request, so no dialog will ever appear". That was **inferred from the SDK's field
+description**, and the measured combination above does not support it.
+Withdrawn. **What is certain is the outcome**: the permission is not granted and
+the player sees no prompt.
 
 ⇒ a **device capability difference**, not a broken package and not a signing
 problem.
