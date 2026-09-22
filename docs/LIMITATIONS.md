@@ -133,7 +133,8 @@
 ⇒ **手机上用的是第二条。** 应用在「下载」里创建一个**以包名命名的文件夹**
 （`Download/com.haohandc.mindustryark`），玩家用任何文件管理器把模组丢进去即可。
 
-**怎么用**：悬浮球菜单 → **「模组文件夹」**。⚠️ **不会弹任何选择框**（DOWNLOAD 模式跳过界面）。
+**怎么用**：**不需要你做什么** —— 应用**每次启动都会检查并在缺失时重建**它。
+⚠️ **没有对应的菜单项**（早先有过一个，已删除：建文件夹不该让玩家去点）。
 
 **依据（设备实测）**：toast 出现、「文件管理」里能看到那个包名文件夹；
 `user_dirs.txt` 里 `mods=/storage/Users/currentUser/Download/com.haohandc.mindustryark`，
@@ -189,7 +190,7 @@ mods: could not create the mod folder on this device -- the picker in the ball m
 | --- | --- |
 | **游戏自带的「导入模组」** | 游戏模组界面里那个按钮。✅ **可用**（设备上实测过）。⚠️ 它会先弹一个**取不到社区模组列表**的提示 —— 那是它在联网，平台层的网络已经通了，取不到是服务端/链路的问题（实测是 `Connection refused`），关掉提示继续即可 |
 | **悬浮球菜单 → 导入模组** | 在**系统文件选择器**里选 `.jar` / `.zip`。**不需要任何权限** |
-| **Download 文件夹** | 把模组放进 `Download/MindustryMods/`，**下次启动自动**搬进去 |
+| **Download 里的包名文件夹** | 把模组放进 `Download/com.haohandc.mindustryark/`，**下次启动自动**搬进去。⚠️ **仅手机上可用**，见上一节 |
 
 ⚠️ **后两个入口导入之后必须重启应用才生效** —— 这**不是偷懒**：游戏**只在启动时扫一次**
 `mods/` 目录（在 `Vars.load()` 里），之后再也不看。文件确实躺在那儿，但游戏看不见它。
@@ -420,7 +421,7 @@ system picker, which needs no permission and has always worked.
 | --- | --- |
 | **The game's own "import mod"** | the button in the game's mods screen. ✅ **Works** (confirmed on the device). ⚠️ It shows a **cannot-reach-the-community-mod-list** notice first -- it is going online, and the platform-level network path works; failing to fetch is a server/route condition (measured: `Connection refused`). Dismiss it and carry on |
 | **导入模组 in the ball's menu** | pick a `.jar` / `.zip` in the **system file picker**. **Needs no permission** |
-| **Downloads folder** | drop the file in `Download/MindustryMods/` and it is taken in **automatically on the next launch** |
+| **The bundle-name folder in Downloads** | drop the file in `Download/com.haohandc.mindustryark/` and it is taken in **automatically on the next launch**. ⚠️ **Phones only** -- see the section above |
 
 ⚠️ **The last two need a restart to take effect** -- and that is not laziness:
 the game scans the `mods/` directory exactly **once**, inside `Vars.load()`, and
