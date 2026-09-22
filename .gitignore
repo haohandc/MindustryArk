@@ -98,3 +98,14 @@ tryopts.sh
 # Release artifacts assembled locally (the payload zip is ~140 MB -- it goes on
 # the Releases page, never in git; see the note on entry/libs above).
 dist/
+
+# Scratch from crash investigations: pulled faultlogs, sandbox backups, kept
+# packages, extracted sections. All of it is derived from a device or a build and
+# none of it belongs in the repository -- and a `git add -A` after an
+# investigation should not be able to sweep it in.
+_faultlog_*/
+_fl[0-9]/
+_keep/
+_sects/
+_sandbox_backup_*/
+_crash_*.log
