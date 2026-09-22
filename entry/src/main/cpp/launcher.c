@@ -2598,9 +2598,23 @@ static int start_jvm(void)
          * cannot report a Download directory (see probe_user_dirs), the game's
          * browser opened nowhere useful instead of in the sandbox. */
         char dl[512];
-        if (read_user_dir("download", dl, sizeof(dl)) > 0) {
+        /*
+         * The app's own mod folder first, then the Download directory.
+         *
+         * The mod folder is the better answer when it exists: it is where the
+         * player was told to put mod files, so the game's "import mod" button
+         * opens on them. The plain Download directory is only a fallback for
+         * devices where that folder was never created.
+         */
+        const char *which = NULL;
+        if (read_user_dir("mods", dl, sizeof(dl)) > 0) {
+            which = "mod folder";
+        } else if (read_user_dir("download", dl, sizeof(dl)) > 0) {
+            which = "Download";
+        }
+        if (which != NULL) {
             SDL_snprintf(opt_chooser, sizeof(opt_chooser), "-Darc.sdl.chooserPath=%s", dl);
-            SDL_Log(" file browser will open at: %s", dl);
+            SDL_Log(" file browser will open at (%s): %s", which, dl);
         } else {
             opt_chooser[0] = '\0';       /* empty means UNSET -- see option_slot() */
             SDL_Log(" no user download dir available -- the browser will open in the");

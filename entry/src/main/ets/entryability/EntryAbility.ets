@@ -4,7 +4,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { window } from '@kit.ArkUI';
 import { i18n } from '@kit.LocalizationKit';
 import { inputMethod } from '@kit.IMEKit';
-import { fileIo as fs, Environment } from '@kit.CoreFileKit';
+import { fileIo as fs, fileUri, Environment } from '@kit.CoreFileKit';
 import { scanModFolder } from '../mods/ModImporter';
 import pointer from "@ohos.multimodalInput.pointer"
 import sdl from 'libSDL3.so';
@@ -99,6 +99,29 @@ function writeUserDirs(filesDir: string): void {
     lines.push('filesdir=' + filesDir);
   } catch (e) {
     lines.push('filesdir=<threw>');
+  }
+  /*
+   * The app's own folder in Downloads, if the player has created it.
+   *
+   * The launcher points the game's file browser at this, so that "import mod"
+   * opens where the player's mod files actually are. Without it the browser
+   * falls back to the sandbox -- which is a usable browser, but not one that
+   * can see anything the player put in Downloads.
+   *
+   * Written as a resolved PATH, not the URI: the native side has no way to
+   * resolve a file:// URI, and this bridge is a plain text file. The grant
+   * itself is held by the process, so the path is enough for our own code.
+   */
+  try {
+    const uriPath = filesDir + '/mod_folder_uri';
+    if (fs.accessSync(uriPath)) {
+      const stored: string = fs.readTextSync(uriPath).trim();
+      if (stored.length > 0) {
+        lines.push('mods=' + new fileUri.FileUri(stored).path);
+      }
+    }
+  } catch (e) {
+    lines.push('mods=<threw>');
   }
 
   for (const line of lines) {
