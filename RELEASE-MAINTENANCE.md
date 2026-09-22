@@ -669,6 +669,74 @@ needs the RELEASE-SIGNED package on a device we can watch.** A release-profile-s
    made to run at 24. **Not decided; recorded so it is not forgotten.** Shipping a
    floor the app cannot meet is the worst of both: it installs, and then does not run.
 
+#### ⚠️ WHEN THE ACL IS APPROVED: PRUNE THE APPLICATION
+
+**The user asked to be reminded of this, 2026-09-22, and it is easy to lose.**
+
+Item 2 above says this permission "is the same ACL application
+`READ_WRITE_DOWNLOAD_DIRECTORY` already needs". **That is no longer true**: that
+permission was **removed from the package on 2026-09-22** (it never once worked --
+see `docs/PERMISSIONS.md`), and this app now declares **zero file permissions**.
+
+So the ACL application, which was written when both were in play, may still list
+`READ_WRITE_DOWNLOAD_DIRECTORY`. Once the approval lands:
+
+  - [ ] **Check what the approved ACL list actually contains.** If it carries
+        `READ_WRITE_DOWNLOAD_DIRECTORY`, that entry is for a permission the package
+        no longer declares -- drop it, or the approved profile and the package
+        disagree, which is the mismatch AppGallery's admission check looks for.
+  - [ ] **Then regenerate the Release Profile** from the pruned list.
+  - [ ] The only ACL this project needs is
+        `ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY`.
+
+⭐ And it needs to be kept to that one for a second reason: with the phone package
+declaring no ACL at all, every extra entry in the profile is a claim the phone
+package cannot back.
+
+
+### 2.11b Why a debug install proves nothing about the store build
+
+**Source: the user, 2026-09-22**, explaining a measurement that had looked
+contradictory.
+
+DevEco's automatically generated **debug** profile **temporarily unlocks every
+permission** -- it does not matter which ones the package declares. That is why
+the executable-memory probe returns 42 on a debug install even when the manifest
+declares no such permission, on **both** the tablet and the phone. The user also
+notes that the profile DevEco calls "release" when generated automatically is
+**also a debug profile**; the name is not the type.
+
+⚠️ **WHAT THIS INVALIDATES, STATED PLAINLY.** Every `probe=42 WORKS` measurement
+this project has taken was taken on a debug install, so **none of them says
+anything about the store package**:
+
+| | debug-signed (all measurements so far) | store-signed |
+|---|---|---|
+| where the capability comes from | the profile unlocks it | the ACL, if granted |
+| tablet | works | ⚠️ **unknown until the ACL is in effect** |
+| phone | works | expected to fail (ACL excludes phones) ⇒ interpreted |
+
+⇒ **A debug install cannot be used to decide whether the ACL worked.** The only
+honest test is a store-signed package, which brings us to the next item.
+
+#### ✅ The store package CAN be tested: AppTest
+
+The user's finding: **Huawei's AppTest tests your own published app**, so the
+release-signed package does have a verification path after all. This is what
+resolves the "the store package has never been run on any device" item -- the
+oldest unknown in this file.
+
+  - [ ] after the first upload, run an **AppTest** round and check the launcher
+        log line on a tablet: `executable memory works (probe=42)` -- **that line
+        is the ACL's only visible evidence**
+  - [ ] on a phone, expect the fallback instead, and confirm the game still starts
+
+⚠️ Which makes the silent-fallback problem the next one worth closing. If the ACL
+does not take effect, the probe forces `-Xint` and **the game simply runs slowly,
+with nothing on screen to say why** -- the ArkTS compatibility notice only covers
+the API-version case, not the probe. So the ACL's failure mode is a tablet that
+feels slow and a user who reports "it's laggy", not "it's broken".
+**Recorded as a known gap; see the compatibility-mode section.**
 
 ### 2.12 The executable-memory ACL does not cover phones, and three corrections
 
