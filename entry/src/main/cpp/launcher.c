@@ -577,7 +577,20 @@ static char g_jvmreal[1500];    /* <jdklib>/server/libjvm_real.so */
 static char g_anchor[1400];     /* <root>/libjvm.so               */
 
 /* Defined further down, but diagnose_loading() wants them and comes first. */
-static long g_exec_probe_result;
+/*
+ * The result of probe_exec_mem(): 42 when anonymous RWX memory works, -1 when
+ * the mmap is refused, something else when the mapping worked but the code in it
+ * did not run.
+ *
+ * Initialised to a value that is NOT 42 on purpose. The option assembly treats
+ * "not 42" as "the JVM cannot get executable memory" and forces -Xint, so if the
+ * probe ever failed to run, the safe answer is the one that is taken. That
+ * cannot happen today -- diagnose_loading() calls the probe and runs well before
+ * the options are built -- but the cost of being wrong in the other direction is
+ * an app that installs and then hangs with no explanation, which is the exact
+ * failure this whole arrangement exists to prevent.
+ */
+static long g_exec_probe_result = -2;
 static long probe_exec_mem(void);
 static void probe_icache(void);
 static void report_mapping(unsigned long addr, char *out, size_t cap);
@@ -1423,24 +1436,40 @@ static void diagnose_loading(void)
 #define MAX_EXTRA_OPTS 32
 static char g_extra[MAX_EXTRA_OPTS][256];
 
-/* Candidate locations, tried in order. hdc can only WRITE to some of these (the
- * app's own sandbox is readable by shell but not writable), so the app reports
- * which one it actually opened and that becomes the iteration channel. */
+/* Candidate locations, tried in order.
+ *
+ * ⚠️ A THIRD ENTRY USED TO BE HERE -- "/data/local/tmp/jvm.options" -- and it was
+ * removed on 2026-09-22 because it cannot work. Measured: the file was pushed
+ * there with `hdc file send` and was readable from the shell, and the launcher
+ * still reported "no options file found; tried 3 locations" -- every fopen
+ * failed. /data/local/tmp is not reachable for this app's uid. The surrounding
+ * comment described it as the iteration channel for tweaking flags without a
+ * rebuild, so an entry that could never open was actively misleading: it made
+ * "the flag had no effect" look like a result about the flag.
+ *
+ * The iteration channel that DOES work is the second entry, DEST_ROOT -- and the
+ * direction is the other way round from what the old comment claimed: hdc can
+ * READ it (it is on the public view of the sandbox) but cannot write it, so the
+ * app writes and the shell reads. */
 static const char *OPTION_PATHS[] = {
     /* ArkTS writes here from the launch parameters -- see EntryAbility.ets.
      * context.filesDir resolves to the ability's own files dir, which is NOT the
      * same directory as DEST_ROOT (that one is the application-level files dir).
      *
-     *  The first entry is ALSO how the platform-version fallback works: on a
-     * phone below API 26 the JVM cannot get anonymous executable memory and must
-     * run interpreted, so ArkTS writes -Xint here. See RELEASE-MAINTENANCE.md
-     * 2.12. The file has to be REWRITTEN IN BOTH DIRECTIONS on every launch --
-     * a conditional write with a matching delete leaves -Xint behind after a
-     * phone is upgraded past 26, and the game then runs permanently interpreted
-     * with nothing to explain why. */
+     *  This is how the platform-version fallback works: on a phone below API 26
+     *  the JVM cannot get anonymous executable memory and must run interpreted, so
+     *  ArkTS writes -Xint here. See RELEASE-MAINTENANCE.md 2.12. The file has to
+     *  be REWRITTEN IN BOTH DIRECTIONS on every launch -- a conditional write
+     *  with a matching delete leaves -Xint behind after a phone is upgraded past
+     *  26, and the game then runs permanently interpreted with nothing to explain
+     *  why.
+     *
+     *  ⚠️ The launcher ALSO forces -Xint by itself when probe_exec_mem() says the
+     *  memory is unavailable, which covers the cases an API-version rule cannot:
+     *  a phone at API 26 with a store signature, and a tablet without the ACL.
+     *  This file is the request; that probe is the authority. */
     "/data/storage/el2/base/haps/entry/files/jvm.options",
     DEST_ROOT "/jvm.options",
-    "/data/local/tmp/jvm.options",
 };
 
 static const char *open_options_file(void)
@@ -2673,6 +2702,7 @@ static int start_jvm(void)
     }
 
     int minimal = 0;
+    int force_noexec = 0;
     int w = BASE_OPTS;
     for (int i = BASE_OPTS; i < BASE_OPTS + nExtra; i++) {
         /* ArkTS prefixes every launch-parameter value with '-', so markers
@@ -2700,6 +2730,30 @@ static int start_jvm(void)
         if (SDL_strcmp(o, "NOGAME") == 0 || SDL_strcmp(o, "-NOGAME") == 0) {
             continue;
         }
+        /*
+         * Test hook, in the same spirit as MINIMAL, NOHANDLERS and NOGAME: make
+         * the launcher behave as if the executable-memory probe had failed.
+         *
+         * WHY IT IS WORTH CARRYING
+         *   The -Xint fallback is the only thing standing between a phone
+         *   package and an app that installs and then hangs inside
+         *   JNI_CreateJavaVM. Every device this project owns GRANTS anonymous
+         *   RWX memory, so the fallback's code path cannot be reached on any of
+         *   them -- which means it would ship having never once run. "The code
+         *   looks right" is not the same as "the fallback has been seen working",
+         *   and this project has been bitten by that difference more than once.
+         *
+         * With this marker the branch runs on a tablet, the -Xint option is added
+         * against a probe that actually succeeded, and the game can be watched
+         * loading interpreted (roughly 5x slower) as the proof.
+         *
+         * Consumed here, never passed on: an unknown option makes strict mode
+         * refuse the whole list.
+         */
+        if (SDL_strcmp(o, "NOEXEC") == 0 || SDL_strcmp(o, "-NOEXEC") == 0) {
+            force_noexec = 1;
+            continue;
+        }
         options[w++] = options[i];       /* compact the list in place */
     }
     nExtra = w - BASE_OPTS;
@@ -2716,6 +2770,66 @@ static int start_jvm(void)
         for (int i = 0; i < nOpts; i++) options[i] = kept[i];
     } else {
         nOpts = BASE_OPTS + nExtra;
+    }
+
+    /*
+     * FORCE -Xint WHEN THE JVM CANNOT GET EXECUTABLE MEMORY.
+     *
+     * This is the belt to the options file's braces, and it exists because a
+     * device-type rule cannot answer the question. The ArkTS side asks for -Xint
+     * on phones below API 26, which was right for the one device that was
+     * measured and wrong in general:
+     *
+     *   - a phone AT API 26 with a store signature and no ACL is refused
+     *     anonymous RWX memory, so the JIT cannot start, the launcher hangs
+     *     inside JNI_CreateJavaVM, and the device-type rule never fires because
+     *     the API version looks fine. That is the "installs and will not start"
+     *     the AppGallery reviewer hit, and with the split-package plan it is
+     *     exactly what the phone .app would do.
+     *   - a phone with a DEBUG signature does get the memory (measured), so
+     *     forcing -Xint by device type alone would throw away the JIT on the one
+     *     configuration where it works, for a 4x slowdown that buys nothing.
+     *   - a TABLET without the ACL is refused too, and no device-type rule
+     *     covers that at all.
+     *
+     * The probe measures the thing itself instead of guessing from a proxy, and
+     * one answer covers all three. probe_exec_mem() already ran, in
+     * diagnose_loading(), before this point.
+     *
+     * Only ADDS the option: if the options file already asked for -Xint (the
+     * API-version case) this is a no-op and says so.
+     */
+    if (force_noexec || g_exec_probe_result != 42) {
+        int already = 0;
+        for (int i = 0; i < nOpts; i++) {
+            if (options[i].optionString != NULL
+                && SDL_strcmp(options[i].optionString, "-Xint") == 0) {
+                already = 1;
+                break;
+            }
+        }
+        if (already) {
+            SDL_Log(" executable memory unavailable (probe=%ld) and -Xint is already set",
+                    g_exec_probe_result);
+        } else if (nOpts < BASE_OPTS + MAX_EXTRA_OPTS) {
+            static char forced_xint[] = "-Xint";
+            options[nOpts++].optionString = forced_xint;
+            SDL_Log(" !! executable memory unavailable (probe=%ld) -- FORCING -Xint; "
+                    "the game will be slow but will start", g_exec_probe_result);
+        } else {
+            /* Cannot happen unless MAX_EXTRA_OPTS is exhausted, which would mean
+             * jvm.options filled every slot. Loud, because the alternative is a
+             * silent hang inside JNI_CreateJavaVM. */
+            SDL_Log(" !! executable memory unavailable (probe=%ld) and there is NO ROOM "
+                    "to add -Xint -- the JVM will probably fail to start",
+                    g_exec_probe_result);
+        }
+    } else {
+        SDL_Log(" executable memory works (probe=42) -- JIT kept");
+    }
+    if (force_noexec) {
+        SDL_Log(" NOTE: NOEXEC was set, so the probe result above was IGNORED and the "
+                "fallback was taken on purpose -- this is a test, not a real condition");
     }
 
     /*
