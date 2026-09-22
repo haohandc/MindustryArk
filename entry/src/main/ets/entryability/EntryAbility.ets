@@ -5,7 +5,7 @@ import { window } from '@kit.ArkUI';
 import { i18n } from '@kit.LocalizationKit';
 import { inputMethod } from '@kit.IMEKit';
 import { fileIo as fs, Environment } from '@kit.CoreFileKit';
-import { scanDownloadMods } from '../mods/ModImporter';
+import { scanModFolder } from '../mods/ModImporter';
 import pointer from "@ohos.multimodalInput.pointer"
 import sdl from 'libSDL3.so';
 
@@ -216,7 +216,7 @@ export default class EntryAbility extends UIAbility {
      * Fails soft by design: the Downloads grant is an ACL permission, and a
      * profile without it must not affect anything else. See ModImporter.
      */
-    scanDownloadMods();
+    scanModFolder(this.context.filesDir + '/mod_folder_uri');
     this.startExitWatch(this.context);
     try {
         // This hands stuff to SDL's C code that it needs to deal with ArkTS interfaces. We are trying not to write scripting code, if we can

@@ -68,7 +68,7 @@
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { fileIo as fs, picker, Environment } from '@kit.CoreFileKit';
+import { fileIo as fs, picker, fileUri } from '@kit.CoreFileKit';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
@@ -84,7 +84,15 @@ export const MODS_DIR: string =
  * full of unrelated files, and an app that silently swallows every .zip it
  * finds there would be doing something the player did not ask for.
  */
-const DOWNLOAD_SUBDIR: string = 'MindustryMods';
+/*
+ * Where the URI of the player's chosen mod folder is kept.
+ *
+ * A URI, not a path. The permission DOWNLOAD mode hands out travels WITH the
+ * URI, so writing the path down and reopening it later would be a different
+ * thing that happens to name the same directory -- and would not carry the
+ * grant.
+ */
+const MOD_FOLDER_URI_FILE: string = 'mod_folder_uri';
 
 /* What the game accepts. Mods.load() keeps files whose extension is "jar" or
  * "zip", or directories containing one of mod.json / mod.hjson / plugin.json /
@@ -291,21 +299,28 @@ export function lastDownloadScan(): ModImportReport {
   return lastScan;
 }
 
-export function scanDownloadMods(): ModImportReport {
-  const report: ModImportReport = scanDownloadModsInner();
+export function scanModFolder(uriFilePath: string): ModImportReport {
+  const report: ModImportReport = scanModFolderInner(uriFilePath);
   lastScan = report;
   return report;
 }
 
-function scanDownloadModsInner(): ModImportReport {
+function scanModFolderInner(uriFilePath: string): ModImportReport {
   const report: ModImportReport = { landed: [], error: '', cancelled: false };
+
+  const uri: string = readModFolderUri(uriFilePath);
+  if (uri === '') {
+    hilog.info(DOMAIN, TAG, 'mods: no folder chosen yet -- nothing to scan');
+    return report;
+  }
 
   let dir: string = '';
   try {
-    dir = Environment.getUserDownloadDir() + '/' + DOWNLOAD_SUBDIR;
+    dir = new fileUri.FileUri(uri).path;
   } catch (e) {
     const err = e as BusinessError;
-    hilog.info(DOMAIN, TAG, 'mods: no Downloads directory (%{public}s)', err.message);
+    hilog.error(DOMAIN, TAG, 'mods: stored folder URI is unusable (%{public}s)',
+                err.message);
     return report;
   }
 
@@ -355,7 +370,7 @@ function scanDownloadModsInner(): ModImportReport {
   }
 
   if (report.landed.length > 0) {
-    hilog.info(DOMAIN, TAG, 'mods: %{public}d file(s) taken from Downloads',
+    hilog.info(DOMAIN, TAG, 'mods: %{public}d file(s) taken from the chosen folder',
                report.landed.length);
   }
   /*
@@ -368,7 +383,129 @@ function scanDownloadModsInner(): ModImportReport {
    * only a few seconds.
    */
   hilog.info(DOMAIN, TAG,
-             'mods: Downloads scan of %{public}s -- %{public}d seen, %{public}d imported',
+             'mods: folder scan of %{public}s -- %{public}d seen, %{public}d imported',
              dir, names.length, report.landed.length);
   return report;
+}
+
+
+/* ---------------------------------------------------------------------------
+ * The chosen mod folder -- what replaced reaching into Downloads.
+ *
+ * WHY THIS EXISTS AT ALL
+ *   The first version of this file read the folder with
+ *   Environment.getUserDownloadDir(). That API is documented as requiring
+ *   SystemCapability.FileManagement.File.Environment.FolderObtain, which the
+ *   docs state is "currently 2in1 devices only" -- and on the phone it throws
+ *   "The device doesn't support this api" whether or not the permission is
+ *   granted (measured with the permission granted by hand, so the grant is not
+ *   the variable). So on a phone there was no way in at all.
+ *
+ *   The route that DOES work on phones is DocumentPickerMode.DOWNLOAD, and the
+ *   official guide describes it in exactly the terms that were wanted:
+ *
+ *     模式特点
+ *       * 自动创建在 Download/包名/ 目录。
+ *       * 跳过文件选择界面直接保存。
+ *       * 返回的 URI 已具备持久化权限，用户可在该 URI 下创建文件。
+ *
+ *   So: the app creates Download/<bundle name>/ once, off the back of a picker
+ *   call that shows no UI, and gets back a directory URI it is allowed to use.
+ *   The player then drops mod files into that folder with any file manager, and
+ *   the startup scan picks them up. No permission in the manifest, and the
+ *   bundle-name folder is exactly what the other apps on the phone are doing.
+ *
+ * ⚠️ WHAT IS NOT YET PROVEN HERE: that the URI survives an app restart. The
+ *   DOWNLOAD-mode documentation says the returned URI "already has persistent
+ *   permission", which is stronger than the temporary grant a normal picker
+ *   returns -- but the separate 授权持久化 guide describes persistPermission /
+ *   activatePermission, and those need ohos.permission.FILE_ACCESS_PERSIST.
+ *   Whether DOWNLOAD mode's permissive wording means we can skip all of that is
+ *   a question for the device, not for the documentation. The code copes with
+ *   either answer: a stored URI that no longer works is logged with its error
+ *   and the scan reports nothing rather than throwing.
+ */
+
+/** Read the stored folder URI, or '' if the player has not chosen one yet. */
+function readModFolderUri(uriFilePath: string): string {
+  try {
+    if (!fs.accessSync(uriFilePath)) {
+      return '';
+    }
+    const text: string = fs.readTextSync(uriFilePath).trim();
+    return text;
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'mods: reading the stored folder URI failed: %{public}s',
+               err.message);
+    return '';
+  }
+}
+
+function writeModFolderUri(uriFilePath: string, uri: string): void {
+  const f: fs.File = fs.openSync(uriFilePath,
+    fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
+  try {
+    fs.writeSync(f.fd, uri);
+  } finally {
+    fs.closeSync(f);
+  }
+}
+
+/**
+ * Create (or re-find) the app's own folder in Downloads, and remember it.
+ *
+ * pickerMode = DOWNLOAD makes save() skip its UI entirely -- there is no dialog
+ * to answer, the system creates Download/<bundle name>/ and hands back the
+ * directory URI. That is why this can be offered as a menu item rather than a
+ * first-run wizard.
+ *
+ * NOTE: with DOWNLOAD mode the other DocumentSaveOptions fields are ignored --
+ * newFileNames and fileSuffixChoices have no effect (stated in the guide, and
+ * repeated in every write-up of the mode). Setting them here would read as if
+ * they did something.
+ */
+export async function chooseModFolder(ctx: common.UIAbilityContext,
+                                    uriFilePath: string): Promise<ModImportReport> {
+  const report: ModImportReport = { landed: [], error: '', cancelled: false };
+
+  const options: picker.DocumentSaveOptions = new picker.DocumentSaveOptions();
+  options.pickerMode = picker.DocumentPickerMode.DOWNLOAD;
+
+  let uris: Array<string> = [];
+  try {
+    const view: picker.DocumentViewPicker = new picker.DocumentViewPicker(ctx);
+    uris = await view.save(options);
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.error(DOMAIN, TAG, 'mods: DOWNLOAD-mode save failed: %{public}s (code=%{public}d)',
+                err.message, err.code);
+    report.error = '无法创建模组文件夹';
+    return report;
+  }
+
+  if (uris === undefined || uris.length === 0 || uris[0] === '') {
+    report.cancelled = true;
+    return report;
+  }
+
+  let where: string = '';
+  try {
+    where = new fileUri.FileUri(uris[0]).path;
+  } catch (e) {
+    where = '(unresolved)';
+  }
+  hilog.info(DOMAIN, TAG, 'mods: mod folder is %{public}s', where);
+
+  try {
+    writeModFolderUri(uriFilePath, uris[0]);
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.error(DOMAIN, TAG, 'mods: storing the folder URI failed: %{public}s', err.message);
+    report.error = '无法保存模组文件夹位置';
+    return report;
+  }
+
+  const scanned: ModImportReport = scanModFolder(uriFilePath);
+  return scanned;
 }

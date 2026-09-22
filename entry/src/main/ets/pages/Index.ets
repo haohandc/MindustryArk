@@ -4,7 +4,7 @@ import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { KeyCode } from '@kit.InputKit';
 import { window } from '@kit.ArkUI';
-import { pickMods, ModImportReport, lastDownloadScan } from '../mods/ModImporter';
+import { pickMods, chooseModFolder, ModImportReport, lastDownloadScan } from '../mods/ModImporter';
 /* `focusControl` needs no import: it is an ArkTS framework global, like
  * getContext. Importing it from @kit.ArkUI does not compile. */
 
@@ -503,7 +503,43 @@ struct Index {
 
   aboutToAppear(): void {
     const ctx = getContext(this) as common.UIAbilityContext;
-    requestPerms(ctx);
+    /*
+     * The permission request goes out over an ordinary window, so the immersive
+     * switch is chained onto it rather than started beside it.
+     *
+     * requestPerms() is async and its first statement awaits
+     * bundleManager.getBundleInfoForSelf(), so everything below runs during that
+     * await. enterImmersive() takes the system bars away and sets the layout
+     * full-screen -- and a system permission dialog belongs on an ordinary
+     * window, not on one that has just become full-screen and barless.
+     *
+     * ⚠️ THIS IS A PRECAUTION, NOT A DIAGNOSIS. It was written as a diagnosis
+     * first, on the theory that the immersive switch was why
+     * requestPermissionsFromUser() comes back unfulfilled on the phone --
+     * and the very next launch refuted it. Same input, same output:
+     *
+     *     permission request: ... -> auth=2 dialogShown=true errorReason=0
+     *     immersive: bars hidden, layout full-screen
+     *
+     * with the two lines now in that order. So the ordering is fixed and the
+     * result did not change, which means the cause is elsewhere. What the
+     * comment must NOT do is keep asserting a story the measurement killed --
+     * that is how a false explanation gets inherited by the next reader.
+     *
+     * The ordering is kept because it is right on its own terms: asking for a
+     * permission over a normal window is what the API expects, and the cost is
+     * that the bars stay up for one round trip on first launch.
+     */
+    requestPerms(ctx).then(() => {
+      this.enterImmersive();
+    }).catch((e: BusinessError) => {
+      /* requestPerms has its own try/catch and should not reject; if it ever
+       * does, the bars must still go away. */
+      hilog.warn(DOMAIN, TAG,
+                 'permissions: unexpected rejection (%{public}s); immersive anyway',
+                 e.message);
+      this.enterImmersive();
+    });
     this.clearStaleImeState();
     /*
      * Poll rather than be notified: the request is made by native code in the
@@ -517,7 +553,6 @@ struct Index {
     /* Held, not applied: the value needs a window size to clamp against, and
      * onAreaChange has not reported one yet. */
     this.readBallPos();
-    this.enterImmersive();
     /*
      * Before the XComponent exists: see the note on setupCompatMode. It writes the
      * options file the launcher reads, and the launcher reads it as soon as
@@ -959,6 +994,26 @@ struct Index {
    * See ModImporter for why this entry has to exist at all -- the game's own
    * import button cannot work on this platform.
    */
+  /*
+   * Create the app's folder in Downloads and remember it, then scan it.
+   *
+   * No dialog appears: DOWNLOAD mode skips the picker UI. The toast is the only
+   * feedback the player gets, so it says where the folder is rather than just
+   * that something happened.
+   */
+  async chooseModDir(): Promise<void> {
+    const ctx = getContext(this) as common.UIAbilityContext;
+    const report: ModImportReport =
+      await chooseModFolder(ctx, ctx.filesDir + '/mod_folder_uri');
+    if (report.error !== '') {
+      this.toast(report.error);
+      return;
+    }
+    this.toast(report.landed.length > 0
+      ? ('模组文件夹已就绪，已导入 ' + report.landed.length + ' 个文件；重启游戏生效')
+      : '模组文件夹已就绪（在「下载」里）。把模组放进去，重启游戏即可');
+  }
+
   async importMods(): Promise<void> {
     const ctx = getContext(this) as common.UIAbilityContext;
     const report: ModImportReport = await pickMods(ctx);
@@ -1881,6 +1936,33 @@ struct Index {
           .width('100%')
           .height(BALL_MENU_ROW_VP)
           .onClick(() => { this.importMods(); })
+
+          Divider()
+            .strokeWidth(BALL_MENU_DIVIDER_VP)
+            .color('#22ffffff')
+
+          /*
+           * Entry: make the app's own folder in Downloads, once.
+           *
+           * The system creates Download/<bundle name>/ and hands back a
+           * directory URI the app may write to -- no permission, and no dialog,
+           * because DocumentPickerMode.DOWNLOAD skips the picker UI. After this
+           * the player can drop mod files into that folder from any file
+           * manager, which is how the other apps on the phone work.
+           *
+           * See mods/ModImporter.ets for why reaching into Downloads directly
+           * was not an option on a phone.
+           */
+          Row() {
+            Text('模组文件夹')
+              .fontSize(BALL_MENU_FONT_VP)
+              .fontColor('#eef2f9')
+            Blank()
+            Text('在下载中创建').fontSize(BALL_MENU_HINT_FONT_VP).fontColor('#8fb4ff')
+          }
+          .width('100%')
+          .height(BALL_MENU_ROW_VP)
+          .onClick(() => { this.chooseModDir(); })
         }
         .width(BALL_MENU_W_VP)
         .padding({ left: 14, right: 14, top: 8, bottom: 8 })
