@@ -981,6 +981,99 @@ B is verified end to end except for the one thing it can never verify here, whic
 is whether `-Xint` rescues an actual API 24 device.
 
 
+### 2.13b `-Xint` DOES NOT SAVE A DEVICE WITHOUT EXECUTABLE MEMORY
+
+**Measured 2026-09-22, on the first release-signed package this project ever ran.**
+
+#### What was measured
+
+With a device-bound **release** profile (a "release" profile that is not merely named
+that: `app-distribution-type: internaltesting`, bound to the phone's UDID, and carrying
+only `READ_WRITE_DOWNLOAD_DIRECTORY` in its ACLs), the launcher's own log reads:
+
+```text
+!! executable memory unavailable (probe=-1) -- FORCING -Xint; the game will be slow but will start
+wrote the verdict for the UI: interp (probe=-1)
+calling JNI_CreateJavaVM (strict) ...
+  opt: ... (18 options, the last of which is -Xint)
+```
+
+**And nothing after that.** No `JNI_CreateJavaVM (strict) returned %d`, no
+`*** JVM CREATED ***`. The process is gone, and **it leaves no faultlog entry either.**
+
+⚠️ Reading that log at all required 2.13c below; before it, a release-signed install
+was undiagnosable in every channel.
+
+#### What it means
+
+**`-Xint` is not enough.** The interpreter still needs executable memory -- HotSpot
+generates stubs at startup (`SharedRuntime`, `StubRoutines`) regardless of how the
+application code will be run. So the premise this whole feature was built on,
+
+> "-Xint takes the JIT out of the picture, so nothing needs that memory"
+
+**is false.** Consequences, in order of how much they change:
+
+1. **Compatibility mode cannot rescue this failure mode**, in any version of it.
+2. ⇒ **The ACL is MANDATORY for any build that must start on a device without that
+   memory.** There is no fallback, and the "we always have a degraded path" assumption
+   recorded in 2.12 is wrong for the store case.
+3. ⇒ **The phone package, as currently planned, cannot work at all** -- not slowly,
+   not at all. The ACL does not cover phones, and without it the JVM does not start.
+   This has to be settled before the split package is uploaded.
+4. ⭐ **It explains the reviewer's "installs and will not start"**: installs, flashes
+   and closes on tap, and produces no faultlog. That is exactly this signature.
+
+#### And the way this was mis-verified, which is the transferable part
+
+The fallback had been "verified" earlier by forcing it with a `NOEXEC` marker: the
+launcher was told to ignore a *successful* probe, took the fallback, and the game
+loaded in 11804 ms. That was reported here as the fallback working.
+
+⚠️ **It was not the same experiment.** In that run the executable memory was
+available the whole time -- only the *decision* was forced. So it verified "the
+`-Xint` option gets added, and adding it does not break a device that was fine
+anyway", which is nearly the opposite of the question.
+
+⭐ **Forcing a switch is not the same as creating the condition the switch exists
+for.** The only way to test a fallback is to be in the situation it falls back from,
+and for this one that needs a profile that genuinely withholds the capability --
+which is what the device-bound release profile turned out to provide.
+
+#### How to reproduce (this is now cheap)
+
+1. A **release** profile bound to the target device's UDID, with no executable-memory
+   ACL (`M80Pro-dczhRelease.p7b` is one; `app-distribution-type` must not be debug --
+   a debug profile unlocks every permission and hides everything).
+2. Point the root `build-profile.json5` release `signingConfigs.profile` at it
+   (that file is skip-worktree, so this does not show up in git).
+3. `bash build.sh assembleHap -p product=release -p buildMode=release`, uninstall the
+   debug build, install this one.
+4. Read the launcher's log out of **hilog** (2.13c), not the sandbox.
+
+### 2.13c A release-signed install is undiagnosable without hilog
+
+Measured, with an internaltesting package installed, on the phone:
+
+| channel | debug-signed | release-signed |
+|---|---|---|
+| `<sandbox>/files/stderr.log` | readable | **Permission denied** |
+| `pidof <bundle>` / `ps -A \| grep` | works | **empty** |
+| `/data/log/faultlog/faultlogger` | has entries | **no entry for it** |
+
+⇒ For a release-signed install the **only** readable channel is **hilog**, which is
+why `launcher.c` now mirrors every `SDL_Log` there through
+`SDL_SetLogOutputFunction` (`install_hilog_mirror()`). One hook, so it also catches
+what SDL and the loader log -- which is where the interesting failures are.
+
+⚠️ The message is passed as a single `"%{public}s"`: hilog masks unmarked format
+specifiers as `<private>`, so forwarding SDL's format string would have produced a
+log full of `<private>` instead of the values.
+
+**Keep this when changing the launcher.** A diagnostic that only a debug build can
+read does not describe the build that ships.
+
+
 ### 2.14 Why nobody had enabled networking, and what it cost
 
 #### The whole blocker was one commented-out line
