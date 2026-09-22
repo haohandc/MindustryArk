@@ -70,6 +70,30 @@ PYEOF
 trap restore EXIT
 
 # ---------------------------------------------------------------------------
+# GATE: FORCE_COMPAT_MODE must be false.
+#
+# That constant forces -Xint on EVERY device, which exists only to measure what
+# the interpreter costs on hardware that does not need it. If it were left on and
+# a store package were built from this working tree, every user would get an
+# interpreted game and nothing on the device would say why.
+#
+# This is checked here rather than trusted, because "remember to set it back" is
+# exactly the kind of instruction that survives right up until it does not.
+# ---------------------------------------------------------------------------
+FORCE_LINE="$(grep -nE '^const FORCE_COMPAT_MODE' entry/src/main/ets/pages/Index.ets || true)"
+case "$FORCE_LINE" in
+    *"= false"*) : ;;
+    "")  echo "!! could not find FORCE_COMPAT_MODE in Index.ets -- refusing to build" >&2
+         exit 1 ;;
+    *)   echo "!! FORCE_COMPAT_MODE is not false:" >&2
+         echo "!!   $FORCE_LINE" >&2
+         echo "!! that forces interpreted mode on every device. Set it back to false" >&2
+         echo "!! before building anything that could ship." >&2
+         exit 1 ;;
+esac
+echo "   gate: FORCE_COMPAT_MODE = false"
+
+# ---------------------------------------------------------------------------
 # 1. PRECONDITION, BACKUP, INJECT
 # ---------------------------------------------------------------------------
 "${PY[@]}" - "$MODJSON" "$PERM" "$BACKUP" <<'PYEOF' || exit 1
