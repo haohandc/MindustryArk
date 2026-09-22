@@ -53,6 +53,31 @@
 以上各条背后的原因写在**对应代码的注释里**，而不在这份文档里 —— 入口是 `entry/src/main/cpp/launcher.c`。
 
 ---
+## ⚠️ 在部分设备上应用装了却起不来
+
+**现象**：应用安装成功，一点就退，**没有任何崩溃提示**。
+
+**已知条件**（2026-09-22 实测）：在**华为自检**分配的设备（**HarmonyOS 6.1.1 / API 24**）上，
+启动器发完 JVM 参数、调用 `JNI_CreateJavaVM` 之后**再无输出**，进程随即消失。
+同一份包在 **HarmonyOS 7 / API 26** 的设备上正常进入主菜单。
+
+**原因（实测）**：该设备**拒绝一切匿名可执行内存**：
+
+```
+!! mmap(RWX) FAILED: errno=22 (Invalid argument)
+ [1] clear_cache   (CONTROL) -> -1   unexpected
+ [2] mprotect RW->RX          -> -1   unexpected
+```
+
+⇒ **JVM 的 JIT 无法启动**，所以卡在 `JNI_CreateJavaVM` 里。
+
+⚠️ **两个可能的原因我们还没分离开**：① 平台版本太老；② 该设备运行的是**应用市场签名（release）**的包，
+而我们平时在真机上装的都是**调试签名**的包。两者都能解释现有全部观测。
+
+⚠️ 另外本应用声明的最低版本是 `compatibleSdkVersion 6.1.1(24)`，**而这个声明没有得到实测支持** ——
+所有"能跑"的证据都来自 API 26。修好之前，在 API 24 设备上可能出现"装得上、跑不起来"。
+
+
 # English
 
 - **Text entry, and what each route can do.** Touch a text field inside the game
@@ -113,3 +138,31 @@
   three attributed lines.
 
 The reasoning behind each of those is in the source comments where the code is, rather than here -- `entry/src/main/cpp/launcher.c` is the place to start.
+
+## ⚠️ On some devices it installs and will not start
+
+**Symptom**: it installs, you tap it, it exits -- with **no crash report at all**.
+
+**Known condition** (measured 2026-09-22): on a **Huawei-supplied self-check device**
+(**HarmonyOS 6.1.1 / API 24**) the launcher prints the JVM options, calls
+`JNI_CreateJavaVM`, and then produces **no further output ever**; the process
+disappears. The same package runs to the main menu on **HarmonyOS 7 / API 26**.
+
+**Cause (measured)**: that device **refuses all anonymous executable memory**:
+
+```
+!! mmap(RWX) FAILED: errno=22 (Invalid argument)
+ [1] clear_cache   (CONTROL) -> -1   unexpected
+ [2] mprotect RW->RX          -> -1   unexpected
+```
+
+⇒ **the JVM's JIT cannot start**, so it stops inside `JNI_CreateJavaVM`.
+
+⚠️ **Two possible causes are not yet separated**: ① the platform is too old;
+② that device runs the **release-signed** (store) package while everything we
+install on our own hardware is **debug-signed**. Both explain every observation so far.
+
+⚠️ The app declares a minimum of `compatibleSdkVersion 6.1.1(24)` and **that claim has
+no measurement behind it** -- every "it works" observation is from API 26. Until this
+is settled, an API 24 device may install the app and be unable to run it.
+

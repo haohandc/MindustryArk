@@ -58,6 +58,10 @@
  *           dlopen("<sandbox>/.../libSDL3_copy.so")          -> fails
  *       (The permission covers anonymous executable memory only; AMCL gets
  *        around it with a hand-written ELF loader -- we do not need that.)
+ *       ⚠️ "Anonymous executable memory" is exactly what a JIT needs, and it is
+ *       NOT universally available: measured 2026-09-22, a HarmonyOS 6.1.1
+ *       (API 24) device refused mmap(RWX) with errno=22 while running the
+ *       release-signed store package. See RELEASE-MAINTENANCE.md 2.11.
  *
  *   (b) HotSpot derives java.home from libjvm.so's own path: it strips three
  *       path components and then requires "<java.home>/lib/modules" to exist.

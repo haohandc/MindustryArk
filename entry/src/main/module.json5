@@ -28,6 +28,10 @@
       // The game reads files the player placed in Download when importing a
       // save or a game-data export, which is why this is needed.
       //
+      // ⚠️ RE-EXAMINE BEFORE TRUSTING THE PARAGRAPH BELOW. It was right for a
+      //    debug install on HarmonyOS 7 and is now known to be wrong in general
+      //    -- see "THE CLAIM THAT TURNED OUT TO BE CONDITIONAL".
+      //
       // Not needed (and deliberately absent):
       //   ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY
       // That is the restricted ACL permission for making the writable sandbox
@@ -36,12 +40,37 @@
       // made the HAP impossible for anyone else to install. It was measured
       // unnecessary and removed: the JDK ships inside the HAP's lib area, which
       // is executable already, and the sandbox holds only data (the module
-      // image is opened by java.base as a file). Executable memory at runtime
-      // is anonymous, which this platform permits without any permission.
+      // image is opened by java.base as a file).
       //
-      // Do not add it back unless something genuinely needs file-backed
-      // executable pages: this platform blocks mapping a FILE as executable,
-      // and that restriction is what forces the JDK to live in the HAP.
+      // THE CLAIM THAT TURNED OUT TO BE CONDITIONAL
+      //   The sentence that justified the removal was "Executable memory at
+      //   runtime is anonymous, which this platform permits without any
+      //   permission." Measured 2026-09-22 on a HarmonyOS 6.1.1 (API 24) device,
+      //   running the RELEASE-signed package from AppGallery:
+      //
+      //       !! mmap(RWX) FAILED: errno=22 (Invalid argument)
+      //       [1] clear_cache   (CONTROL) -> -1   unexpected
+      //       [2] mprotect RW->RX          -> -1   unexpected
+      //
+      //   The same probe on a HarmonyOS 7 (API 26) tablet, running a
+      //   DEBUG-signed package:  mmap works, control returns 22, everything OK.
+      //
+      //   So "no permission needed" held for {debug install, API 26} and does
+      //   not hold outside it. Without anonymous executable memory the JVM's
+      //   JIT cannot start, and the launcher stops dead inside
+      //   JNI_CreateJavaVM -- which is the "启动即闪退" the AppGallery reviewer
+      //   reported. This permission exists for exactly that, and launcher.c
+      //   already says so: "The permission covers anonymous executable memory
+      //   only."
+      //
+      //   ⇒ It is a candidate to ADD BACK for the STORE build, where the
+      //     objection above does not apply: a store package is ACL-signed
+      //     already and is not meant to be sideloaded, so "nobody else can
+      //     install it" costs nothing there. See RELEASE-MAINTENANCE.md 2.11.
+      //
+      // Do not add it back for the local dev loop: this platform blocks mapping
+      // a FILE as executable, and that restriction is what forces the JDK to
+      // live in the HAP.
       { "name": "ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY", "reason": "$string:perm_reason_DOWNLOAD", "usedScene": { "abilities": [ "EntryAbility" ], "when": "inuse" } }
     ],
 

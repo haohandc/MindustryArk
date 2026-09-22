@@ -560,6 +560,116 @@ median time to failure is 15 s and the observed maximum is 150 s. A single crash
 means nothing.
 
 
+### 2.11 On some devices the app installs and cannot start at all, and our own claim caused it
+
+**Second, separate failure, found 2026-09-22 from a Huawei self-check report.** The
+self-check ran on a Huawei-supplied cloud device and said the app 「无法运行」. It was
+not a crash -- the device has **no** `cppcrash` for this bundle at all.
+
+#### What the device said
+
+The launcher's own diagnostics go to hilog under tag `…/SDL`. Three launches
+(pid 29558, 29941, 30413) all stop at the same line:
+
+```
+APP:  calling JNI_CreateJavaVM (strict) ...
+APP:    opt: -Djava.class.path=… / -XX:UseSVE=0 / -Darc.sdl.glEs=true / …
+         (the option list prints)
+         <nothing further -- ever>
+```
+
+The next line in a working run is `result = <n>`. It never comes. The process is
+gone shortly after, and the platform then uninstalls and reinstalls the package.
+
+⚠️ **`processdump`/`faultlogger` has nothing for this device**, so this is a
+**start-up hang, not a crash** -- a different failure from §2.10.
+
+#### The cause, from our own probe
+
+Several lines earlier, the same run prints the executable-memory probe:
+
+```
+!! mmap(RWX) FAILED: errno=22 (Invalid argument)
+==== self-modifying code probe (rewrite after execution) ====
+ [1] clear_cache                        (CONTROL) -> -1   unexpected
+ [0] nothing at all                         -> -1   unexpected
+ [2] mprotect RW->RX                        -> -1   unexpected
+ [3] mprotect RW->RX, then clear_cache      -> -1   unexpected
+ [4] clear_cache, then mprotect RW->RX      -> -1   unexpected
+   [1] must be ok, otherwise nothing else here is meaningful
+```
+
+Compare the same probe, same build, on the HarmonyOS 7 tablet:
+
+```
+executable anon memory: mmap=0x5aa457e000 call->42  WORKS
+ [1] clear_cache                       (CONTROL) -> 22   ok
+ [2] mprotect RW->RX                              -> 11   STALE
+ [3] mprotect RW->RX, then clear_cache            -> 22   ok
+```
+
+⇒ **On the self-check device, anonymous executable memory cannot be obtained at
+all.** A JVM cannot JIT without it. That is why `JNI_CreateJavaVM` never returns.
+
+⚠️ The same run also shows `user dir: download=<threw>` / `document=<threw>`, while
+the tablet prints real `/storage/Users/currentUser/…` paths -- two more functions
+this platform version refuses. **The device is more restrictive overall, not broken
+in one place.**
+
+#### THE PART THAT IS OUR FAULT
+
+`module.json5` used to carry this sentence, as the reason for **removing** the
+permission whose entire purpose is this:
+
+> *"Executable memory at runtime is anonymous, which this platform permits without
+> any permission."*
+
+**That was measured on one machine and generalised to a platform.** It held for
+{debug-signed install, HarmonyOS 7}. It does not hold outside that. And
+`ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY` -- the permission we removed --
+is described by our own `launcher.c` as *"covers anonymous executable memory only"*.
+
+⇒ **We removed the permission that exists to grant the thing the JVM needs, on the
+strength of a measurement taken under the one configuration where it was not needed.**
+The sentence is corrected in place now, in `module.json5`, `deploy.sh` and
+`launcher.c`, each with the counter-measurement next to it.
+
+#### Two candidate causes, NOT yet separated
+
+| | A: the platform version | B: **debug-signed vs release-signed** |
+|---|---|---|
+| self-check device fails | ✓ | ✓ (it runs the release package) |
+| reviewer's Mate 60 fails | needs Mate 60 to be API 24 | ✓ (it runs the release package) |
+| our tablet works | ✓ (API 26) | ✓ (**we always install a DEBUG-signed package**) |
+| matches our own corrected claim | — | ⭐ the claim failed exactly where signing differed |
+
+🔶 **Both fit. Neither is established.** The user's own experience points at B without
+settling it: *"平板/电脑开放有基本完整的 JIT 权限（调试安装），但手机能力不完全"* --
+note **调试安装**, and note that this is a signing difference, not a version one.
+
+⭐⭐ **The experiment that separates them has not been run and cannot be run here: it
+needs the RELEASE-SIGNED package on a device we can watch.** A release-profile-signed
+`.app` cannot be sideloaded, which is the same constraint that let §2.10 happen. What
+*both* candidates agree on is the next action, so it is not blocking.
+
+#### What to do about it
+
+1. ⛔ **Do not add the permission back for the local dev loop.** A debug profile
+   cannot grant it -- that is the `install failed due to grant request permissions
+   failed` this project already hit once, and it is why it was removed.
+2. ✅ **For the STORE build, requesting it through the ACL is a candidate.** The
+   objection that killed it ("forced every install to be re-signed, made the HAP
+   impossible for anyone else to install") **does not apply to an AppGallery
+   package**: that package is ACL-signed already and is not meant to be sideloaded.
+   It is the same ACL application `READ_WRITE_DOWNLOAD_DIRECTORY` already needs, so
+   it costs no extra process.
+3. ⚠️ **`compatibleSdkVersion` is `6.1.1(24)` and that claim is not backed by a
+   measurement.** All evidence for "it runs" comes from HarmonyOS 7 / API 26.
+   Either the declared floor has to rise to something measured, or the app has to be
+   made to run at 24. **Not decided; recorded so it is not forgotten.** Shipping a
+   floor the app cannot meet is the worst of both: it installs, and then does not run.
+
+
 ## 3. Release page copy
 
 ### Title

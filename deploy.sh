@@ -21,11 +21,29 @@
 #   profile cannot grant -- the install failed with
 #   "install failed due to grant request permissions failed".
 #
-#   That permission has since been REMOVED, and verified unnecessary: the game
-#   runs to its main menu without it. The JDK ships in the HAP's own lib area,
-#   which is already executable, and the sandbox only holds DATA (the module
-#   image is opened by java.base as a file). Executable memory at runtime comes
-#   from anonymous mappings, which this platform permits regardless.
+#   That permission has since been REMOVED, and verified unnecessary -- FOR THE
+#   LOCAL DEV LOOP. The game runs to its main menu without it. The JDK ships in
+#   the HAP's own lib area, which is already executable, and the sandbox only
+#   holds DATA (the module image is opened by java.base as a file).
+#
+#   ⚠️ "Executable memory at runtime comes from anonymous mappings, which this
+#   platform permits regardless" is TRUE ON THIS MACHINE and was measured as
+#   such. It is NOT true in general. Measured 2026-09-22 on a HarmonyOS 6.1.1
+#   (API 24) device running the AppGallery package:
+#
+#       !! mmap(RWX) FAILED: errno=22 (Invalid argument)
+#
+#   Without anonymous executable memory the JVM's JIT cannot start, and the
+#   process stops dead inside JNI_CreateJavaVM. That is the "启动即闪退" the
+#   store reviewer reported. The permission we removed here,
+#   ALLOW_WRITABLE_CODE_MEMORY, exists for exactly this -- our own launcher.c
+#   says "the permission covers anonymous executable memory only".
+#
+#   What makes the local build different is that it is DEBUG-SIGNED, and this
+#   machine is HarmonyOS 7. Whether the deciding factor is the signing or the
+#   platform version is NOT YET SEPARATED -- see RELEASE-MAINTENANCE.md 2.11.
+#   For the STORE build the objection above does not apply (an ACL-signed store
+#   package is not meant to be sideloaded), so requesting it is a candidate.
 #
 #   ⚠️ That is about ONE permission. The other one this app declares,
 #   ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY, DOES have to go through the
