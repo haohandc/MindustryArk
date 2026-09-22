@@ -1276,6 +1276,90 @@ documented interface. "Here is why it fails" is useless to someone who cannot se
 "if it looks like this, do that" is actionable.
 
 
+### 2.13e THE IMPORTER IS GONE: THE APP NO LONGER PUTS FILES IN mods/
+
+**User's report, 2026-09-22**, and it is the clearest kind: a behaviour, not a theory.
+
+> 只要模组在我们应用的外部文件夹下，即使我删除了也会被自动导入（悬浮球的逻辑）。
+> 我导入存档也走的是这套逻辑，很讨厌。干脆把悬浮球导入砍了，不要这个功能了。
+
+#### The mechanism, which was NOT where the report said it was
+
+⚠️ **This matters more than the fix.** The report attributed the auto-import to the floating
+ball. The floating ball's row called `pickMods()` -- the system picker -- which is **manual**:
+it copies only the file the player selects, at the moment they select it. It had never
+imported anything on its own.
+
+Three code paths wrote into the mods directory, and only one was the floating ball:
+
+| wrote into `mods/` | when | floating ball? |
+|---|---|---|
+| `pickMods()` | when the player taps the row | ✅ yes |
+| `scanModFolder()` | **every launch**, twice (page + ability) | ❌ no |
+| `seedProbeMod()` | **every launch, unconditionally** | ❌ no (dev probe) |
+
+The resurrection was `scanModFolder`, and specifically one line:
+
+```ts
+if (fs.accessSync(dest) && fs.statSync(dest).size === srcSize) { continue; }
+```
+
+Deleting a mod **in the game** deletes the **sandbox** copy. The copy staged in
+`Download/<bundle>/` is untouched, so on the next launch the destination is absent and the file
+is copied back. **There was no state in which a mod stayed deleted.**
+
+And the second complaint had the same root: that folder is ALSO the root the game's file
+browser opens in (`-Darc.sdl.chooserPath`), saves are exported as `.zip`, and `isModFileName`
+accepted `.zip` -- so **a save was swept into the mods directory as though it were a mod**.
+
+⇒ ⭐ So "cut the floating ball's import" **would not have fixed either complaint.** The
+instruction named one of three paths; the two that mattered were the other two. Worth writing
+down because the fix that followed from the report as stated would have looked complete and
+changed nothing.
+
+#### What was removed, at the user's direction ("全砍")
+
+- the floating ball's "导入模组" row, `importMods()`, and `pickMods()` + its helpers
+- `scanModFolder()` and both of its call sites; the report/toast plumbing that existed only to
+  announce its results (`takeLastScan`, `publish`, `importedMessage`)
+- `seedProbeMod()` -- an **unconditional** overwrite of `probe-mod.jar` every launch, which is
+  the same defect wearing a developer's hat
+- `BALL_MENU_ROWS` 3 → **2**. It is not decoration: it feeds `BALL_MENU_H_VP`, which `ballMenuY`
+  clamps against, so leaving it at 3 would reserve a row that is not drawn
+- `tools/probe-mod/build.sh` no longer installs the jar into `libs/` (nothing consumes it now,
+  and it was 1.2 KB of unused jar inside every HAP), and `make_payload_zip.py` no longer
+  **requires** it -- that assertion would have failed the next release payload on a good tree
+
+#### What was deliberately KEPT, and it is not an oversight
+
+`ensureModFolder()` and the folder itself. It is created and recreated every launch because the
+**game's file browser opens there**, which is what makes "import mod" and save import/export
+land somewhere the player can reach. ⇒ **A mod dropped in it still works -- it just has to be
+picked instead of taken.**
+
+⚠️ The names have not kept up: the file, the function and the state file still say
+`mod_folder` / `ModImporter`. Renaming touches the bridge format and a dozen comments; the
+honest record is the note at the top of `ModImporter.ets` instead.
+
+#### The one capability genuinely lost
+
+`tools/probe-mod/` can no longer verify mod loading **without a tap**. The probe existed so
+this project could confirm end-to-end mod loading after a sandbox wipe with no UI input -- and
+under the user's own rule, "anything that needs a tap is the user's job". The tool and its
+build script are still in the repository, and git history has the seeding; what is gone is the
+automatic planting.
+
+⚠️ **Do not re-add it without answering the question that removed it: what happens when the
+player deletes the mod?** The old answer was "it comes back".
+
+#### Verified
+
+`bash build.sh assembleHap` → BUILD SUCCESSFUL, and then **the artifact, not the log**:
+`导入模组`, `选择文件`, `已导入`, `未导入任何模组` and `probe-mod.jar` are all **absent** from the
+built HAP, checked by searching its entries. A 2.4-second build is exactly the kind of result
+that makes this check necessary.
+
+
 ### 2.14 Why nobody had enabled networking, and what it cost
 
 #### The whole blocker was one commented-out line

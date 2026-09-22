@@ -49,10 +49,9 @@ granted at install):
 Its one purpose was to start the game's file browser in Download. ⚠️ **Measured: it
 never once succeeded on either device this project owns** -- on the phone the API
 does not exist (`Environment.getUserDownloadDir()` throws), and on the tablet the
-permission is denied and `mkdir` returns `EPERM`. ⚠️ **Mods never needed it**: none
-of the three ways in touches this permission (the ball's picker uses the system
-picker, the Downloads folder uses `DocumentPickerMode.DOWNLOAD`, both
-**zero-permission**).
+permission is denied and `mkdir` returns `EPERM`. ⚠️ **Getting files into the mods
+directory never needed it**: the folder in Downloads is created through
+`DocumentPickerMode.DOWNLOAD`, which is **zero-permission**.
 
 ⇒ ⭐ **The app now has ZERO file permissions.** That also **cancels the ACL route
 that permission required** (see [BUILDING.md](BUILDING.md)), so **store review has

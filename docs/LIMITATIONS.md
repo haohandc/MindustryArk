@@ -235,23 +235,37 @@ file://docs/storage/Users/currentUser/Download/...  No such file or directory
 **格式**：`.jar` 或 `.zip`。
 （游戏也接受「内含 `mod.json` 的文件夹」，但那种没法用文件选择器选。）
 
-**三个入口**：
+**只有一个入口：游戏自带的「导入模组」按钮。**
 
-| 方式 | 怎么用 |
+✅ **可用**（设备上实测过）。⚠️ 它会先弹一个**取不到社区模组列表**的提示 ——
+那是它在联网，平台层的网络已经通了，取不到是服务端/链路的问题（实测是 `Connection refused`），
+关掉提示继续即可。**不用重启**：它自己会触发模组重载。
+
+### ⛔ 应用【不再】自己往模组目录里放文件（2026-09-22 移除，按用户要求）
+
+这里曾经有**三个**入口。另外两个是：
+
+| 已删除的入口 | 它当时怎么工作 |
 | --- | --- |
-| **游戏自带的「导入模组」** | 游戏模组界面里那个按钮。✅ **可用**（设备上实测过）。⚠️ 它会先弹一个**取不到社区模组列表**的提示 —— 那是它在联网，平台层的网络已经通了，取不到是服务端/链路的问题（实测是 `Connection refused`），关掉提示继续即可 |
-| **悬浮球菜单 → 导入模组** | 在**系统文件选择器**里选 `.jar` / `.zip`。**不需要任何权限** |
-| **Download 里的包名文件夹** | 把模组放进 `Download/com.haohandc.mindustryark/`，**下次启动自动**搬进去。**两台设备都可用**，见上一节 |
+| 悬浮球菜单的「导入模组」 | 系统选择器选文件 → 拷进 `mods/` |
+| `Download/com.haohandc.mindustryark/` 文件夹 | **每次启动**把里面的 `.jar`/`.zip` 扫进 `mods/` |
+| （以及一个开发用的探针模组） | 每次启动**无条件覆盖** `probe-mod.jar` |
 
-⚠️ **只有「悬浮球菜单 → 导入模组」需要重启才生效**，另外两个不用：
+**为什么删**：它们让**应用**决定「某个模组存在」，而玩家**在游戏内无法推翻这个决定**。
+最糟的是中间那个：
 
-| 入口 | 要不要重启 | 为什么 |
-| --- | --- | --- |
-| 游戏自带的导入 | **不用** | 它自己会触发重载 |
-| **Download 里的包名文件夹** | **不用** | 它在**启动时**搬进去，早于游戏扫描 |
-| **悬浮球菜单 → 导入模组** | ⚠️ **要** | 它在**游戏运行中**落地，而游戏**只在启动时扫一次** `mods/`（`Vars.load()` 里），之后再也不看 |
+- 它只在「`mods/` 里已有**同样大小**的同名文件」时才跳过 ⇒ **在游戏内删掉模组**（= 删掉沙箱里那份）
+  之后，Download 里那份**还在** ⇒ **下次启动又拷回来，永远如此**。没有任何办法让一个模组**保持被删除**。
+- 它还和**存档**冲突：同一个文件夹**同时是游戏文件浏览器的主目录**
+  （`-Darc.sdl.chooserPath`），而存档导出的正是 `.zip`，扫描**把 `.zip` 当模组**收 ⇒
+  **存档被当成模组扫进了 `mods/`**。
 
-⇒ 悬浮球那条要重启**不是偷懒**，是游戏机制：文件确实躺在那儿，但游戏看不见它。
+⇒ ⭐ **「丢进文件夹就自动装好」这个便利，代价是玩家失去了「删掉它」这个能力。** 现在没有自动了：
+`Download/com.haohandc.mindustryark/` **仍然存在、仍然由应用创建**（因为游戏的文件浏览器要开在那里，
+见上一节），把模组放进去**照样能用** —— 只是需要你在游戏里**选一下**，而不是被自动收走。
+**删掉的模组从此保持被删除。**
+
+⚠️ 如果你以前版本的探针模组（`probe-mod`）还留在列表里：现在可以直接在游戏内删掉它，**它不会再回来**。
 
 📌 顺带说明一个容易混的点（我自己在这里搞错过一次）：游戏**自己**那套文件浏览器
 （`mindustry/ui/FileChooser` / `FileChooserDialog`）是**纯 Java、画在游戏界面里**的，
@@ -644,24 +658,42 @@ tried first and the URI is only a fallback.**
 **Format**: `.jar` or `.zip`. (The game also accepts a *folder* containing
 `mod.json`, but a picker cannot hand a folder over.)
 
-**Three ways in**:
+**There is exactly one way in: the game's own "import mod" button.**
 
-| Way | How |
+✅ **Works** (confirmed on the device). ⚠️ It shows a
+**cannot-reach-the-community-mod-list** notice first -- it is going online, and the
+platform-level network path works; failing to fetch is a server/route condition (measured:
+`Connection refused`). Dismiss it and carry on. **No restart needed**: it triggers the
+reload itself.
+
+### ⛔ The app no longer puts files into the mods directory (removed 2026-09-22)
+
+There used to be **three** ways in. The other two were:
+
+| Removed | What it did |
 | --- | --- |
-| **The game's own "import mod"** | the button in the game's mods screen. ✅ **Works** (confirmed on the device). ⚠️ It shows a **cannot-reach-the-community-mod-list** notice first -- it is going online, and the platform-level network path works; failing to fetch is a server/route condition (measured: `Connection refused`). Dismiss it and carry on |
-| **导入模组 in the ball's menu** | pick a `.jar` / `.zip` in the **system file picker**. **Needs no permission** |
-| **The bundle-name folder in Downloads** | drop the file in `Download/com.haohandc.mindustryark/` and it is taken in **automatically on the next launch**. **Both devices work** -- see the section above |
+| the floating ball's "导入模组" | system picker → copy into `mods/` |
+| `Download/com.haohandc.mindustryark/` | **every launch**, sweep its `.jar` / `.zip` into `mods/` |
+| (plus a development probe mod) | **every launch**, overwrite `probe-mod.jar` unconditionally |
 
-⚠️ **Only the ball's picker needs a restart**; the other two do not:
+**Why they were removed**: they let the *app* decide that a mod exists, and the player
+**could not overrule that from inside the game**. The middle one was the damaging one:
 
-| Way in | Restart? | Why |
-| --- | --- | --- |
-| the game's own import | **no** | it triggers the reload itself |
-| **the bundle-name folder in Downloads** | **no** | it is taken in **at startup**, before the game scans |
-| **导入模组 in the ball's menu** | ⚠️ **yes** | it lands files **while the game is running**, and the game scans `mods/` exactly **once**, inside `Vars.load()`, and never looks again |
+- it skipped a file only when `mods/` already held one of the **same size**, so **deleting a
+  mod in the game** (which deletes the sandbox copy) left the Downloads copy in place and the
+  file **came back on the next launch, forever**. There was no way to make a mod stay gone.
+- it also collided with **saves**: that folder is also the root the game's file browser opens
+  in (`-Darc.sdl.chooserPath`), saves are exported as `.zip`, and the scan accepted `.zip` as a
+  mod -- so **a save was swept into `mods/` as though it were a mod**.
 
-⇒ the picker needing a restart is not laziness, it is the game's mechanism: the file really
-is sitting there, the game just cannot see it.
+⇒ ⭐ **"Drop a file in and it installs itself" cost the player the ability to delete it.**
+Nothing is automatic now. `Download/com.haohandc.mindustryark/` **still exists and is still
+created by the app** (the game's file browser has to open there -- see the section above), and
+a mod dropped in it **still works** -- it just has to be **picked** rather than taken.
+**A deleted mod now stays deleted.**
+
+⚠️ If a previous version left a `probe-mod` in your mod list, you can delete it in the game now
+and **it will not come back**.
 
 📌 One thing that is easy to confuse -- and that this project got wrong once:
 the game's **own** file browser (`mindustry/ui/FileChooser` /

@@ -131,9 +131,13 @@ bash deploy.sh          # 构建 + 校验 + 安装 + 启动 + 收日志
 
 - ⭐ **多人联机可用。** 此前整条线被**一个缺失的网络权限**挡住 —— 联机代码一直在包里，
   只是每次启动都因为拿不到权限而失败。局域网联机、搜索公网服务器、在本机开服都已验证。
-- ⭐ **模组可以加载了。** 三个入口：游戏自带的「导入模组」按钮、悬浮球菜单的「导入模组」、
-  以及应用在「下载」里创建的文件夹 `Download/com.haohandc.mindustryark/`。
-  把 `.jar` / `.zip` 丢进去、重启游戏即可生效。
+- ⭐ **模组可以加载了。** 用**游戏自带的「导入模组」按钮**导入，**不用重启**。
+  ⛔ **同时删掉了应用自己的两个入口**（悬浮球菜单的「导入模组」、以及「启动时自动搬入 Download 里的文件」），
+  因为它们让**应用**决定「某个模组存在」，而玩家**在游戏内无法推翻**：
+  「自动搬入」只在 `mods/` 里已有**同样大小**的同名文件时才跳过 ⇒ **在游戏内删掉模组后，下次启动又会被搬回来**；
+  而那个文件夹**同时是游戏文件浏览器的主目录**、存档又正是 `.zip` ⇒ **存档会被当成模组扫进 `mods/`**。
+  ⇒ 现在 **`Download/com.haohandc.mindustryark/` 仍然存在**（浏览器要开在那里），
+  把模组放进去**照样能用**，只是需要你在游戏里**选一下**。**删掉的模组从此保持被删除。**
 - ⛔ **订正：「改用解释执行」救不了拿不到可执行内存的设备 —— 这条是实测推翻的。**
   之前这里写的是「手机不再『装了却打不开』，会自动改用解释执行，代价是变慢（5~6 秒 → 约 21 秒）」。
   **那是错的，而且从来没有测过。**
@@ -324,9 +328,17 @@ bash deploy.sh          # build + verify + install + launch + collect log
   permission** -- the multiplayer code has always been in the jar, and fail it did on every
   launch for want of that grant. LAN play, browsing public servers and hosting a server on
   the device are all verified.
-- ⭐ **Mods load.** Three ways in: the game's own "import mod" button, "导入模组" in the
-  floating ball's menu, and the folder the app creates in Downloads at
-  `Download/com.haohandc.mindustryark/`. Drop a `.jar` / `.zip` in and restart the game.
+- ⭐ **Mods load.** Import them with the **game's own "import mod" button** — no restart needed.
+  ⛔ **The app's own two ways in were removed at the same time** (the floating ball's
+  "导入模组" row, and sweeping the Downloads folder at startup), because they let the *app*
+  decide that a mod exists while the player **could not overrule it inside the game**. The
+  startup sweep skipped a file only when `mods/` already held one of the **same size**, so
+  **deleting a mod in the game brought it back on the next launch**; and that same folder is
+  the root the game's file browser opens in, with saves exported as `.zip` — so **a save was
+  swept into `mods/` as though it were a mod**.
+  ⇒ `Download/com.haohandc.mindustryark/` **still exists** (the browser has to open there) and
+  a mod dropped in it **still works** — it just has to be **picked** rather than taken.
+  **A deleted mod now stays deleted.**
 - ⛔ **Correction: "fall back to interpreted mode" does NOT save a device that was refused
   executable memory.** An earlier draft of these notes said phones on API 24 and below would
   merely load more slowly (about 21 s instead of 5-6 s). **That was wrong, and it was never
