@@ -22,7 +22,7 @@
     },
     {
       "name": "perm_reason_INTERNET",
-      "value": "用于下载额外内容"
+      "value": "用于多人联机：加入服务器，以及在本机开服"
     },
     {
       "name": "perm_reason_READ_PASTEBOARD",

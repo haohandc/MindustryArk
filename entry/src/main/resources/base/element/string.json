@@ -22,7 +22,7 @@
     },
     {
       "name": "perm_reason_INTERNET",
-      "value": "Used to download additional content"
+      "value": "Used for multiplayer games: joining a server, and hosting one on this device"
     },
     {
       "name": "perm_reason_READ_PASTEBOARD",

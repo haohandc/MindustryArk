@@ -45,6 +45,14 @@
 #include <ucontext.h>
 #include <sys/types.h>
 #include <unistd.h>
+/* For probe_network: see the note on it for why the network is probed by hand
+ * rather than inferred from the one error the game happens to print. */
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
 
 /*
  * THE JDK LIVES INSIDE THE HAP'S NATIVE-LIB AREA -- and that is the whole trick.
@@ -1785,6 +1793,165 @@ static void probe_mark(const char *what)
 }
 
 /*
+ * Can this process reach the network at all?
+ *
+ * WHY A NATIVE PROBE AND NOT JUST WATCHING THE GAME
+ *   The game already reports a failure on this path --
+ *   "SocketException: Operation not permitted" at sun.nio.ch.Net.socket0 -- which
+ *   said socket() is reachable and being refused. That is useful and it is not
+ *   enough, because ArcNet is ALL NIO: Selector.open(), SocketChannel,
+ *   DatagramChannel. A JVM that can open a socket but not a selector can connect
+ *   and cannot run a server or the client's own event loop, and the difference
+ *   decides whether this is a week of work or a rewrite of 37 classes. So the
+ *   distinction has to be measured, not inferred from the one error the game
+ *   happens to print.
+ *
+ *   Doing it here rather than in Java also means it is independent of the JVM,
+ *   of Arc, and of which feature happened to be tried first.
+ *
+ * EACH CALL IS REPORTED WITH ITS OWN ERRNO. A single "networking works: no" would
+ * be the same mistake as the one this project keeps re-learning: the interesting
+ * information is which link is broken.
+ *
+ * connect() is attempted but not required to succeed -- it depends on the device
+ * actually having a route, which is not what is being tested here. It is included
+ * because "socket() succeeds and connect() says ENETUNREACH" and "connect() gets
+ * a connection refused" are very different answers and only one of them means the
+ * sandbox is the problem.
+ */
+static void probe_network(void)
+{
+    SDL_Log(" --- network syscalls ---");
+
+    int tcp = socket(AF_INET, SOCK_STREAM, 0);
+    SDL_Log("   socket(AF_INET, SOCK_STREAM) : %s",
+            tcp >= 0 ? "OK" : "FAILED");
+    if (tcp < 0) SDL_Log("        errno=%d (%s)", errno, strerror(errno));
+
+    int udp = socket(AF_INET, SOCK_DGRAM, 0);
+    SDL_Log("   socket(AF_INET, SOCK_DGRAM)  : %s",
+            udp >= 0 ? "OK" : "FAILED");
+    if (udp < 0) SDL_Log("        errno=%d (%s)", errno, strerror(errno));
+
+    /* What EPollSelectorImpl is built on. Without it, Selector.open() fails and
+     * so does every ArcNet connection, including the ones that already have a
+     * working socket. */
+    int ep = epoll_create1(0);
+    SDL_Log("   epoll_create1(0)             : %s",
+            ep >= 0 ? "OK" : "FAILED");
+    if (ep < 0) SDL_Log("        errno=%d (%s)", errno, strerror(errno));
+
+    /* Selector wakeup. A selector that cannot be woken is one that cannot be
+     * registered with from another thread. */
+    int ev = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    SDL_Log("   eventfd(0, NONBLOCK|CLOEXEC) : %s",
+            ev >= 0 ? "OK" : "FAILED");
+    if (ev < 0) SDL_Log("        errno=%d (%s)", errno, strerror(errno));
+
+    /*
+     * Name resolution, in two steps, because "cannot resolve" and "cannot
+     * reach" are different problems with different fixes and one combined test
+     * cannot tell them apart.
+     *
+     * The numeric lookup needs no resolver at all: it either works, which says
+     * the resolver path is intact and only name lookup is failing, or it fails
+     * too, which says the call itself is blocked.
+     */
+    struct addrinfo hints;
+    struct addrinfo *res = NULL;
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_NUMERICHOST;
+    int num = getaddrinfo("20.205.243.166", "443", &hints, &res);
+    SDL_Log("   getaddrinfo(<literal ip>)   : %s", num == 0 ? "OK" : "FAILED");
+    if (num != 0) SDL_Log("        %s (EAI code %d)", gai_strerror(num), num);
+    if (res) freeaddrinfo(res);
+    res = NULL;
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    /*
+     * Read the resolver's own configuration from THIS process.
+     *
+     * It was readable from an hdc shell -- 114.114.114.114 then 8.8.8.8 -- but a
+     * shell and an app are different security contexts, and the whole question
+     * here is whether this process can resolve names. Measuring it from the
+     * shell and calling it the app's answer is the mistake this project already
+     * has on record for `stat` on bundle paths.
+     */
+    {
+        FILE *rc = fopen("/etc/resolv.conf", "r");
+        if (!rc) {
+            SDL_Log("   /etc/resolv.conf            : NOT READABLE (errno=%d %s)",
+                    errno, strerror(errno));
+        } else {
+            char line[256];
+            int shown = 0;
+            SDL_Log("   /etc/resolv.conf            : readable");
+            while (fgets(line, sizeof(line), rc) && shown < 4) {
+                if (strncmp(line, "nameserver", 10) == 0) {
+                    line[strcspn(line, "\r\n")] = '\0';
+                    SDL_Log("        %s", line);
+                    shown++;
+                }
+            }
+            if (shown == 0) SDL_Log("        (no nameserver lines)");
+            fclose(rc);
+        }
+    }
+
+    int gai = getaddrinfo("github.com", "443", &hints, &res);
+    SDL_Log("   getaddrinfo(github.com:443) : %s", gai == 0 ? "OK" : "FAILED");
+    if (gai != 0) SDL_Log("        %s (EAI code %d)", gai_strerror(gai), gai);
+    if (res) freeaddrinfo(res);
+
+    /*
+     * Reachability, by resolving a name and connecting to what came back.
+     *
+     * Deliberately NOT a hardcoded address. An earlier revision connected to a
+     * literal IP that had been sampled from the device minutes earlier, which
+     * works exactly once: addresses move, and a probe that fails because a
+     * number is stale is worse than no probe. Resolving first is also what Java
+     * does, so this exercises the same two steps in the same order.
+     *
+     * A failure here is not automatically a sandbox problem. `getaddrinfo` above
+     * and `connect` here separate "cannot resolve" from "cannot reach", and
+     * neither distinguishes the sandbox from the network -- a device with no
+     * route fails both. What WOULD distinguish them is errno: EPERM or EACCES on
+     * socket() means refused by policy, which is what this probe is really for.
+     */
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    res = NULL;
+    if (getaddrinfo("github.com", "443", &hints, &res) == 0 && res != NULL) {
+        int s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+        if (s < 0) {
+            SDL_Log("   connect(github.com:443)     : socket failed");
+            SDL_Log("        errno=%d (%s)", errno, strerror(errno));
+        } else {
+            int rc = connect(s, res->ai_addr, (socklen_t)res->ai_addrlen);
+            SDL_Log("   connect(github.com:443)     : %s", rc == 0 ? "OK" : "failed");
+            if (rc != 0) SDL_Log("        errno=%d (%s)", errno, strerror(errno));
+            close(s);
+        }
+    } else {
+        SDL_Log("   connect(github.com:443)     : skipped, nothing resolved");
+    }
+    if (res) freeaddrinfo(res);
+
+    if (tcp >= 0) close(tcp);
+    if (udp >= 0) close(udp);
+    if (ep  >= 0) close(ep);
+    if (ev  >= 0) close(ev);
+    SDL_Log(" --- end network syscalls ---");
+}
+
+/*
  * NOTE: an attempt to have SDL export a diagnostic getter for the launcher to
  * call did not link -- SDL's build restricts exports to its own symbol list, so
  * visibility("default") is not enough to add one. The surface-copy question is
@@ -2208,6 +2375,7 @@ static int start_jvm(void)
     probe_gl_libs();
     probe_sandbox_exec();
     probe_user_dirs();
+    probe_network();
     int modok = prepare_java_home();
     diagnose_loading();
     load_anchor_only();

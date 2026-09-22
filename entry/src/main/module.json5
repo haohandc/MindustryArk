@@ -22,7 +22,24 @@
     "requestPermissions": [
       //{ "name": "ohos.permission.MICROPHONE", "reason": "$string:perm_reason_MICROPHONE", "usedScene": { "abilities": [ "EntryAbility" ], "when": "inuse" } },
       //{ "name": "ohos.permission.CAMERA", "reason": "$string:perm_reason_CAMERA", "usedScene": { "abilities": [ "EntryAbility" ], "when": "inuse" } },
-      //{ "name": "ohos.permission.INTERNET", "reason": "$string:perm_reason_INTERNET", "usedScene": { "abilities": [ "EntryAbility" ], "when": "inuse" } },
+      // The game is multiplayer-capable: it can join a server and host one.
+      //
+      // This was commented out until now, and the reason is visible in the logs.
+      // The game tried to fetch the community server list at every launch and
+      // got, every time:
+      //
+      //     SocketException: Operation not permitted
+      //       at java.base/sun.nio.ch.Net.socket0(Native Method)
+      //
+      // which is the kernel refusing socket() with EPERM -- exactly what a
+      // missing INTERNET grant looks like. So this is not a new feature being
+      // switched on; it is a permission that was never declared while the code
+      // that needs it was already running and failing.
+      //
+      // INTERNET is a NORMAL-level permission: granted at install, no
+      // requestPermissionsFromUser call, and none of the ACL machinery. The
+      // reason string is filled in because the store reviews it.
+      { "name": "ohos.permission.INTERNET", "reason": "$string:perm_reason_INTERNET", "usedScene": { "abilities": [ "EntryAbility" ], "when": "inuse" } },
       //{ "name": "ohos.permission.READ_PASTEBOARD", "reason": "$string:perm_reason_READ_PASTEBOARD", "usedScene": { "abilities": [ "EntryAbility" ], "when": "inuse" } },
 
       // The game reads files the player placed in Download when importing a
