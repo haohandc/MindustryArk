@@ -220,6 +220,21 @@
 #define MODULE_IMAGE    BUNDLE_LIBS "/jdk21/lib/jimg.so"
 #define TZDB_IMAGE      BUNDLE_LIBS "/jdk21/lib/tzdb.so"
 
+/*
+ * The rest of what <java.home> has to contain, shipped as a tree that mirrors
+ * it. Built by scripts/prep_jdkconf.py, which explains why.
+ *
+ * Short version: the JDK reads files relative to java.home, not only the module
+ * image. conf/security/java.security is read by Security's static initialiser,
+ * and every defineClass() needs a ProtectionDomain, which needs Security -- so
+ * with that one file absent, no class can be loaded at runtime by any
+ * mechanism. Mod loading was simply the first feature to need one.
+ *
+ * It is a whole tree rather than a name because the previous name list was
+ * exactly right until it was not, twice: this and lib/tzdb.dat.
+ */
+#define JDK_HOME_TREE   BUNDLE_LIBS "/jdkhome"
+
 /* writable places, still needed for tmpdir and the captured stdio */
 #define DEST_ROOT   "/data/storage/el2/base/files"
 #define TMP_DIR     "/data/storage/el2/base/temp"
@@ -1887,9 +1902,80 @@ static int materialise(const char *src, const char *dst)
 }
 
 /*
+ * Copy a shipped tree into the sandbox, stripping one trailing ".so" from every
+ * file name.
+ *
+ * See scripts/prep_jdkconf.py for why the names carry ".so": hvigor carries
+ * *.so out of libs/ and drops everything else without a word. Measured.
+ *
+ * RECURSIVE ON PURPOSE. The alternative is a list of the files java.home needs,
+ * and that list was complete until it was not -- twice, and the second time was
+ * this one. Walking whatever the JDK ships cannot go stale when a feature
+ * exercises another entry. Existing files of the right size are left alone by
+ * materialise(), so this is cheap on every launch after the first.
+ */
+static int copy_tree_strip_so(const char *src, const char *dst)
+{
+    DIR *d = opendir(src);
+    if (!d) {
+        SDL_Log(" !! opendir %s: %s", src, strerror(errno));
+        return 1;
+    }
+    if (mkdir(dst, 0755) != 0 && errno != EEXIST) {
+        SDL_Log(" !! mkdir %s: %s", dst, strerror(errno));
+        closedir(d);
+        return 2;
+    }
+
+    int rc = 0;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
+
+        char s[1400], t[1400];
+        SDL_snprintf(s, sizeof(s), "%s/%s", src, e->d_name);
+
+        struct stat sb;
+        if (stat(s, &sb) != 0) {
+            SDL_Log(" !! stat %s: %s", s, strerror(errno));
+            rc = 3;
+            continue;
+        }
+
+        if (S_ISDIR(sb.st_mode)) {
+            SDL_snprintf(t, sizeof(t), "%s/%s", dst, e->d_name);
+            if (copy_tree_strip_so(s, t) != 0) rc = 4;
+            continue;
+        }
+
+        /* Exactly one trailing ".so" -- the one hvigor needed to see. A source
+         * name that genuinely ends in .so would be shipped as .so.so and comes
+         * back out whole, so this strip is always symmetric. */
+        size_t n = strlen(e->d_name);
+        size_t keep = (n > 3 && strcmp(e->d_name + n - 3, ".so") == 0) ? n - 3 : n;
+        if (keep == 0) continue;
+
+        char base[600];
+        if (keep >= sizeof(base)) {
+            SDL_Log(" !! name too long: %s", e->d_name);
+            rc = 5;
+            continue;
+        }
+        memcpy(base, e->d_name, keep);
+        base[keep] = '\0';
+
+        SDL_snprintf(t, sizeof(t), "%s/%s", dst, base);
+        if (materialise(s, t) != 0) rc = 6;
+    }
+    closedir(d);
+    return rc;
+}
+
+/*
  * Build the directory java.home will be pointed at.
  *
- * Two files have to be there, under the names java.base looks for:
+ * The module image and the time-zone database have to be there under the names
+ * java.base looks for:
  *   lib/modules    the module image. Shipped as jimg.so (patch_libjvm.py) because
  *                  hvigor only carries names ending in ".so"; java.base builds
  *                  the name "modules" itself and will not accept anything else.
@@ -1898,6 +1984,15 @@ static int materialise(const char *src, const char *dst)
  *                  timestamps -- sun.util.calendar.ZoneInfoFile fails to
  *                  initialise, and the first DateFormat request anywhere in the
  *                  program throws. Mindustry asks for one in Saves.<clinit>.
+ *
+ * And JDK_HOME_TREE puts the rest of what the JDK reads relative to java.home
+ * in place -- see the note on that macro for the failure that made it necessary.
+ *
+ * THE RETURN VALUE MEANS ONE THING: is lib/modules in place? That is what
+ * decides whether java.home can be redirected at all (see the caller). The rest
+ * is reported loudly but deliberately does NOT change it -- folding a missing
+ * text file into this would make "the module image is not in place" show up for
+ * a cause that is not that, which is a worse error than no error.
  */
 static int prepare_java_home(void)
 {
@@ -1911,6 +2006,14 @@ static int prepare_java_home(void)
     }
     if (materialise(MODULE_IMAGE, SANDBOX_MODULES) != 0) return 3;
     if (materialise(TZDB_IMAGE,   SANDBOX_TZDB)    != 0) return 4;
+
+    SDL_Log(" java.home tree, from %s:", JDK_HOME_TREE);
+    if (copy_tree_strip_so(JDK_HOME_TREE, SANDBOX_JDK) != 0) {
+        SDL_Log(" !! the java.home tree did not copy completely");
+        SDL_Log(" !! run scripts/prep_jdkconf.py, then rebuild");
+        SDL_Log(" !! without conf/security/java.security no class can be");
+        SDL_Log(" !! defined at runtime -- mod loading dies inside defineClass");
+    }
     return 0;
 }
 

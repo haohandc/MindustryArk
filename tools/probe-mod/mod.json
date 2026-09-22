@@ -1,0 +1,9 @@
+{
+  "name": "probe-mod",
+  "displayName": "Probe Mod",
+  "author": "MindustryArk",
+  "description": "Proves that a class loaded at runtime out of a mod jar is defined and executed on this platform. Prints two markers to the log. Not a real mod.",
+  "version": "1.0",
+  "minGameVersion": "154",
+  "main": "probe.ProbeMod"
+}

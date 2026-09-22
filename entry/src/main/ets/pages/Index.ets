@@ -123,6 +123,36 @@ const IME_CMD_FILE = '/data/storage/el2/base/files/ime_cmd';
 const IME_RECT_FILE = '/data/storage/el2/base/files/ime_rect';
 
 /*
+ * Where the game keeps its mods.
+ *
+ * An absolute literal for the same reason as the IME files above: this is the
+ * APPLICATION-level directory the native side shares, while ArkTS's
+ * context.filesDir is the module-level one. They look almost identical and are
+ * not interchangeable.
+ *
+ * The path is not a guess about layout -- it is the game's own arithmetic. The
+ * launcher points user.home at DEST_ROOT, and Arc's
+ * OS.getAppDataDirectoryString() builds "<user.home>/.local/share/Mindustry/";
+ * Vars.modDirectory is dataDirectory.child("mods/"). Confirmed by listing it on
+ * the device.
+ */
+const MODS_DIR = '/data/storage/el2/base/files/.local/share/Mindustry/mods';
+
+/*
+ * The probe mod, shipped inside the bundle.
+ *
+ * hvigor extracts libs/** into /data/storage/el1/bundle/libs/<abi>/, which is
+ * where the launcher already reads the game jar from. The name ends in .so only
+ * because hvigor packages *.so out of libs/ and silently drops everything else
+ * -- the same rename the game jar and the module image already use. The bytes
+ * are an ordinary jar.
+ *
+ * See tools/probe-mod/ for what is in it and why.
+ */
+const PROBE_MOD_SRC = '/data/storage/el1/bundle/libs/arm64/probe/probe-mod.jar.so';
+const PROBE_MOD_DST = MODS_DIR + '/probe-mod.jar';
+
+/*
  * Which control scheme the player chose, read by the launcher before the JVM
  * starts.
  *
@@ -380,6 +410,10 @@ struct Index {
      * SDL_main starts, which is when the XComponent mounts.
      */
     this.setupCompatMode();
+    /* Same deadline, different reason: the game scans the mods directory once,
+     * during Vars.load(), and that is also downstream of the XComponent
+     * mounting. See the note on seedProbeMod. */
+    this.seedProbeMod();
   }
 
   /*
@@ -1189,6 +1223,58 @@ struct Index {
     }
     this.imeSent = next;
     this.appendCmd(cmds);
+  }
+
+  /*
+   * TEMPORARY PROBE -- delete this method, the two PROBE_MOD_ constants and
+   * libs/arm64-v8a/probe/ once mod loading is confirmed on the device.
+   *
+   * WHY IT EXISTS
+   *   Whether a class loaded at runtime out of a mod jar can be defined and
+   *   executed under this JVM has never been tested here. Everything ELSE about
+   *   mods is stock Mindustry and needs no help -- the scan, the meta parsing,
+   *   the content parser and the lifecycle are all plain Java in the game jar.
+   *   So the whole question is one class definition, and it is worth isolating.
+   *
+   *   hdc cannot write into the app sandbox: measured, E005005 permission
+   *   denied, through BOTH the /data/app/el2/100/base view and the
+   *   /data/storage/el2/base one. So the file has to arrive inside the bundle
+   *   and be copied out by this side.
+   *
+   * WHY THE MOD PRINTS RATHER THAN ADDS CONTENT
+   *   "It appears in the mod list" is not the same as "it took effect" -- a rule
+   *   this project already learned the hard way. A marker line can only be
+   *   produced by the class body actually executing, so it proves the class was
+   *   defined AND its lifecycle was called. Appearing in a list proves neither.
+   *
+   * The copy is unconditional: this is a probe, and a deterministic state each
+   * launch is worth more here than preserving anything.
+   *
+   * See tools/probe-mod/.
+   */
+  private seedProbeMod(): void {
+    try {
+      if (!fs.accessSync(PROBE_MOD_SRC)) {
+        hilog.info(DOMAIN, TAG, 'probe mod: not shipped at %{public}s, skipping',
+                   PROBE_MOD_SRC);
+        return;
+      }
+      if (!fs.accessSync(MODS_DIR)) {
+        /* Recursive: on a fresh install the whole .local/share/Mindustry chain
+         * is absent until the game has run once and created it itself. */
+        fs.mkdirSync(MODS_DIR, true);
+        hilog.info(DOMAIN, TAG, 'probe mod: created %{public}s', MODS_DIR);
+      }
+      fs.copyFileSync(PROBE_MOD_SRC, PROBE_MOD_DST);
+      const size: number = fs.statSync(PROBE_MOD_DST).size;
+      hilog.info(DOMAIN, TAG, 'probe mod seeded: %{public}s (%{public}d B)',
+                 PROBE_MOD_DST, size);
+    } catch (e) {
+      /* Loud on purpose. A silent failure here would read as "the game ignored
+       * the mod", which is a completely different conclusion. */
+      hilog.error(DOMAIN, TAG, 'probe mod seeding FAILED: %{public}s',
+                  JSON.stringify(e));
+    }
   }
 
   /*

@@ -32,6 +32,7 @@ python scripts/config.py          # 打印每个路径，以及它是否存在
 
 ```bash
 python scripts/prep_jdklib.py     # JDK 里按名字读取的那两个文件
+python scripts/prep_jdkconf.py    # java.home 相对路径下的其余文件（conf/ 等）
 python scripts/prep_lwjgl.py      # LWJGL —— jar 改名，原生库原样
 python scripts/prep_arc.py        # Arc 的原生库，取自那个定版 jar
 python scripts/prep_freetype.py   # Arc 的 freetype，取自 Arc 的 Android 构建
@@ -157,6 +158,7 @@ python scripts/config.py          # each path, and whether it exists
 
 ```bash
 python scripts/prep_jdklib.py     # the JDK pieces that are read by name
+python scripts/prep_jdkconf.py    # the rest of what java.home reads (conf/)
 python scripts/prep_lwjgl.py      # LWJGL -- jars renamed, natives in place
 python scripts/prep_arc.py        # Arc's natives, taken from the pinned jar
 python scripts/prep_freetype.py   # Arc's freetype, from Arc's Android build

@@ -109,3 +109,7 @@ _keep/
 _sects/
 _sandbox_backup_*/
 _crash_*.log
+
+# tools/probe-mod/build.sh output -- regenerated, and it is copied into
+# entry/libs/ (also ignored) where the bundle picks it up.
+tools/probe-mod/out/
