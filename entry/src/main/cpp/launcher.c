@@ -1406,7 +1406,15 @@ static char g_extra[MAX_EXTRA_OPTS][256];
 static const char *OPTION_PATHS[] = {
     /* ArkTS writes here from the launch parameters -- see EntryAbility.ets.
      * context.filesDir resolves to the ability's own files dir, which is NOT the
-     * same directory as DEST_ROOT (that one is the application-level files dir). */
+     * same directory as DEST_ROOT (that one is the application-level files dir).
+     *
+     * ⭐ The first entry is ALSO how the platform-version fallback works: on a
+     * phone below API 26 the JVM cannot get anonymous executable memory and must
+     * run interpreted, so ArkTS writes -Xint here. See RELEASE-MAINTENANCE.md
+     * 2.12. The file has to be REWRITTEN IN BOTH DIRECTIONS on every launch --
+     * a conditional write with a matching delete leaves -Xint behind after a
+     * phone is upgraded past 26, and the game then runs permanently interpreted
+     * with nothing to explain why. */
     "/data/storage/el2/base/haps/entry/files/jvm.options",
     DEST_ROOT "/jvm.options",
     "/data/local/tmp/jvm.options",

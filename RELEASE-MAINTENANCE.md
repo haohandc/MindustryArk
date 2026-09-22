@@ -670,6 +670,100 @@ needs the RELEASE-SIGNED package on a device we can watch.** A release-profile-s
    floor the app cannot meet is the worst of both: it installs, and then does not run.
 
 
+### 2.12 The executable-memory ACL does not cover phones, and three corrections
+
+**Source: the policy text Huawei shows when applying for the permission, supplied
+by the user 2026-09-22.** Everything below is either quoted from it or measured;
+where it is inference it says so.
+
+#### ⭐ The mechanism, which explains why API 24 fails and API 26 does not
+
+> Binary（可执行二进制，以下简称 bin）是操作系统中可通过 execve 系统调用创建为独立进程的文件……
+> 在历史版本中，系统已向应用开放了一些在内核进行权限管控的资源的权限，如
+> `ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY`（允许应用申请可执行的匿名内存）……
+> **从 ROM 版本 7.0 开始，bin 进程若想要使用 kernelpermission 的权限，需要应用主动为 bin
+> 声明权限并签名。**
+> 此变更已做版本隔离，**变更仅在应用的 `targetSdkVersion` 设置为大于等于 26.0.0 时生效。**
+
+⇒ The platform is moving to **withhold kernel permissions from `execve`'d binaries
+unless the app declares and signs for them.** That is why the same package works on
+ROM 7 / API 26 and cannot start on ROM 6.1.1 / API 24 -- 🔶 **inference**, but it is
+the first explanation that fits both observations without adding an assumption.
+
+#### ⛔ The permission is NOT available for phones
+
+> **支持设备：仅限鸿蒙平板、鸿蒙 PC/2in1 设备**
+> ① 应用若未上架过，"支持设备"请勿勾选手机
+> ② 应用若已上架且勾选手机设备分发，请拆分包体，确保 ACL 权限未在手机设备运行的 HAP
+>    上使用，并在权限申请时特别备注说明。
+
+And this app declares `deviceTypes = ["phone", "tablet", "2in1", "tv"]` -- verified
+in the built `module.json` **and** in `pack.info`, not just in the source.
+
+⇒ **The reviewer's device was a Mate 60: a phone.** So the ACL is not a route to
+fixing the reviewer's failure on phones, however the application is filled in.
+
+#### Three corrections, two of them to things written in this file
+
+**(a) "The ACL is per-device" was wrong, and it was mine.**
+The ACL grants a *permission*. **"支持设备" is what the APPLICANT ticks in AGC, and it
+is a property of the application, not of the permission.** The conflict is between
+our declared device list and Huawei's policy about which devices an app may cover --
+it is not a limitation of the permission. The practical consequence above stands;
+the reasoning that produced it did not.
+
+**(b) Lowering `targetSdkVersion` below 26 is not a fix, and cannot be tested here.**
+The version isolation above is real, but the failing device is **ROM 6.1.1**, where the
+7.0 change does not exist at all -- so its refusal to grant RWX is simply how that
+older platform behaves, and no `targetSdkVersion` value changes it. And the value that
+*would* be affected (an API 26 device running the RELEASE-signed package) cannot be
+tested, because a release-signed `.app` cannot be sideloaded. 🔶 **Inference on the
+first half; the second half is the same hard constraint as 2.10 and 2.11.**
+
+**(c) `compatibleSdkVersion = 6.1.1(24)` is still a false claim.** Every "it works"
+observation is from API 26. An app that installs on a device where it cannot run is
+worse than one that refuses to install. **Still unresolved.**
+
+#### Other requirements in the policy that were not known
+
+| | |
+|---|---|
+| **举证材料 ②** | a **design document in Word format** for the scenario using the permission. Not a paragraph in a form -- a document. |
+| **坚盾守护模式** | *"使用该权限时，如果用户开启坚盾守护模式，系统将禁止应用申请匿名可写可执行内存；应用需考虑该情况的适配，确保应用稳定运行、无闪退"* ⇒ **even with the permission granted, a user setting can remove it.** A fallback is required regardless of whether the ACL is approved. |
+| **开发者承诺** | no remote dynamic code delivery or hot-updates; misuse costs the permission *and* the listing. |
+
+#### The three routes, and what was chosen
+
+| | approach | keeps phones? | status |
+|---|---|---|---|
+| **A** | Do not ship to phones at all (drop `phone` from `deviceTypes`) | ✗ | not chosen |
+| **B** ⭐ | detect the platform and switch to `-Xint` (pure interpreter) on phones below API 26 | ✓ | **chosen by the user 2026-09-22** |
+| **C** | lower `targetSdkVersion` below 26 | ? | **withdrawn** -- (b) above |
+
+**And the ACL application continues** (the user's decision): tablets and 2in1 keep the
+JIT, phones get the interpreter. ⚠️ Note the open question this creates -- if a
+RELEASE-signed package *also* needs the permission on API 26, then the ACL is not
+optional for tablets either, and the split-shipping Huawei asks for becomes mandatory
+rather than merely compliant.
+
+#### B in one paragraph, for whoever implements it
+
+`launcher.c` already reads a `jvm.options` file from three candidate locations, one of
+which ArkTS can write, and the ArkTS→native file bridge is already proven (`ime_cmd`).
+So: ArkTS reads `deviceInfo.sdkApiVersion` and `deviceInfo.deviceType`; if
+`deviceType == 'phone'` **and** `sdkApiVersion < 26`, write `-Xint` into that file;
+otherwise **remove it**. ⚠️ **Rewrite every launch in both directions** -- a
+conditional write with a matching delete has a state-transition bug the first time a
+phone is upgraded past 26: the `-Xint` survives and the game runs permanently
+interpreted with nothing to explain why.
+
+⚠️⚠️ **What cannot be verified from here.** `-Xint` cannot be *tested* for effect: no
+API 24 device is available, so whether it avoids the RWX request, and whether Mindustry
+is playable under pure interpretation, are both open. What CAN be tested is that the
+change does not disturb API 26 devices -- and that is what any local check will cover.
+**Do not read "runs on the tablet" as evidence that B works.**
+
+
 ## 3. Release page copy
 
 ### Title
