@@ -151,7 +151,7 @@ APP_NAME = "MindustryArk"
 # So the leading "v" belongs to the release tag and the artifact name, never to
 # the version name, and the safe alphabet for both is digits, letters, dot,
 # underscore and hyphen.
-APP_VERSION = "0.3.0.1"
+APP_VERSION = "1.0.0.1"
 
 # versionCode is the integer the platform actually orders installs by.
 #
@@ -190,7 +190,18 @@ APP_VERSION = "0.3.0.1"
 # version_code_for() below derives it, and the module checks its own constant
 # against the derivation, so a version bump that forgets the code fails on
 # import rather than shipping an install that cannot replace the previous one.
-VERSION_CODE = 30001
+#
+# ⭐ WHY THIS JUMPED FROM 0.3.0.1 TO 1.0.0.1 (2026-09-22, the user's call).
+# The app is feature-complete and verified on two devices, and it is heading for a
+# store listing -- where this string is what a user reads. SemVer's 0.x literally
+# means "not for production, anything may change", so staying there would have
+# understated it. 1.0.0 is the release this RC is a candidate for.
+#
+# ⚠️ The versionCode jump 30001 -> 1000001 is what makes it an UPGRADE rather
+# than a downgrade, so anyone already on `0.3.0.1` installs this in place. The
+# reverse is not true: once a 1.0.0 build is out, going back to any 0.x is a
+# downgrade and the platform refuses it.
+VERSION_CODE = 1000001
 
 
 def version_code_for(version):
