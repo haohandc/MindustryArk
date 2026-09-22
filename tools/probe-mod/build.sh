@@ -69,21 +69,28 @@ fi
 echo "   gate: no game classes bundled"
 
 # ---------------------------------------------------------------------------
-# Place it where the bundle picks it up.
+# THIS NO LONGER INSTALLS ANYTHING INTO THE BUNDLE, and that is the change.
 #
-# Under libs/ and named ".so" because hvigor carries *.so out of libs/ and
-# drops everything else silently -- measured, and it is the same rename the
-# module image and the game jar already use. The launcher then reads it at
-# <bundle>/libs/arm64/probe/probe-mod.jar.so and ArkTS copies it into the
-# game's mods directory; see PROBE_MOD_SRC in Index.ets.
+# It used to copy the jar to entry/libs/arm64-v8a/probe/probe-mod.jar.so, from
+# where ArkTS (seedProbeMod in Index.ets) copied it into the game's mods
+# directory at every launch. BOTH HALVES ARE GONE:
 #
-# Doing the copy here rather than by hand: this file is the only description of
-# how the probe is built, and a step left outside it is a step that gets
-# forgotten and then produces a probe that silently tests the previous jar.
+#   * the seeding was an UNCONDITIONAL overwrite at every launch, so deleting
+#     probe-mod.jar in the game put it back -- the same defect as the folder scan
+#     and the floating ball's import row, all three removed together.
+#   * with nothing copying it out, installing it into libs/ only ships 1.2 KB of
+#     unused jar inside every HAP.
+#
+# The build itself still works and still gates the result, so this remains the
+# description of how the probe is made. To use one now, copy the jar below into
+# the game's mods directory by hand (through the game's own import button), or
+# restore the seeding from git history if an automatic planting is really wanted
+# again.
+#
+# ⚠️ Do not re-add the copy into libs/ without also deciding what happens when
+#    the player deletes the mod. The old answer was "it comes back", and that is
+#    the answer the whole importer was removed for.
 # ---------------------------------------------------------------------------
-DEST="entry/libs/arm64-v8a/probe/probe-mod.jar.so"
-mkdir -p "$(dirname "$DEST")"
-cp "$OUT/probe-mod.jar" "$DEST"
 echo
-echo "   installed -> $DEST"
-echo "   sha256 $(sha256sum "$DEST" | cut -d' ' -f1)"
+echo "   built -> $OUT/probe-mod.jar"
+echo "   (not installed into the bundle; see the note above)"

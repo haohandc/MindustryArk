@@ -4,8 +4,7 @@ import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { KeyCode } from '@kit.InputKit';
 import { window } from '@kit.ArkUI';
-import { pickMods, ensureModFolder, scanModFolder, ModImportReport,
-         takeLastScan } from '../mods/ModImporter';
+import { ensureModFolder } from '../mods/ModImporter';
 /* `focusControl` needs no import: it is an ArkTS framework global, like
  * getContext. Importing it from @kit.ArkUI does not compile. */
 
@@ -294,34 +293,38 @@ const IME_CMD_FILE = '/data/storage/el2/base/files/ime_cmd';
 const IME_RECT_FILE = '/data/storage/el2/base/files/ime_rect';
 
 /*
- * Where the game keeps its mods.
+ * A MODS_DIR CONSTANT LIVED HERE and is gone with its only user. Nothing in this
+ * file writes into the game's mods directory any more, so naming it here would
+ * be a path written down for no reader.
  *
- * An absolute literal for the same reason as the IME files above: this is the
- * APPLICATION-level directory the native side shares, while ArkTS's
- * context.filesDir is the module-level one. They look almost identical and are
- * not interchangeable.
- *
- * The path is not a guess about layout -- it is the game's own arithmetic. The
- * launcher points user.home at DEST_ROOT, and Arc's
- * OS.getAppDataDirectoryString() builds "<user.home>/.local/share/Mindustry/";
- * Vars.modDirectory is dataDirectory.child("mods/"). Confirmed by listing it on
- * the device.
+ * Kept as a note because the arithmetic is worth remembering if it is ever needed
+ * again: the launcher points user.home at DEST_ROOT, Arc's
+ * OS.getAppDataDirectoryString() builds "<user.home>/.local/share/Mindustry/",
+ * and Vars.modDirectory is dataDirectory.child("mods/") -- so on the device it is
+ * /data/storage/el2/base/files/.local/share/Mindustry/mods. It is an absolute
+ * literal rather than something derived, for the same reason as the IME files
+ * above: that is the APPLICATION-level directory native code shares, while
+ * context.filesDir is the module-level one.
  */
-const MODS_DIR = '/data/storage/el2/base/files/.local/share/Mindustry/mods';
 
 /*
- * The probe mod, shipped inside the bundle.
+ * seedProbeMod() and its two constants lived here. REMOVED, and the reason is
+ * the same one that removed the menu row and the folder scan:
  *
- * hvigor extracts libs/** into /data/storage/el1/bundle/libs/<abi>/, which is
- * where the launcher already reads the game jar from. The name ends in .so only
- * because hvigor packages *.so out of libs/ and silently drops everything else
- * -- the same rename the game jar and the module image already use. The bytes
- * are an ordinary jar.
+ *   the copy was UNCONDITIONAL on every launch. It is a development probe, so a
+ *   developer deleting probe-mod.jar by hand was normal -- and the next launch
+ *   put it back, exactly like the mods the folder scan resurrected. An app that
+ *   decides a mod exists, and cannot be told otherwise from inside the game, is
+ *   the problem; being a probe does not make it a different problem.
  *
- * See tools/probe-mod/ for what is in it and why.
+ * ⇒ With this gone the app never writes into the mods directory at all. The only
+ *   thing that puts a mod there is the game itself, when the player uses its own
+ *   import button.
+ *
+ * ⚠️ tools/probe-mod/ is still in the repository and still builds. What is gone
+ *   is the automatic planting -- so a probe-mod.jar left over on a device will
+ *   now STAY deleted when it is deleted in the game, which is the point.
  */
-const PROBE_MOD_SRC = '/data/storage/el1/bundle/libs/arm64/probe/probe-mod.jar.so';
-const PROBE_MOD_DST = MODS_DIR + '/probe-mod.jar';
 
 /*
  * Which control scheme the player chose, read by the launcher before the JVM
@@ -414,8 +417,13 @@ const BALL_MENU_PAD_VP = 16;
  * last mistake here was a height that was right for the count it was written
  * for. Adding a row is now one edit instead of two -- and the one that is easy
  * to forget is the one that is written down.
+ *
+ * ⚠️ IT HAS BEEN 3 AND IS NOW 2, because the "导入模组" row was removed. That is
+ * exactly the two-edit change this constant exists to force: leaving it at 3
+ * would have reserved a row's height that is not drawn, and the menu would hang
+ * that much lower than it needs to.
  */
-const BALL_MENU_ROWS = 3;
+const BALL_MENU_ROWS = 2;
 const BALL_MENU_H_VP = BALL_MENU_ROWS * BALL_MENU_ROW_VP
                      + (BALL_MENU_ROWS - 1) * BALL_MENU_DIVIDER_VP
                      + BALL_MENU_PAD_VP;
@@ -496,26 +504,6 @@ const IME_DISMISS_MS = 1500;
  * reaches the game.
  */
 const IME_FIELD_MARGIN_VP = 24;
-
-/**
- * What to say after files landed in the mods directory during startup.
- *
- * Deliberately does NOT name Downloads. The file may equally have come from the
- * folder being created for the first time, and what matters to the player is
- * where the mod ended up -- the mods directory inside the sandbox -- not the
- * folder it was staged in. The previous wording said "已从 Download 导入", which
- * read as though the import had stopped half way, in Downloads.
- *
- * No restart is mentioned either, and that is not an oversight: every caller of
- * this runs before the game scans the directory, so the mod is already live on
- * this launch. The picker's message in importMods is worded differently for
- * exactly that reason -- it lands files after the scan, so it has to ask.
- */
-function importedMessage(report: ModImportReport): string {
-  return report.landed.length === 1
-    ? '已导入 ' + report.landed[0].name
-    : '已导入 ' + report.landed.length + ' 个模组';
-}
 
 @Entry
 @Component
@@ -680,53 +668,22 @@ struct Index {
      * Checked and recreated every launch, so a folder the player deleted comes
      * back. Runs after requestPerms() has been STARTED above but not awaited:
      * the picker mode needs no permission, so there is nothing to wait for.
+     *
+     * ⚠️ WHAT THIS FOLDER IS FOR HAS CHANGED, and the function name has not kept
+     * up -- it is still ensureModFolder / mod_folder on disk. It used to be a
+     * staging area whose contents were swept into the game's mods directory at
+     * every launch, and it is now purely the directory the game's own file
+     * browser opens in: EntryAbility writes its path to user_dirs.txt, the
+     * launcher passes it as -Darc.sdl.chooserPath, and that is what makes
+     * "import mod" and save import/export open somewhere the player can reach.
+     *
+     * ⇒ Nothing reads its contents any more. A file dropped in it is reachable
+     *   through the game's browser and has to be PICKED there; it is no longer
+     *   taken. That is the fix for a mod being resurrected after being deleted in
+     *   the game, and for a save (.zip) being swept into the mods directory as
+     *   though it were a mod.
      */
     ensureModFolder(ctx, ctx.filesDir + '/mod_folder')
-      .then(() => {
-        /*
-         * Report whatever this launch imported, then forget it.
-         *
-         * ⚠️ INSIDE the then, and TAKEN rather than read. Both halves are bug
-         * fixes, and they cover different failures:
-         *
-         *   inside   the ability already scanned during onCreate, and this page
-         *            scans again just below. Reading synchronously out here --
-         *            before this chain resolves -- reported the ability's scan
-         *            and never this page's, and on a first launch the page's is
-         *            the one that matters: the folder did not exist yet when the
-         *            ability ran, so it is created during this very call.
-         *
-         *   taken    takeLastScan clears what it returns. As a plain getter it
-         *            stayed readable forever, so aboutToAppear -- which runs
-         *            again whenever the page comes back to the foreground,
-         *            including on the way back from the system picker -- kept
-         *            replaying "imported <mod>" long after the import, on every
-         *            reopen. Reported from the device in those words.
-         *
-         * Nothing landed means nothing to say, and that is the normal case: an
-         * already-present file is skipped, so this fires on the launch after one
-         * was dropped in, and not again.
-         */
-        scanModFolder(ctx.filesDir + '/mod_folder');
-        const imported: ModImportReport = takeLastScan();
-        /*
-         * Logged on BOTH branches, because "said nothing" and "never ran" are
-         * otherwise indistinguishable -- a rule this project already learned the
-         * hard way on the scan line below.
-         *
-         * It is here specifically because of this bug. A toast is pixels: no log
-         * records that one was shown, so a toast replayed on every return to the
-         * foreground looked exactly like a toast shown once, and the only
-         * detector was the player's eye. This line is what makes the decision
-         * checkable without one -- count these against one launch.
-         */
-        hilog.info(DOMAIN, TAG, 'mods: %{public}d imported this launch, %{public}s',
-                   imported.landed.length,
-                   imported.landed.length > 0 ? 'announcing' : 'staying quiet');
-        if (imported.landed.length > 0) {
-          this.toast(importedMessage(imported));
-        }
-      })
       .catch((e: BusinessError) => {
         hilog.warn(DOMAIN, TAG, 'mod folder setup failed: %{public}s', e.message);
       });
@@ -749,10 +706,9 @@ struct Index {
      * SDL_main starts, which is when the XComponent mounts.
      */
     this.setupCompatMode();
-    /* Same deadline, different reason: the game scans the mods directory once,
-     * during Vars.load(), and that is also downstream of the XComponent
-     * mounting. See the note on seedProbeMod. */
-    this.seedProbeMod();
+    /* seedProbeMod() used to be called here, to plant probe-mod.jar before the
+     * game scanned the mods directory. Removed -- nothing this app runs now
+     * writes into that directory. See the note where it used to be defined. */
   }
 
   /*
@@ -1191,26 +1147,10 @@ struct Index {
     }
   }
 
-  async importMods(): Promise<void> {
-    const ctx = getContext(this) as common.UIAbilityContext;
-    const report: ModImportReport = await pickMods(ctx);
-    if (report.cancelled) {
-      /* The player closed the picker. Nothing happened, so there is nothing to
-       * report -- and an error toast here would be a lie about their own act. */
-      return;
-    }
-    let message: string = report.error;
-    if (report.landed.length > 0) {
-      message = report.landed.length === 1
-        ? '已导入 ' + report.landed[0].name + '，重启游戏后生效'
-        : '已导入 ' + report.landed.length + ' 个模组，重启游戏后生效';
-    } else if (message.length === 0) {
-      message = '未导入任何模组';
-    }
-    hilog.info(DOMAIN, TAG, 'mods import: %{public}d landed, error=%{public}s',
-               report.landed.length, report.error);
-    this.toast(message);
-  }
+  /*
+   * importMods() was here. Removed with the menu row that called it -- see the
+   * note in build() where the row used to be.
+   */
 
   /*
    * Record the window size, and put the ball at the right edge the first time we
@@ -1622,58 +1562,6 @@ struct Index {
     }
     this.imeSent = next;
     this.appendCmd(cmds);
-  }
-
-  /*
-   * TEMPORARY PROBE -- delete this method, the two PROBE_MOD_ constants and
-   * libs/arm64-v8a/probe/ once mod loading is confirmed on the device.
-   *
-   * WHY IT EXISTS
-   *   Whether a class loaded at runtime out of a mod jar can be defined and
-   *   executed under this JVM has never been tested here. Everything ELSE about
-   *   mods is stock Mindustry and needs no help -- the scan, the meta parsing,
-   *   the content parser and the lifecycle are all plain Java in the game jar.
-   *   So the whole question is one class definition, and it is worth isolating.
-   *
-   *   hdc cannot write into the app sandbox: measured, E005005 permission
-   *   denied, through BOTH the /data/app/el2/100/base view and the
-   *   /data/storage/el2/base one. So the file has to arrive inside the bundle
-   *   and be copied out by this side.
-   *
-   * WHY THE MOD PRINTS RATHER THAN ADDS CONTENT
-   *   "It appears in the mod list" is not the same as "it took effect" -- a rule
-   *   this project already learned the hard way. A marker line can only be
-   *   produced by the class body actually executing, so it proves the class was
-   *   defined AND its lifecycle was called. Appearing in a list proves neither.
-   *
-   * The copy is unconditional: this is a probe, and a deterministic state each
-   * launch is worth more here than preserving anything.
-   *
-   * See tools/probe-mod/.
-   */
-  private seedProbeMod(): void {
-    try {
-      if (!fs.accessSync(PROBE_MOD_SRC)) {
-        hilog.info(DOMAIN, TAG, 'probe mod: not shipped at %{public}s, skipping',
-                   PROBE_MOD_SRC);
-        return;
-      }
-      if (!fs.accessSync(MODS_DIR)) {
-        /* Recursive: on a fresh install the whole .local/share/Mindustry chain
-         * is absent until the game has run once and created it itself. */
-        fs.mkdirSync(MODS_DIR, true);
-        hilog.info(DOMAIN, TAG, 'probe mod: created %{public}s', MODS_DIR);
-      }
-      fs.copyFileSync(PROBE_MOD_SRC, PROBE_MOD_DST);
-      const size: number = fs.statSync(PROBE_MOD_DST).size;
-      hilog.info(DOMAIN, TAG, 'probe mod seeded: %{public}s (%{public}d B)',
-                 PROBE_MOD_DST, size);
-    } catch (e) {
-      /* Loud on purpose. A silent failure here would read as "the game ignored
-       * the mod", which is a completely different conclusion. */
-      hilog.error(DOMAIN, TAG, 'probe mod seeding FAILED: %{public}s',
-                  JSON.stringify(e));
-    }
   }
 
   /*
@@ -2093,31 +1981,31 @@ struct Index {
             .color('#22ffffff')
 
           /*
-           * Entry: bring mod files in.
+           * There was an "导入模组" row here (select a file → copy it into the mods
+           * directory) and it has been REMOVED, deliberately, along with the two
+           * other ways this app used to put files there on its own.
            *
-           * A second way in -- a folder in Downloads -- runs at startup; this is
-           * the discoverable one.
+           * WHY. All three made the app decide when a mod exists, and the player
+           * could not undo that decision from inside the game. The one that did
+           * the damage copied anything in the app's Downloads folder into the mods
+           * directory at every launch, skipping only files already present at the
+           * same size -- so deleting a mod in the game (which deletes it from the
+           * sandbox) brought it straight back on the next launch, forever. That
+           * folder is ALSO the root the game's own file browser opens in, and
+           * saves are .zip, so a save sitting there was swept into the mods
+           * directory as though it were a mod.
            *
-           * ⚠️ This is NOT the only way: the game's own import button works on
-           * the device (confirmed by the user, with our updated JDK -- it uses
-           * the game's own in-game browser over Arc's Fi, not the native dialog).
-           * An earlier revision of this comment claimed the button was dead,
-           * which was wrong. See ModImporter for the measurement and the note.
+           * ⇒ The one way in is now the GAME'S OWN import button, which is manual
+           *   by construction: the player picks a file and the game copies it. It
+           *   works here (confirmed on the device) and needs no code from us. The
+           *   Downloads folder is still created and still serves as the browser's
+           *   root -- so a mod dropped there is still reachable, it just has to be
+           *   picked rather than being taken.
+           *
+           * ⚠️ The row count is derived (BALL_MENU_ROWS), so removing a row is not
+           * a one-line change: that constant feeds BALL_MENU_H_VP, which ballMenuY
+           * clamps against.
            */
-          Row() {
-            Text('导入模组')
-              .fontSize(BALL_MENU_FONT_VP)
-              .fontColor('#eef2f9')
-            Blank()
-            Text('选择文件').fontSize(BALL_MENU_HINT_FONT_VP).fontColor('#8fb4ff')
-          }
-          .width('100%')
-          .height(BALL_MENU_ROW_VP)
-          .onClick(() => { this.importMods(); })
-
-          Divider()
-            .strokeWidth(BALL_MENU_DIVIDER_VP)
-            .color('#22ffffff')
 
           /*
            * Entry: who made this, where it lives, and what it is not.

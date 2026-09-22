@@ -5,7 +5,7 @@ import { window } from '@kit.ArkUI';
 import { i18n } from '@kit.LocalizationKit';
 import { inputMethod } from '@kit.IMEKit';
 import { fileIo as fs, Environment } from '@kit.CoreFileKit';
-import { scanModFolder, modFolderPath } from '../mods/ModImporter';
+import { modFolderPath } from '../mods/ModImporter';
 import pointer from "@ohos.multimodalInput.pointer"
 import sdl from 'libSDL3.so';
 
@@ -228,16 +228,7 @@ export default class EntryAbility extends UIAbility {
     writeJvmOptions(want, this.context.filesDir);
     writeUserDirs(this.context.filesDir);
     /*
-     * Before the game scans its mods directory -- which happens exactly once,
-     * inside Vars.load(), and downstream of the XComponent mounting. So anything
-     * the player leaves in the app's folder in Downloads is live on this launch,
-     * with no further ceremony.
-     *
-     * Fails soft by design: if the folder cannot be created or read, the launch
-     * carries on and the mod list is simply empty. See ModImporter.
-     */
-    /*
-     * Reading only. CREATING the folder happens on the page, not here.
+     * The folder CREATION happens on the page, not here, and this is reading only.
      *
      * This ran here for one revision, on the reasoning that the folder should
      * exist before the launcher is told about it. It does not belong here: with
@@ -247,16 +238,19 @@ export default class EntryAbility extends UIAbility {
      * exists, which makes 13900042 look like "no usable window yet" even though
      * DOWNLOAD mode shows no dialog.
      *
-     * So the split is: read here (cheap, no picker), create on the page (where
-     * the window is). The scan still finds anything already in the folder, and
-     * it still runs before the game looks at mods/.
+     * So the split is: read here (cheap, no picker), create on the page (where the
+     * window is). writeUserDirs() above is the read.
      *
-     * The cost is that on a fresh install nothing has created the folder yet, so
-     * writeUserDirs() above had nothing to put in the bridge and the game's file
-     * browser opens in the sandbox for that one launch. From the next launch on
-     * it is known. That was already true of the revision before this one.
+     * ⚠️ A scanModFolder() CALL USED TO BE HERE and is removed. It copied the
+     * folder's contents into the game's mods directory at every launch, which
+     * resurrected mods the player had deleted in the game. Nothing reads that
+     * folder's contents any more -- it exists to be the directory the game's own
+     * file browser opens in. See the note in Index.ets where the call was.
+     *
+     * The cost is unchanged and was already true: on a fresh install nothing has
+     * created the folder yet, so writeUserDirs() had nothing to put in the bridge
+     * and the game's browser opens in the sandbox for that one launch.
      */
-    scanModFolder(this.context.filesDir + '/mod_folder');
     this.startExitWatch(this.context);
     try {
         // This hands stuff to SDL's C code that it needs to deal with ArkTS interfaces. We are trying not to write scripting code, if we can

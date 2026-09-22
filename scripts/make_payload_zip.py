@@ -11,7 +11,7 @@ WHY THIS IS A SCRIPT AND NOT A COMMAND SOMEONE RUNS BY HAND
     working tree showed it was MISSING 21 entries --
 
         20 x entry/libs/arm64-v8a/jdkhome/...   (produced by prep_jdkconf.py)
-         1 x entry/libs/arm64-v8a/probe/probe-mod.jar.so
+         1 x entry/libs/arm64-v8a/probe/probe-mod.jar.so   (no longer produced)
 
     and nothing extra. That is not a cosmetic difference. jdkhome/conf/security/
     java.security is what Security.<clinit> reads, and without it the JVM cannot
@@ -71,8 +71,13 @@ REQUIRED = {
         "in a way that looks like a server problem -- run scripts/prep_jdkconf.py",
     "game/mindustry.so":
         "the game jar, renamed. The classpath points at it",
-    "probe/probe-mod.jar.so":
-        "the probe mod. tools/probe-mod/build.sh installs it here",
+    # "probe/probe-mod.jar.so" USED TO BE REQUIRED HERE and is no longer, because
+    # it is no longer produced: tools/probe-mod/build.sh stopped installing it
+    # into libs/, since the ArkTS code that copied it into the game's mods
+    # directory at every launch was removed along with the rest of the importer.
+    # Leaving the assertion in would now fail on a perfectly good tree -- and a
+    # check that fails on a correct tree is the same defect as one that passes on
+    # a broken one: it trains the reader to ignore it.
 }
 
 # NOT asserted, on purpose: libmain.so and libSDL3.so.
