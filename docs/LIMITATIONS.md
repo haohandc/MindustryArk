@@ -118,101 +118,32 @@
 且代价随**视野面积**放大 —— 屏幕越大越吃力。
 
 
-## ⚠️「下载」目录：文件夹在，但有些机型上应用**够不到它**
+## ✅「下载」目录：手机上走的是**应用自己创建的那个文件夹**
 
-⚠️ **说清楚一件事**：这台手机的**「下载」目录是存在且正常的**（用户确认）——
-**不是**「这个机型没有下载目录」。缺的是**应用拿到它路径的那条路**。
+⚠️ **这一节原来写的是「手机够不到下载目录」，那个结论已被推翻** —— 够得到，只是**换了一条路**。
 
-**现象**：在 **Mate 80 Pro 手机**上，应用申请「下载目录」权限时**不弹窗**，
-权限列表里也看不到它，而且**「Download/MindustryMods/」这个入口用不了**。
-**在 MatePad Pro 平板上一切正常。**
+**两条路，名字很像，机制完全不同**：
 
-**依据（同一份 HAP、同一个签名 —— `appId` 逐字符相同，两台设备实测）**：
-
-| | 权限状态 |
-| --- | --- |
-| 平板 MatePad Pro | `[0, 0]` 两个都**已授予** |
-| 手机 Mate 80 Pro | `[0, -1]` 下载权限**未授予** |
-
-手机上应用自己记录的原文：
-
-```text
-mods: no Downloads directory (The device doesn't support this api)
-permission request: ....READ_WRITE_DOWNLOAD_DIRECTORY -> auth=2 dialogShown=true errorReason=0
-```
-
-⚠️ **这三个值互相矛盾，所以这里只报事实、不解释原因**：
-
-| 字段 | 值 | SDK 的说法 |
+| | `Environment.getUserDownloadDir()` | `DocumentPickerMode.DOWNLOAD` |
 | --- | --- | --- |
-| `authResults` | `2` | 「无效请求」（未声明 / 名字无效 / 申请条件不满足）|
-| `dialogShownResults` | `true` | 「系统**弹了**授权弹窗」|
-| `errorReasons` | `0` | 「**本次请求有效**」|
+| 官方说法 | 需要 `SystemCapability.FileManagement.File.Environment.FolderObtain`，**仅支持 2in1 设备** | **自动创建在 `Download/包名/` 目录**；跳过选择界面；返回的 URI 已具备持久化权限 |
+| 手机上的结果 | ⛔ 抛「The device doesn't support this api」 | ✅ **可用** |
+| 要不要权限 | 要 `READ_WRITE_DOWNLOAD_DIRECTORY` | **不要任何权限** |
 
-而且整个调用在发出后约 **170 毫秒**就返回了 —— 人不可能这么快看完并关掉一个弹窗。
-**三个字段凑不出一个自洽的故事**，所以本文件不声称知道原因。
+⇒ **手机上用的是第二条。** 应用在「下载」里创建一个**以包名命名的文件夹**
+（`Download/com.haohandc.mindustryark`），玩家用任何文件管理器把模组丢进去即可。
 
-⭐ 这里曾经写过「`authResults = 2` 是无效请求，所以永远不会弹窗」—— 那是**从 SDK 的
-字段说明推出来的**，而上面的实测组合**不支持**这个推断。已撤回。**能确定的是结果**：
-**权限没授予，玩家看不到任何提示。**
+**怎么用**：悬浮球菜单 → **「模组文件夹」**。⚠️ **不会弹任何选择框**（DOWNLOAD 模式跳过界面）。
 
-⚠️ **但「设备能力差异」这句也被后续测量推翻了一半**：`atm dump --definition` 在两台设备上
-给出的定义**逐字相同** ——
+**依据（设备实测）**：toast 出现、「文件管理」里能看到那个包名文件夹；
+`user_dirs.txt` 里 `mods=/storage/Users/currentUser/Download/com.haohandc.mindustryark`，
+启动器日志 `file browser will open at (mod folder): ...`。
 
-```text
-permissionName : ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY
-grantMode      : USER_GRANT      <- 普通用户授权，不是 ACL
-availableLevel : NORMAL
-provisionEnable: true
-```
+⚠️ **仍未验证**：游戏的**文件浏览器**（走 libc，不是走 URI）能否读那个路径 ——
+应用的授权是**按 URI** 持有的，而浏览器用**路径**。这是下一步要在设备上看的。
 
-⇒ 它**不是 ACL 权限、也不分设备类型**，**本来就该能在手机上授予**。两台设备的系统版本
-也完全相同（`OpenHarmony-7.0.0.105`、API 26、同一 build）。
-**所以「为什么手机上弹窗不出来」至今没有解释**，只知道结果。
-
-⇒ 能确定的只有：**在这台手机上，这个权限拿不到，且用户看不到任何提示。**
-
-### ⭐⭐ 后来把它拆成了两个独立的原因
-
-用 `atm perm --grant` **手动**授予，返回 `Success`，`reqPermissionStates` 从 `[0, -1]`
-变成 **`[0, 0]`** ⇒ **这台手机是能给这个权限的**，权限本身没有问题。
-
-重启应用后：
-
-```text
-permission ... state before = 0                              <- 已授予
-permission request: ... -> auth=0 dialogShown=false          <- 变成 0 了
-```
-
-**但同一份日志里：**
-
-```text
-user_dirs.txt : download=<threw>                             <- 仍然抛异常
-launcher      : no user download dir available
-```
-
-⇒ **`Environment.getUserDownloadDir()` 抛异常【与权限无关】** —— 权限给足了它照样抛
-「The device doesn't support this api」。**同一个设备上 `getUserDocumentDir()` 也抛。**
-
-| | 原因 | 能否修 |
-| --- | --- | --- |
-| **A** | 未授权时应用的请求返回 `auth=2`、**不弹窗** ⇒ 玩家**永远无法通过应用授权** | ⚠️ 权限本身可授（手动证实），是**弹窗那条路**的问题 |
-| **B** | `Environment.getUser*Dir()` **恒抛异常**，与权限无关 | ❌ **不是本应用能改的** —— 这组 API 在该机型上不可用 |
-
-⭐ **B 才是真正的墙，而且它吻合「按设备类型区分」的猜想** —— 两机权限定义逐字相同，
-但**API 的可用性不同**（那行错误信息就是字面意思）。
-
-**影响**：这台手机上，`Download/MindustryMods/` 与「从下载目录导入存档」**用不了**。
-**不受影响**：悬浮球菜单里的**「导入模组」走系统文件选择器，不需要任何权限**，照常可用。
-
-
-**影响**：在这类机型上，
-「存档从下载目录导入/导出」与「Downloads 文件夹放模组」**用不了**。
-
-**不受影响**：悬浮球菜单里的**「导入模组」走系统文件选择器，不需要任何权限**，
-在这些机型上照常可用 —— 这也是当初做两个入口的原因。
-
----
+⚠️ **顺带**：`READ_WRITE_DOWNLOAD_DIRECTORY` 现在**没有任何用途**了（机器上那条路用不到它），
+但**仍然声明在包里** —— 这是**上架审核的风险**，考虑撤掉。
 
 ## ⚠️ 模组：导入后要重启，文件在沙箱内
 
@@ -375,115 +306,39 @@ untouched -- and its cost grows with the VISIBLE AREA, so a larger screen suffer
 more.
 
 
-## ⚠️ The Download folder is there; on some devices the app cannot reach it
+## ✅ The Download folder: on phones the route is the folder the app creates itself
 
-⚠️ **One thing to be precise about**: on that phone the **Download folder exists
-and is perfectly normal** (confirmed by the user) -- it is **not** a device
-without a Downloads folder. What is missing is the **app's route to its path**.
+⚠️ **This section used to say the phone cannot reach Downloads. That is refuted**
+-- it can, by a different route.
 
-**What happens**: on the **Mate 80 Pro phone**, requesting the Download-directory
-permission shows **no dialog**, the permission does not appear in the permission
-list, and **the `Download/MindustryMods/` entry point does not work**. On the
-**MatePad Pro tablet** all of it works.
+**Two routes, similar names, entirely different mechanisms**:
 
-**Evidence** (one HAP, one signature -- identical `appId` -- measured on both):
-
-| | permission state |
-| --- | --- |
-| tablet, MatePad Pro | `[0, 0]` -- both granted |
-| phone, Mate 80 Pro | `[0, -1]` -- the Download one **not granted** |
-
-The app's own log from the phone:
-
-```text
-mods: no Downloads directory (The device doesn't support this api)
-permission request: ....READ_WRITE_DOWNLOAD_DIRECTORY -> auth=2 dialogShown=true errorReason=0
-```
-
-⚠️ **Those three values contradict each other, so this file reports the facts and
-claims no cause**:
-
-| field | value | what the SDK says |
+| | `Environment.getUserDownloadDir()` | `DocumentPickerMode.DOWNLOAD` |
 | --- | --- | --- |
-| `authResults` | `2` | "invalid request" (not declared / bad name / conditions unmet) |
-| `dialogShownResults` | `true` | "the system **has shown** the authorization dialog" |
-| `errorReasons` | `0` | "this request **is valid**" |
+| The documentation | needs `SystemCapability.FileManagement.File.Environment.FolderObtain`, **"currently 2in1 devices only"** | **creates `Download/<bundle name>/` automatically**; skips the picker UI; the URI it returns already carries persistent permission |
+| On a phone | ⛔ throws "The device doesn't support this api" | ✅ **works** |
+| Permission needed | `READ_WRITE_DOWNLOAD_DIRECTORY` | **none at all** |
 
-and the whole call returns about **170 ms** after it is made -- far too fast for
-a person to have read and dismissed a dialog. **The three fields do not add up to
-one story**, so no explanation is offered here.
+⇒ **Phones use the second one.** The app creates a folder named after the bundle
+inside Downloads (`Download/com.haohandc.mindustryark`) and the player drops mod
+files into it with any file manager.
 
-⭐ An earlier version of this section said "`authResults = 2` means invalid
-request, so no dialog will ever appear". That was **inferred from the SDK's field
-description**, and the measured combination above does not support it.
-Withdrawn. **What is certain is the outcome**: the permission is not granted and
-the player sees no prompt.
+**How to use it**: floating ball menu -> **"模组文件夹"**. ⚠️ **No picker appears** --
+DOWNLOAD mode skips its UI entirely.
 
-⚠️ **But "a device capability difference" was itself half-refuted by a later
-measurement**: `atm dump --definition` returns a **byte-identical** definition on
-both devices --
+**Evidence (measured on the device)**: the toast appeared and the bundle-name
+folder is visible in the file manager; `user_dirs.txt` carries
+`mods=/storage/Users/currentUser/Download/com.haohandc.mindustryark`, and the
+launcher logs `file browser will open at (mod folder): ...`.
 
-```text
-permissionName : ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY
-grantMode      : USER_GRANT      <- an ordinary user grant, not an ACL
-availableLevel : NORMAL
-provisionEnable: true
-```
+⚠️ **Still unverified**: whether the game's own **file browser** (which goes
+through libc, not through the URI) can read that path -- the app's grant is held
+**per URI** while the browser uses a **path**. That is the next thing to check on
+the device.
 
-⇒ it is **not an ACL permission and not device-type restricted**, so it *should*
-be grantable on the phone. The two devices also run the **same OS build**
-(`OpenHarmony-7.0.0.105`, API 26). **Why the dialog fails to appear on the phone
-is therefore still unexplained**; only the outcome is known.
-
-⇒ What is certain: **on this phone the permission cannot be obtained, and the
-player is shown nothing.**
-
-### ⭐⭐ Two independent causes, later separated
-
-Granting it **by hand** with `atm perm --grant` returns `Success`, and
-`reqPermissionStates` goes from `[0, -1]` to **`[0, 0]`** -- so **this phone can
-be granted this permission**; the permission itself is fine.
-
-After restarting the app:
-
-```text
-permission ... state before = 0                              <- granted
-permission request: ... -> auth=0 dialogShown=false          <- now 0
-```
-
-**and in the same log:**
-
-```text
-user_dirs.txt : download=<threw>                             <- still throws
-launcher      : no user download dir available
-```
-
-⇒ **`Environment.getUserDownloadDir()` throwing is INDEPENDENT of the
-permission** -- with the permission granted it still throws "The device doesn't
-support this api". `getUserDocumentDir()` throws on the same device too.
-
-| | cause | fixable |
-| --- | --- | --- |
-| **A** | when not yet granted, the app's request returns `auth=2` and **shows no dialog** ⇒ the player can never grant it through the app | ⚠️ the permission IS grantable (proven by hand); the problem is the dialog path |
-| **B** | `Environment.getUser*Dir()` **always throws**, permission or not | ❌ **not something this app can change** -- the API is unavailable on this model |
-
-⭐ **B is the real wall**, and it fits the "differs by device type" guess: the
-permission definitions are byte-identical across the two devices, but the **API's
-availability is not** (that error message says so literally).
-
-**Effect**: on this phone, `Download/MindustryMods/` and importing a save from the
-Download directory **do not work**. **Unaffected**: "导入模组" in the floating
-ball's menu goes through the **system file picker, which needs no permission**.
-
-
-**What it costs**: on such a device, "import/export a save via the Download
-folder" and "drop mods in the Downloads folder" **do not work**.
-
-**What is unaffected**: **导入模组 in the ball's menu uses the system file
-picker and needs no permission at all**, so it keeps working on those devices --
-which is the reason there are two entry points.
-
----
+⚠️ **Also**: `READ_WRITE_DOWNLOAD_DIRECTORY` now has **no use at all** (the working
+route does not need it) yet is **still declared** in the package -- a **store
+review risk** worth removing.
 
 ## ⚠️ Mods: a restart applies them, and the files live in the sandbox
 
