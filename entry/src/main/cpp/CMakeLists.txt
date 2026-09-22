@@ -14,6 +14,91 @@ project(mindustry_launcher)
 
 set(NATIVEAPP_ROOT_PATH ${CMAKE_CURRENT_SOURCE_DIR})
 
+# ---------------------------------------------------------------------------
+# Keep the build machine's directory layout out of the shipped libraries.
+#
+# `__FILE__` (and the file-name argument of every assert macro) is recorded as
+# the path the COMPILER was handed, so it lands in .rodata as an absolute path.
+# Stripping does not remove it -- strip deletes .debug_* and .symtab, not
+# loadable data -- which is why the release package carried it too.
+#
+# Measured before this was added, on the 0.3.0.1 build: 395 hits in four
+# libraries, every one of them the developer's own machine --
+#
+#     libSDL3.so         372   <repo>/entry/src/main/cpp/SDL/...
+#     libmain.so          10   <repo>/entry/src/main/cpp/launcher.c,
+#                              <repo>/entry/.cxx/..., and the SDK sysroot
+#     libarcarm64.so       7   <a Windows temp dir>/soloud-*
+#     libcxxabi_shim.so    6   <a sibling project>/sdl-template/...
+#
+# (Written with placeholders on purpose. The literal paths are recorded in
+# RELEASE-MAINTENANCE.md, which is where the checklist lives; putting drive
+# letters here would trip this repository's own "no hard-coded absolute paths in
+# text files" check, and a check that always reports FAIL is not a check.)
+#
+# What this covers: everything THIS file builds -- libmain.so and libSDL3.so,
+# which together are 382 of those 395. It does not cover the other two, and they
+# are not oversights:
+#
+#   libarcarm64.so     the command that compiles it is not in this repository.
+#                      The .so is an intermediate built by hand in a temp tree
+#                      (see scripts/build_variants.py, which consumes it through
+#                      the AUDIO_SO override). Fixing it means first putting that
+#                      build into the repository, which is a separate job.
+#   libcxxabi_shim.so  built in a different project (sdl-template), and shipped
+#                      byte-for-byte on purpose -- verify_hap.py checks its SHA-1
+#                      against the original. Rewriting it to drop a path string
+#                      would break that invariant to hide a path.
+#
+# The prefix is DERIVED, not written down: a literal SDK path here would be the
+# very thing this is removing, and the repo forbids hard-coded absolute paths in
+# text files for that reason.
+# ---------------------------------------------------------------------------
+# The REPOSITORY root, not this directory, and that is deliberate: one mapping
+# then covers the sources AND every generated directory underneath it --
+# entry/.cxx/... and entry/build/... both leaked their absolute paths too, and
+# mapping only cpp/ left them behind (measured: 7 hits across libmain and
+# libSDL3 for the build directories alone).
+#
+# Derived rather than written down. A literal path here would be the very thing
+# this removes, and a hard-coded absolute path in a text file is something this
+# repository checks for.
+get_filename_component(_repo_root "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
+file(TO_CMAKE_PATH "${_repo_root}" _repo_root)
+add_compile_options("-ffile-prefix-map=${_repo_root}=.")
+
+# Two more prefixes, and they were found by measuring rather than by reasoning:
+# after the one above, 20 hits were left and every one of them was a path this
+# file had not thought about.
+#
+#   <sdk>/default/hms/native/...   the COMPILER's own headers
+#                                  (BiSheng/lib/clang/15.0.4/include). Note the
+#                                  hms tree, not the openharmony one -- the
+#                                  toolchain is BiSheng and the sysroot it is
+#                                  pointed at is openharmony, so those are two
+#                                  different roots and both need mapping.
+#   <sdk>/default/openharmony/native/...   the sysroot the SDK headers come from
+#
+# ⚠️ Deriving the second from CMAKE_C_COMPILER does not work, and that is how
+# this was got wrong the first time: the compiler lives under hms/native while
+# the headers that leak are under openharmony/native, so the mapping matched
+# nothing and 23 SDK paths stayed in the output. OHOS_SDK_NATIVE is the variable
+# hvigor sets and the one the toolchain uses, so it names the right tree. Both
+# arrive with BACKSLASHES and are normalised before use as textual prefixes.
+if(DEFINED OHOS_SDK_NATIVE)
+    file(TO_CMAKE_PATH "${OHOS_SDK_NATIVE}" _sdk_native)
+    add_compile_options("-ffile-prefix-map=${_sdk_native}=<sdk>")
+else()
+    message(WARNING
+        "OHOS_SDK_NATIVE is not set, so SDK paths will stay in __FILE__ strings "
+        "and ship inside the native libraries. See docs/BUILDING.md.")
+endif()
+
+if(DEFINED HMOS_SDK_NATIVE)
+    file(TO_CMAKE_PATH "${HMOS_SDK_NATIVE}" _hmos_native)
+    add_compile_options("-ffile-prefix-map=${_hmos_native}=<sdk>")
+endif()
+
 if(DEFINED PACKAGE_FIND_FILE)
     include(${PACKAGE_FIND_FILE})
 endif()

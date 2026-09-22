@@ -62,6 +62,41 @@ bash deploy.sh                   # 构建 + 校验 + 安装 + 启动 + 收日志
 签名需要配置一次：DevEco Studio → File → Project Structure → Signing Configs →
 Automatically generate signature。`deploy.sh` 安装的是 hvigor 产出的**已签名** HAP。
 
+#### ⚠️ 改了 native 编译标志之后（`-ffile-prefix-map` 等）
+
+`entry/src/main/cpp/CMakeLists.txt` 里有三个编译器路径映射，用来把**构建机的绝对路径**
+从产物里去掉（`__FILE__` 会把它写进 `.rodata`，**strip 去不掉**，见
+[RELEASE-MAINTENANCE.md](../RELEASE-MAINTENANCE.md) 发布检查表）。动这类标志有**两个坑**：
+
+1. ⚠️ **`entry/.cxx` 一个 product/buildMode 一份 CMake 缓存** ⇒ **不清缓存，新标志不生效**：
+   ```bash
+   rm -rf entry/.cxx entry/build/default/intermediates/cmake
+   ```
+2. ⚠️⚠️ **`BUILD SUCCESSFUL` 不代表 native 重编了**。实测过一次 10 秒的「成功」构建，
+   日志一切正常而编译根本没跑。**唯一可靠的检查是数产物里的字符串**：
+   ```bash
+   python - <<'EOF'
+   import re, zipfile, glob
+   # 边界组和「至少两层目录」都是承重的：没有边界时 "https://x" 会被它的 "s:/" 命中，
+   # 而 conf/security 那些文件在注释里提到真实 Windows 路径 —— 实测 160 行噪声、4 个真命中。
+   # 一个永远报 FAIL 的检查等于没有检查。
+   pat = re.compile(rb"(?:^|[^A-Za-z0-9])[A-Za-z]:[\/][ -~]{0,120}?[\/][ -~]{0,120}?[\/]")
+   tot = 0
+   for z in sorted(glob.glob("entry/build/**/*.hap", recursive=True)):
+       with zipfile.ZipFile(z) as f:
+           for n in f.namelist():
+               h = pat.findall(f.read(n))
+               if h:
+                   print("  %s :: %s (%d)" % (z, n, len(h))); tot += len(h)
+   print("total =", tot)
+   EOF
+   ```
+   ✅ 当前期望值：**14**（`libSDL3.so` 0、`libmain.so` 1、`libarcarm64.so` 7、
+   `libcxxabi_shim.so` 6）。**后两个是刻意不修的**，理由写在发布检查表那一条里 ——
+   **看到它们不是回归**，但**看到 `libSDL3.so` 有命中就是**。
+3. ⚠️ 改完要**验它还能跑**（native 标志改动真的会影响运行）：装机 → 启动 →
+   看 `Mindustry 160.4` 那几行和音频回调，别只看构建成功。
+
 #### 上架用的包（`.app`）是另一条命令
 
 ```bash
@@ -262,6 +297,30 @@ debug profile is not checked this way.
 Signing must be configured once: DevEco Studio → File → Project Structure →
 Signing Configs → Automatically generate signature. `deploy.sh` installs the
 signed HAP that hvigor produces.
+
+#### ⚠️ After touching a native compile flag (`-ffile-prefix-map`, etc.)
+
+`entry/src/main/cpp/CMakeLists.txt` carries three compiler path mappings that keep
+the build machine's absolute paths out of the artifacts (`__FILE__` writes them
+into `.rodata`, and **stripping does not remove them** — see the release checklist
+in [RELEASE-MAINTENANCE.md](../RELEASE-MAINTENANCE.md)). Changing flags there has
+**two traps**:
+
+1. ⚠️ **`entry/.cxx` holds one CMake cache per product/buildMode** ⇒ **the new flag
+   does not reach a cache that already exists**:
+   ```bash
+   rm -rf entry/.cxx entry/build/default/intermediates/cmake
+   ```
+2. ⚠️⚠️ **`BUILD SUCCESSFUL` does not mean the native code recompiled.** A
+   ten-second "successful" build was measured where nothing was compiled at all.
+   **The only acceptable check is counting the strings in the product** — the
+   script is in the Chinese half of this file, and the expected result is
+   **14** (`libSDL3.so` 0, `libmain.so` 1, `libarcarm64.so` 7,
+   `libcxxabi_shim.so` 6). **The last two are deliberately left; seeing them is not
+   a regression — seeing any hit in `libSDL3.so` is.**
+3. ⚠️ Then **verify it still runs** (a native flag change really can affect
+   execution): install, launch, and look for the `Mindustry 160.4` lines and the
+   audio callbacks. A green build is not that check.
 
 ⚠️ **That signature is for your own machine.** DevEco's automatically generated
 profile is a *debug* profile, which names the device UDIDs it is valid for, and

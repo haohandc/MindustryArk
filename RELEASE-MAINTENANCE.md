@@ -1100,7 +1100,8 @@ Doing only the first two ships a package named after the previous version.
       ⭐ This check has caught real defects twice, including a hard-coded absolute path in
       `scripts/test_version_gate.py` that would have failed with a confusing `ImportError`
       in any other checkout.
-- [ ] **No local absolute paths in the BINARIES either.** The `git grep` above only sees
+- [x] **No local absolute paths in the BINARIES either** — ✅ **DONE 2026-09-22**, 395 → 14.
+      See the note at the end of this item for what is left and why. The `git grep` above only sees
       text files, so it cannot see the four native libraries — and they carry `__FILE__`
       strings in `.rodata`, which **stripping does not remove** (it deletes `.debug_*` and
       `.symtab`, not loadable data):
@@ -1131,5 +1132,57 @@ Doing only the first two ships a package named after the previous version.
       username and a project location, no credentials — but fixable by adding
       `-ffile-prefix-map=<prefix>=.` to the compile. **Deferred by decision to the build
       before the next release.**
+
+      ✅ **FIXED 2026-09-22** in `entry/src/main/cpp/CMakeLists.txt`. Three mappings,
+      all derived rather than written down (a literal SDK path in that file would be
+      the very thing being removed, and this repo checks text files for absolute paths):
+
+      | prefix | what it covers |
+      |---|---|
+      | the **repository root** | our sources **and every generated directory under it** — `entry/.cxx/…` and `entry/build/…` leaked too |
+      | `OHOS_SDK_NATIVE` | the openharmony sysroot the SDK headers come from |
+      | `HMOS_SDK_NATIVE` | the compiler's own headers — BiSheng, i.e. the **hms** tree |
+
+      ⭐ The last two are **different roots** and both are needed. The toolchain is
+      BiSheng under `hms/native` while its sysroot is under `openharmony/native`.
+      **Deriving the second from `CMAKE_C_COMPILER` looks right and is wrong** — it
+      names the hms tree, matches nothing, and silently leaves 23 paths behind.
+      Measured, not reasoned: that mistake was made and then caught by re-measuring
+      the artifact.
+
+      Measured, 0.3.0.1, before → after:
+
+      | library | before | after |
+      |---|---|---|
+      | `libSDL3.so` | 372 | **0** |
+      | `libmain.so` | 10 | **1** |
+      | `libarcarm64.so` | 7 | 7 |
+      | `libcxxabi_shim.so` | 6 | 6 |
+      | **total** | **395** | **14** |
+
+      ⚠️ **The 14 that remain are deliberate, not unfinished work:**
+
+      - `libarcarm64.so` (7) — `C:/Users/<user>/AppData/Local/Temp/soloud-*`. The
+        command that compiles this library **is not in this repository**; the `.so`
+        is an intermediate built by hand in a temp tree and consumed through the
+        `AUDIO_SO` override (see `scripts/build_variants.py`). Fixing it means first
+        bringing that build into the repo, which is a separate job.
+      - `libcxxabi_shim.so` (6) — `E:/User/DevEcoProj/sdl-template/…`. Built in a
+        different project and shipped **byte-for-byte on purpose**; `verify_hap.py`
+        checks its SHA-1 against the original. Rewriting it to drop a path string
+        would break that invariant to hide a path.
+      - `libmain.so` (1) — `…/entry/build/default/intermediates/cmake/default/obj/arm64-v8a`.
+        This one is inside the project and carries nothing identifying. It is a
+        **configure-time** substitution (a `configure_file` result), so a
+        **compile-time** flag cannot rewrite it — a different mechanism, not a
+        missing mapping.
+
+      ⚠️ Two traps worth keeping, both already known and both re-hit here:
+      `entry/.cxx` holds one CMake cache per product/buildMode, so **the flag does not
+      reach a cache that already exists** and the build must be cleaned; and a
+      10-second "BUILD SUCCESSFUL" **does not mean the native code recompiled** —
+      the only acceptable check is counting the strings in the produced HAP.
+      Verified after this change: the game still launches on the tablet
+      (`Mindustry 160.4`, load 5502 ms, audio mixer running, no `crash.txt`).
 - [ ] **Signed HAP is not attached.**
 - [ ] Tag target pinned to a commit, not the default branch.
