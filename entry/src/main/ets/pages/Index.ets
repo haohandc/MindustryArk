@@ -1,6 +1,6 @@
 import { abilityAccessCtrl, bundleManager, common, Permissions } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { KeyCode } from '@kit.InputKit';
 import { window } from '@kit.ArkUI';
@@ -9,6 +9,50 @@ import { window } from '@kit.ArkUI';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
+
+/*
+ * COMPATIBILITY MODE -- run the JVM as a pure interpreter on phones too old to
+ * hand an app anonymous executable memory.
+ *
+ * WHY IT EXISTS. The JVM's JIT allocates anonymous RWX memory. A HarmonyOS 6.1.1
+ * (API 24) device refuses that request -- measured, mmap(RWX) returns errno=22 --
+ * and JNI_CreateJavaVM then never returns, so the app installs and cannot start.
+ * The permission that would grant it is not available for phones at all. -Xint
+ * takes the JIT out of the picture, so nothing needs that memory.
+ * See RELEASE-MAINTENANCE.md 2.11 and 2.12.
+ *
+ * THE COST IS LARGE. Everything runs interpreted, and this is a game; expect a
+ * big slowdown. The player is told once, after the game reports that it loaded,
+ * which is the first moment there is a picture to talk over.
+ */
+const JVM_OPTIONS_FILE_NAME = 'jvm.options';
+const COMPAT_NOTICE_FILE_NAME = 'compat_notice_shown';
+/*
+ * The launcher redirects the JVM's stdout here (DEST_ROOT in launcher.c), and
+ * Mindustry prints this line when it has finished loading.
+ *
+ * WHY A LOG LINE. It is the only signal there is: the launcher cannot report
+ * "the game has started", because the call that starts it does not return until
+ * the game exits. See start_jvm() in launcher.c.
+ */
+const STDOUT_LOG_PATH = '/data/storage/el2/base/files/stdout.log';
+const GAME_LOADED_MARKER = 'Total time to load';
+const LOAD_WATCH_INTERVAL_MS = 500;
+const LOAD_WATCH_GIVE_UP_MS = 5 * 60 * 1000;
+/* API level at which this platform grants anonymous executable memory without an
+ * ACL. Below it the JIT cannot start. */
+const MIN_API_FOR_JIT = 26;
+/*
+ * FORCE COMPATIBILITY MODE ON EVERY DEVICE.
+ *
+ * This exists to MEASURE, not to ship. The cost of -Xint is otherwise
+ * unmeasurable: no API 24 device is available and a release-signed package
+ * cannot be sideloaded, so the only way to feel the slowdown is to run it on
+ * hardware that does not need the fallback.
+ *
+ * MUST BE false IN ANY BUILD THAT SHIPS.
+ */
+const FORCE_COMPAT_MODE = false;
 
 /**
  * Request the Download directory permission, so the player can import save
@@ -276,6 +320,12 @@ struct Index {
   @State ballY: number = 0;
   @State ballPlaced: boolean = false;
   @State ballMenu: boolean = false;
+
+  /* Compatibility mode, and whether its one-time notice is on screen. */
+  private compatMode: boolean = false;
+  @State compatNotice: boolean = false;
+  private loadWatchTimer: number = -1;
+  private loadWatchStartedAt: number = 0;
   /*
    * Ball diameter, recomputed from the window. A @State field rather than a getter
    * because the render reads it: a plain field derived from winW/winH would change
@@ -332,6 +382,12 @@ struct Index {
      * onAreaChange has not reported one yet. */
     this.readBallPos();
     this.enterImmersive();
+    /*
+     * Before the XComponent exists: see the note on setupCompatMode. It writes the
+     * options file the launcher reads, and the launcher reads it as soon as
+     * SDL_main starts, which is when the XComponent mounts.
+     */
+    this.setupCompatMode();
   }
 
   /*
@@ -1143,6 +1199,150 @@ struct Index {
     this.appendCmd(cmds);
   }
 
+  /*
+   * Decide whether the JVM must run interpreted, and write or remove the options
+   * file the launcher reads.
+   *
+   * MUST RUN BEFORE THE XComponent IS CREATED. The launcher reads that file while
+   * SDL_main is starting, and that happens when the XComponent mounts -- so this
+   * is called from aboutToAppear, which runs first. Any later would be a race the
+   * options file would sometimes lose, and the loss would be silent: the app would
+   * come up with the JIT and die inside JNI_CreateJavaVM.
+   *
+   * THE FILE IS REWRITTEN IN BOTH DIRECTIONS, EVERY LAUNCH. "Write -Xint when
+   * needed, delete it when not" looks equivalent to a conditional write and is
+   * not: the first time a phone is updated past API 26, the -Xint would survive,
+   * the game would run permanently interpreted, and nothing on the device would
+   * explain why.
+   */
+  private setupCompatMode(): void {
+    let want: boolean = FORCE_COMPAT_MODE;
+    if (!want) {
+      try {
+        want = deviceInfo.deviceType === 'phone'
+          && deviceInfo.sdkApiVersion < MIN_API_FOR_JIT;
+      } catch (e) {
+        const err = e as BusinessError;
+        /*
+         * FAIL OPEN. If the platform will not say what it is, assume the JIT
+         * works. Failing closed would slow the game down for everyone on the
+         * strength of a failed query.
+         */
+        hilog.error(DOMAIN, TAG,
+          'deviceInfo unavailable (%{public}s) -- assuming the JIT works', err.message);
+        want = false;
+      }
+    }
+    this.compatMode = want;
+
+    const ctx = getContext(this) as common.UIAbilityContext;
+    const path: string = ctx.filesDir + '/' + JVM_OPTIONS_FILE_NAME;
+    try {
+      if (want) {
+        const f: fs.File = fs.openSync(path,
+          fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
+        fs.writeSync(f.fd, '-Xint' + String.fromCharCode(10));
+        fs.closeSync(f);
+        hilog.info(DOMAIN, TAG, 'compat mode ON: -Xint written to %{public}s', path);
+      } else if (fs.accessSync(path)) {
+        /* accessSync RETURNS a boolean; it does not throw on a missing file.
+         * Treating it as a throwing check is how an app once killed itself
+         * 0.25 s after every start. */
+        fs.unlinkSync(path);
+        hilog.info(DOMAIN, TAG, 'compat mode off: removed %{public}s', path);
+      }
+    } catch (e) {
+      const err = e as BusinessError;
+      hilog.error(DOMAIN, TAG, 'could not set compat mode: %{public}s', err.message);
+      /* Left as it is. A stale -Xint costs speed; a missing one costs the app not
+       * starting at all. Better to keep going than to throw out of aboutToAppear. */
+    }
+
+    if (want && !this.compatNoticeAlreadyShown()) {
+      this.startLoadWatch();
+    }
+  }
+
+  private compatNoticeAlreadyShown(): boolean {
+    const ctx = getContext(this) as common.UIAbilityContext;
+    try {
+      return fs.accessSync(ctx.filesDir + '/' + COMPAT_NOTICE_FILE_NAME);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  private startLoadWatch(): void {
+    this.loadWatchStartedAt = Date.now();
+    this.loadWatchTimer = setInterval(() => { this.checkGameLoaded(); },
+      LOAD_WATCH_INTERVAL_MS);
+  }
+
+  private stopLoadWatch(): void {
+    if (this.loadWatchTimer >= 0) {
+      clearInterval(this.loadWatchTimer);
+      this.loadWatchTimer = -1;
+    }
+  }
+
+  /*
+   * Watch for the game's own "loaded" line, then put the notice up.
+   *
+   * The deadline matters: if the game dies during startup nothing would ever stop
+   * this, and a poll that runs for the life of the process is the kind of thing
+   * that is invisible until it is a battery complaint.
+   */
+  private checkGameLoaded(): void {
+    if (this.loadWatchTimer < 0) {
+      return;
+    }
+    if (Date.now() - this.loadWatchStartedAt > LOAD_WATCH_GIVE_UP_MS) {
+      hilog.warn(DOMAIN, TAG, 'game never reported that it loaded -- stopping the watch');
+      this.stopLoadWatch();
+      return;
+    }
+    let text: string = '';
+    try {
+      if (!fs.accessSync(STDOUT_LOG_PATH)) {
+        return;                        /* the launcher has not created it yet */
+      }
+      text = fs.readTextSync(STDOUT_LOG_PATH);
+    } catch (e) {
+      return;                          /* a half-written read; try again next tick */
+    }
+    if (text.indexOf(GAME_LOADED_MARKER) < 0) {
+      return;
+    }
+    this.stopLoadWatch();
+    this.compatNotice = true;
+    hilog.info(DOMAIN, TAG, 'compat mode: game loaded, showing the notice');
+  }
+
+  private dismissCompatNotice(): void {
+    this.compatNotice = false;
+    /*
+     * Recorded on DISMISS, not on show: an app killed while the notice is up has
+     * not told the player anything, so the notice should come back.
+     */
+    try {
+      const ctx = getContext(this) as common.UIAbilityContext;
+      const f: fs.File = fs.openSync(ctx.filesDir + '/' + COMPAT_NOTICE_FILE_NAME,
+        fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
+      fs.writeSync(f.fd, '1');
+      fs.closeSync(f);
+    } catch (e) {
+      const err = e as BusinessError;
+      hilog.error(DOMAIN, TAG, 'could not record the notice: %{public}s', err.message);
+      /* Worst case it is shown once more next launch. That beats not dismissing. */
+    }
+    /*
+     * The tap went to an overlay with no focusable child, so focus should not have
+     * moved -- but the game receives no key events without it, and "should not
+     * have" is not a measurement. Asking again is cheap.
+     */
+    focusControl.requestFocus('SDL_XComponent');
+  }
+
   build() {
     /* A Stack so the text field floats over the game instead of reflowing the
      * game surface to make room for it. */
@@ -1419,9 +1619,53 @@ struct Index {
         .position({ x: this.ballMenuX(), y: this.ballMenuY() })
         .focusable(false)
       }
+    /*
+     * The compatibility notice -- shown once, after the game reports that it loaded.
+     *
+     * WHY AN OVERLAY AND NOT A DIALOG. A dialog takes focus, and ArkUI delivers
+     * key events to the focused component only; the XComponent has to hold that
+     * focus or the game stops seeing the keyboard. So this is not focusable AND
+     * CONTAINS NOTHING FOCUSABLE -- the overlay itself is the button. Tapping
+     * anywhere dismisses it, which is also what a player tries first.
+     *
+     * TWO LAYERS: an outer Column fills and dims the screen, an inner one is the
+     * card. One Column cannot do both, because the card would fill the screen too.
+     *
+     * Last among the Stack's children, so it covers everything -- including the
+     * floating ball, which would otherwise float on top of it.
+     */
+    if (this.compatNotice) {
+      Column() {
+        Column() {
+          Text($r('app.string.compat_title'))
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Color.White)
+          Text($r('app.string.compat_body'))
+            .fontSize(14)
+            .fontColor('#E0FFFFFF')
+            .margin({ top: 14 })
+          Text($r('app.string.compat_dismiss'))
+            .fontSize(12)
+            .fontColor('#80FFFFFF')
+            .margin({ top: 20 })
+        }
+        .padding(24)
+        .backgroundColor('#F01C1C1C')
+        .borderRadius(14)
+        .width('84%')
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor('#B0000000')
+      .justifyContent(FlexAlign.Center)
+      .focusable(false)
+      .onClick(() => { this.dismissCompatNotice(); })
+    }
     }
     /* The only job of this modifier is to learn the window size, once, so the ball
      * can be placed and clamped against the right rectangle. */
+
     .onAreaChange((_o: Area, n: Area) => {
       this.onWindowSize(Number(n.width), Number(n.height));
     })

@@ -93,14 +93,28 @@ hdc shell "aa force-stop $BUNDLE" >/dev/null 2>&1
 sleep 2
 START_OUT="$(hdc shell "aa start -a $ABILITY -b $BUNDLE" 2>&1)"
 printf '%s\n' "$START_OUT" | tail -2
-printf '%s' "$START_OUT" | grep -q "start ability successfully" \
-    || echo "!! launch did not report success -- logs below will be empty" >&2
+LAUNCHED=1
+if ! printf '%s' "$START_OUT" | grep -q "start ability successfully"; then
+    LAUNCHED=0
+    echo "!! launch did not report success -- logs below will be empty" >&2
+    # Name the cause when the device names it. A locked screen produces
+    # 10106102 and NO crash log at all, which otherwise reads as "it crashed on
+    # start" -- a completely different problem, and one that would be chased
+    # through the app's code for as long as it took to notice the tablet was
+    # asleep.
+    if printf '%s' "$START_OUT" | grep -q "10106102"; then
+        echo "!! the screen is locked (10106102). Unlock the device and run again --" >&2
+        echo "!! nothing was tested. 'power-shell wakeup' can wake it but not unlock it." >&2
+    fi
+fi
 sleep 30
 
 echo
 echo "===== is it still running? ====="
 PID="$(hdc shell "pidof $BUNDLE" 2>/dev/null | tr -d '\r')"
-if [ -n "$PID" ]; then
+if [ "$LAUNCHED" -eq 0 ]; then
+    echo "  N/A  the app never started, so this says nothing about the app"
+elif [ -n "$PID" ]; then
     echo "  YES  pid=$PID   <- it did NOT crash on launch"
 else
     echo "  NO   process is gone  <- it crashed, or exited"

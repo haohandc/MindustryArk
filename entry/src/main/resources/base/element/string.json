@@ -35,6 +35,18 @@
     {
       "name": "perm_reason_CODE_MEMORY",
       "value": "Required by the bundled Java runtime to allocate memory for its just-in-time compiler."
+    },
+    {
+      "name": "compat_title",
+      "value": "Compatibility mode"
+    },
+    {
+      "name": "compat_body",
+      "value": "This device's system version cannot give the Java runtime executable memory, so the game runs interpreted instead of just-in-time compiled.\n\nWhat this means: the game will be noticeably slower, especially in later levels with many units on screen. It is the price of being able to start at all on this device.\n\nUpdating to HarmonyOS 7 restores normal performance."
+    },
+    {
+      "name": "compat_dismiss",
+      "value": "Tap anywhere to close"
     }
   ]
 }

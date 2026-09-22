@@ -35,6 +35,18 @@
     {
       "name": "perm_reason_CODE_MEMORY",
       "value": "内置的 Java 运行时需要分配内存给即时编译器（JIT）。"
+    },
+    {
+      "name": "compat_title",
+      "value": "兼容模式"
+    },
+    {
+      "name": "compat_body",
+      "value": "这台设备的系统版本无法为 Java 运行时分配可执行内存，因此游戏改用「解释执行」，而不是即时编译。\n\n影响：游戏会明显变慢，尤其在后期屏幕上单位较多时。这是为了让应用能在此设备上启动所必须付出的代价。\n\n升级到 HarmonyOS 7 后会恢复正常性能。"
+    },
+    {
+      "name": "compat_dismiss",
+      "value": "点击任意处关闭"
     }
   ]
 }
