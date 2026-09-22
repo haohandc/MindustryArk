@@ -5,6 +5,7 @@ import { window } from '@kit.ArkUI';
 import { i18n } from '@kit.LocalizationKit';
 import { inputMethod } from '@kit.IMEKit';
 import { fileIo as fs, Environment } from '@kit.CoreFileKit';
+import { scanDownloadMods } from '../mods/ModImporter';
 import pointer from "@ohos.multimodalInput.pointer"
 import sdl from 'libSDL3.so';
 
@@ -201,6 +202,16 @@ export default class EntryAbility extends UIAbility {
     hilog.info(DOMAIN, 'SDL/STARTUP', '%{public}s', 'Handing control from ArkTS to native SDL.');
     writeJvmOptions(want, this.context.filesDir);
     writeUserDirs(this.context.filesDir);
+    /*
+     * Before the game scans its mods directory -- which happens exactly once,
+     * inside Vars.load(), and downstream of the XComponent mounting. So
+     * anything the player leaves in <Downloads>/MindustryMods is live on this
+     * launch, with no further ceremony.
+     *
+     * Fails soft by design: the Downloads grant is an ACL permission, and a
+     * profile without it must not affect anything else. See ModImporter.
+     */
+    scanDownloadMods();
     this.startExitWatch(this.context);
     try {
         // This hands stuff to SDL's C code that it needs to deal with ArkTS interfaces. We are trying not to write scripting code, if we can

@@ -4,6 +4,7 @@ import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { KeyCode } from '@kit.InputKit';
 import { window } from '@kit.ArkUI';
+import { pickMods, ModImportReport, lastDownloadScan } from '../mods/ModImporter';
 /* `focusControl` needs no import: it is an ArkTS framework global, like
  * getContext. Importing it from @kit.ArkUI does not compile. */
 
@@ -207,6 +208,19 @@ const BALL_MARGIN_VP = 8;
  * menu would never open. */
 const BALL_DRAG_SLOP_VP = 8;
 const BALL_MENU_W_VP = 158;
+/*
+ * The menu's height, for the bottom clamp in ballMenuY.
+ *
+ * Derived from the parts rather than written down. It used to be a bare 64,
+ * which was right for one row and would have silently let a two-row menu hang
+ * off the bottom edge -- and only when the ball happens to be near it, which is
+ * the kind of defect that survives every review that does not put the ball
+ * there. A row is one Text at fontSize 14; the padding is the Column's.
+ */
+const BALL_MENU_ROW_VP = 20;
+const BALL_MENU_GAP_VP = 10;
+const BALL_MENU_PAD_VP = 20;
+const BALL_MENU_H_VP = 2 * BALL_MENU_ROW_VP + BALL_MENU_GAP_VP + BALL_MENU_PAD_VP;
 
 /*
  * Auto half-hide.
@@ -414,6 +428,22 @@ struct Index {
      * during Vars.load(), and that is also downstream of the XComponent
      * mounting. See the note on seedProbeMod. */
     this.seedProbeMod();
+    /*
+     * Report what the startup scan of Downloads brought in, if anything.
+     *
+     * This is the only feedback that entry has -- it runs in the ability's
+     * onCreate, before this page exists, and it happens before the game looks
+     * at the mods directory, so unlike the picker there is no restart to
+     * mention. Nothing landed means nothing to say, and that is the normal
+     * case: already-present files are skipped, so this fires once, on the
+     * launch after a file was dropped in.
+     */
+    const scanned: ModImportReport = lastDownloadScan();
+    if (scanned.landed.length > 0) {
+      this.toast(scanned.landed.length === 1
+        ? '已从 Download 导入 ' + scanned.landed[0].name
+        : '已从 Download 导入 ' + scanned.landed.length + ' 个模组');
+    }
   }
 
   /*
@@ -790,27 +820,64 @@ struct Index {
       hilog.error(DOMAIN, TAG, 'writing control mode failed: %{public}s', err.message);
       return;                                   /* do not claim a change that did not stick */
     }
-    /*
-     * Tell the player, in its own try.
-     *
-     * The write above already succeeded, so a toast that throws must not make a
-     * successful switch look like a failed one -- and showToast is declared as
-     * throwing, which is what the compiler warns about when it is left bare.
-     *
-     * Through the UIContext rather than the global `promptAction`: the global form
-     * is deprecated, and this file has enough deprecation warnings already.
-     */
+    this.toast(next === CONTROL_MODE_DESKTOP
+      ? '已切换为 PC 模式，重启游戏后生效'
+      : '已切换为触屏模式，重启游戏后生效');
+  }
+
+  /*
+   * Show a short message, without letting a failure to show it become a failure
+   * of whatever it was reporting.
+   *
+   * showToast is declared as throwing, so a bare call is a compiler warning --
+   * and by the time these callers report something they have usually already
+   * succeeded at it. A toast that throws must not turn a completed action into
+   * an apparent failure.
+   *
+   * Through the UIContext rather than the global `promptAction`: the global
+   * form is deprecated, and this file has enough deprecation warnings already.
+   */
+  toast(message: string): void {
     try {
-      this.getUIContext().getPromptAction().showToast({
-        message: next === CONTROL_MODE_DESKTOP
-          ? '已切换为 PC 模式，重启游戏后生效'
-          : '已切换为触屏模式，重启游戏后生效',
-        duration: 2600
-      });
+      this.getUIContext().getPromptAction().showToast({ message: message, duration: 2600 });
     } catch (e) {
       const err = e as BusinessError;
-      hilog.warn(DOMAIN, TAG, 'toast failed (the switch itself did apply): %{public}s', err.message);
+      hilog.warn(DOMAIN, TAG, 'toast failed (what it reported still happened): %{public}s',
+                 err.message);
     }
+  }
+
+  /*
+   * Import mod files the player picks, then say a restart is needed.
+   *
+   * The restart is not laziness, and it is a different reason from the control
+   * switch above: the game scans its mods directory exactly once, inside
+   * Vars.load(). Nothing watches it, so a file that arrives afterwards sits on
+   * disk and is invisible. Saying so is the difference between "this works" and
+   * "the button does nothing".
+   *
+   * See ModImporter for why this entry has to exist at all -- the game's own
+   * import button cannot work on this platform.
+   */
+  async importMods(): Promise<void> {
+    const ctx = getContext(this) as common.UIAbilityContext;
+    const report: ModImportReport = await pickMods(ctx);
+    if (report.cancelled) {
+      /* The player closed the picker. Nothing happened, so there is nothing to
+       * report -- and an error toast here would be a lie about their own act. */
+      return;
+    }
+    let message: string = report.error;
+    if (report.landed.length > 0) {
+      message = report.landed.length === 1
+        ? '已导入 ' + report.landed[0].name + '，重启游戏后生效'
+        : '已导入 ' + report.landed.length + ' 个模组，重启游戏后生效';
+    } else if (message.length === 0) {
+      message = '未导入任何模组';
+    }
+    hilog.info(DOMAIN, TAG, 'mods import: %{public}d landed, error=%{public}s',
+               report.landed.length, report.error);
+    this.toast(message);
   }
 
   /*
@@ -1153,7 +1220,7 @@ struct Index {
   /* Vertically aligned with the ball, but never past the window edge. */
   ballMenuY(): number {
     const below: number = this.ballY + this.ballSizeVp - 40;
-    return Math.min(Math.max(below, 0), Math.max(0, this.winH - 64));
+    return Math.min(Math.max(below, 0), Math.max(0, this.winH - BALL_MENU_H_VP));
   }
 
   appendCmd(text: string): void {
@@ -1678,6 +1745,25 @@ struct Index {
           }
           .width('100%')
           .onClick(() => { this.toggleControlMode(); })
+
+          /*
+           * Entry: bring mod files in.
+           *
+           * A second way in -- a folder in Downloads -- runs at startup; this is
+           * the discoverable one. Neither is the game's own button, which throws
+           * on this platform, and whose only implementing backend is a glibc
+           * desktop library that does not load here. See ModImporter.
+           */
+          Row() {
+            Text('导入模组')
+              .fontSize(14)
+              .fontColor('#eef2f9')
+            Blank()
+            Text('选择文件').fontSize(13).fontColor('#8fb4ff')
+          }
+          .width('100%')
+          .margin({ top: BALL_MENU_GAP_VP })
+          .onClick(() => { this.importMods(); })
         }
         .width(BALL_MENU_W_VP)
         .padding({ left: 12, right: 12, top: 10, bottom: 10 })
