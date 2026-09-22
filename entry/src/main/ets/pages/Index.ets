@@ -2091,16 +2091,26 @@ struct Index {
             .fontSize(12)
             .fontColor('#8fb4ff')
             .margin({ top: 16 })
-          Text('github.com/haohandc/MindustryArk')
-            .fontSize(13)
+          /*
+           * With the scheme, because without it a bare "github.com/..." reads like
+           * a path or a package name rather than an address. Reported from the
+           * device -- it looks odd -- and it does.
+           *
+           * These two lines are the longest text on the card, and the Issues one
+           * is 47 characters. That is why they are set smaller than the body: at
+           * the body size the longest would not fit the card on a phone and would
+           * wrap mid-address, which is worse than being small.
+           */
+          Text('https://github.com/haohandc/MindustryArk')
+            .fontSize(12)
             .fontColor('#E0FFFFFF')
 
           Text('问题反馈 / 联系方式')
             .fontSize(12)
             .fontColor('#8fb4ff')
             .margin({ top: 12 })
-          Text('github.com/haohandc/MindustryArk/issues')
-            .fontSize(13)
+          Text('https://github.com/haohandc/MindustryArk/issues')
+            .fontSize(12)
             .fontColor('#E0FFFFFF')
 
           Text('更新日志')
@@ -2121,10 +2131,13 @@ struct Index {
             .fontColor('#80FFFFFF')
             .margin({ top: 16 })
         }
-        .padding(22)
+        /* 92% and 18, not 86% and 22: the two addresses are the widest text here
+         * and this is what gives them a line to sit on. Measured against the
+         * phone's window width -- see the note on the address lines above. */
+        .padding(18)
         .backgroundColor('#F01C1C1C')
         .borderRadius(14)
-        .width('86%')
+        .width('92%')
       }
       .width('100%')
       .height('100%')
