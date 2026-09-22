@@ -157,10 +157,13 @@
 ⇒ **两条路是互补的**：平板能拿到路径但**写不进去**，手机拿不到路径但**选择器模式能建**。
 应用现在**两条都试**，哪条通用哪条。
 
-⚠️ **一个解不开的矛盾，如实记下**：平板的 `READ_WRITE_DOWNLOAD_DIRECTORY` 在系统里
-**显示为已授予**（`reqPermissionStates [0, 0]`），但实际 `mkdir` 仍被 `EPERM` 拒。
-**权限状态与实际文件系统行为不一致**，原因不明。**没有下结论，也没有绕开 ——
-只是把两个观测值都留在这里。**
+⚠️ **平板上那个 EPERM 的原因，用户确认了：权限是【他手动拒绝】的。**
+⇒ 不是平台故障，也不是解不开的矛盾。但**留下一个有用的发现**：
+
+**平板的 `reqPermissionStates` 显示 `[0, 0]`（都「已授予」），而权限实际是被拒的。**
+⇒ ⭐ **那个字段不能用来判断权限到底给没给。**
+（这和另一处记录呼应：权限请求返回的三个字段互相矛盾 —— 见上文。
+**鸿蒙的权限状态字段在本项目上两次都不可靠。**）
 
 ### ⚠️ 所以：文件夹**每次启动都会检查**，但不保证建得出来
 
@@ -175,6 +178,35 @@ mods: could not create the mod folder on this device -- the picker in the ball m
 ```
 
 ⇒ **平板上的入口是悬浮球菜单的「导入模组」**（系统文件选择器，不需要权限，一直可用）。
+
+### ⭐ `13900042` 是「**现在没有可用的 UI 窗口**」
+
+**实测（同一台手机、同一个包、同一天）**：
+
+| 从哪调用 `DocumentPickerMode.DOWNLOAD` | 结果 |
+| --- | --- |
+| **悬浮球菜单**（点一下，窗口在手） | ✅ **成功** |
+| `EntryAbility.onCreate`（窗口可能还没建） | ❌ **`13900042`** |
+| **页面的 `aboutToAppear`**（窗口已存在） | ✅ **成功** |
+
+⇒ **DOWNLOAD 模式虽然不显示任何对话框，但仍然需要一个 UI 窗口。**
+⚠️ 这个失败的**表现是「静默」** —— 因为该模式本来就不弹界面，所以「没建出来」
+看起来和「建好了」一模一样。**这一点让前面几轮都误判了。**
+
+⇒ **所以创建放在页面里，不放在 ability 的 `onCreate`。** 读取仍留在 `onCreate`
+（不涉及选择器，随便哪里都行）。
+
+### ⭐ 存下来的**路径**可用，**URI 不可用**
+
+`DOWNLOAD` 模式返回一个 URI，把它解成路径后，实测在手机上：
+
+```text
+/storage/Users/currentUser/Download/<包名>         列表正常   ← 可用
+file://docs/storage/Users/currentUser/Download/...  No such file or directory
+```
+
+⇒ 那个 URI**不是能直接喂给 `fs.listFileSync` 的形式** —— 官方示例也是先
+`new fileUri.FileUri(uri).path` 再用的。**所以路径优先、URI 只做兜底。**
 
 ## ⚠️ 模组：导入后要重启，文件在沙箱内
 
@@ -383,12 +415,15 @@ review risk** worth removing.
 is but **cannot write into it**, and the phone cannot be told but its **picker mode
 can create the folder**. The app now tries **both** and uses whichever works.
 
-⚠️ **One contradiction left standing, recorded rather than explained**: on the
-tablet `READ_WRITE_DOWNLOAD_DIRECTORY` **reads as granted** in the system's own
-record (`reqPermissionStates [0, 0]`) and the `mkdir` is still refused with
-`EPERM`. **The permission state and the filesystem's behaviour disagree** and the
-reason is unknown. No conclusion is drawn and nothing is worked around -- both
-observations are simply kept here.
+⚠️ **That EPERM on the tablet is now explained -- the user DENIED the permission
+by hand.** So it is not a platform fault and not a contradiction. But it leaves a
+useful finding:
+
+**The tablet's `reqPermissionStates` reads `[0, 0]` ("both granted") while the
+permission is in fact denied.** ⇒ ⭐ **That field cannot be used to tell whether a
+permission was granted.** This is the second time on this project that a Huawei
+permission-status field has disagreed with reality -- see the three contradictory
+fields on the request result above. **Do not trust them; test the operation.**
 
 ### ⚠️ So: the folder is CHECKED every launch, but is not guaranteed to be creatable
 
@@ -406,6 +441,37 @@ mods: could not create the mod folder on this device -- the picker in the ball m
 
 ⇒ **On the tablet the way in is "导入模组" in the floating ball's menu** -- the
 system picker, which needs no permission and has always worked.
+
+### ⭐ `13900042` is "there is no usable UI window right now"
+
+**Measured on one phone, one package, one day**:
+
+| called from | result |
+| --- | --- |
+| **the floating ball's menu** (a tap, window present) | ✅ **works** |
+| `EntryAbility.onCreate` (the window may not exist yet) | ❌ **`13900042`** |
+| **the page's `aboutToAppear`** (window exists) | ✅ **works** |
+
+⇒ **DOWNLOAD mode needs a UI window even though it shows no dialog.**
+⚠️ And the failure is **silent in effect** -- the mode shows no UI at all, so "it did
+not create the folder" looks exactly like "it created the folder". That is what
+made the earlier rounds misread it.
+
+⇒ **So creation lives on the page, not in the ability's `onCreate`.** Reading stays
+in `onCreate`, where no picker is involved.
+
+### ⭐ The stored **path** works; the **URI** does not
+
+DOWNLOAD mode returns a URI. Resolved to a path, measured on the phone:
+
+```text
+/storage/Users/currentUser/Download/<bundle>          lists fine   <- usable
+file://docs/storage/Users/currentUser/Download/...    No such file or directory
+```
+
+⇒ the URI **is not something `fs.listFileSync` accepts as-is** -- the guide's own
+example resolves it with `new fileUri.FileUri(uri).path` first. **So the path is
+tried first and the URI is only a fallback.**
 
 ## ⚠️ Mods: a restart applies them, and the files live in the sandbox
 

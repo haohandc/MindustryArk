@@ -490,14 +490,7 @@ function writeModFolder(statePath: string, folder: ModFolder): void {
  * not that. A folder that exists and cannot be listed is one this app cannot use.
  */
 function listModFolder(folder: ModFolder): Array<string> {
-  const targets: Array<string> = [];
-  if (folder.uri !== '') {
-    targets.push(folder.uri);
-  }
-  if (folder.path !== '') {
-    targets.push(folder.path);
-  }
-  for (const target of targets) {
+  for (const target of listTargets(folder)) {
     try {
       return fs.listFileSync(target);
     } catch (e) {
@@ -509,19 +502,41 @@ function listModFolder(folder: ModFolder): Array<string> {
   return [];
 }
 
+/*
+ * Which of the two ways to reach the folder, in the order worth trying.
+ *
+ * ⚠️ THE PATH GOES FIRST, and that is a measurement, not a preference. Measured
+ * on the phone, on the folder DOWNLOAD mode had just made for us:
+ *
+ *     /storage/Users/currentUser/Download/<bundle>        lists fine
+ *     file://docs/storage/Users/currentUser/Download/...  "No such file or directory"
+ *
+ * The URI is not something fs.listFileSync will take as-is -- the guide resolves
+ * it with new fileUri.FileUri(uri).path, which is exactly how the path above was
+ * obtained. So the path is the usable form and the URI is the fallback, for a
+ * device where the grant is what makes the folder reachable rather than the
+ * path itself.
+ *
+ * An earlier revision tried the URI first, which worked only because the second
+ * attempt rescued it -- and logged a failure on every launch while doing so.
+ */
+function listTargets(folder: ModFolder): Array<string> {
+  const targets: Array<string> = [];
+  if (folder.path !== '') {
+    targets.push(folder.path);
+  }
+  if (folder.uri !== '') {
+    targets.push(folder.uri);
+  }
+  return targets;
+}
+
 /** True when the folder is there and this app can read it. */
 function modFolderUsable(folder: ModFolder): boolean {
   if (folder.path === '' && folder.uri === '') {
     return false;
   }
-  const targets: Array<string> = [];
-  if (folder.uri !== '') {
-    targets.push(folder.uri);
-  }
-  if (folder.path !== '') {
-    targets.push(folder.path);
-  }
-  for (const target of targets) {
+  for (const target of listTargets(folder)) {
     try {
       fs.listFileSync(target);
       return true;

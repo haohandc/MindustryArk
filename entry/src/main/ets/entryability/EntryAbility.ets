@@ -5,7 +5,7 @@ import { window } from '@kit.ArkUI';
 import { i18n } from '@kit.LocalizationKit';
 import { inputMethod } from '@kit.IMEKit';
 import { fileIo as fs, Environment } from '@kit.CoreFileKit';
-import { ensureModFolder, scanModFolder, modFolderPath } from '../mods/ModImporter';
+import { scanModFolder, modFolderPath } from '../mods/ModImporter';
 import pointer from "@ohos.multimodalInput.pointer"
 import sdl from 'libSDL3.so';
 
@@ -237,28 +237,26 @@ export default class EntryAbility extends UIAbility {
      * carries on and the mod list is simply empty. See ModImporter.
      */
     /*
-     * Create the folder first, then scan it.
+     * Reading only. CREATING the folder happens on the page, not here.
      *
-     * ORDER MATTERS AND IS NOT OBVIOUS: writeUserDirs() above reads the stored
-     * folder URI to tell the launcher where to point the game's file browser.
-     * On a fresh install there is no URI yet, so the browser would be told
-     * nothing and would open in the sandbox. Creating the folder here means
-     * that by the time the JVM starts, the URI exists and the browser opens on
-     * the player's mod files.
+     * This ran here for one revision, on the reasoning that the folder should
+     * exist before the launcher is told about it. It does not belong here: with
+     * the creation in onCreate, DOWNLOAD mode fails with 13900042 on BOTH
+     * devices -- and on the phone the same call had SUCCEEDED when it ran from a
+     * menu tap. The difference between those two runs is whether a UI window
+     * exists, which makes 13900042 look like "no usable window yet" even though
+     * DOWNLOAD mode shows no dialog.
      *
-     * writeUserDirs() has already run by this point, so the bridge file it wrote
-     * does NOT contain the folder -- which is correct for this launch and
-     * handled by the launcher falling back to the sandbox. From the next launch
-     * on, the folder is known. Doing it the other way round would mean awaiting
-     * the picker before JVM options are written, which delays the start for no
-     * gain.
+     * So the split is: read here (cheap, no picker), create on the page (where
+     * the window is). The scan still finds anything already in the folder, and
+     * it still runs before the game looks at mods/.
+     *
+     * The cost is that on a fresh install nothing has created the folder yet, so
+     * writeUserDirs() above had nothing to put in the bridge and the game's file
+     * browser opens in the sandbox for that one launch. From the next launch on
+     * it is known. That was already true of the revision before this one.
      */
-    ensureModFolder(this.context, this.context.filesDir + '/mod_folder')
-      .then(() => scanModFolder(this.context.filesDir + '/mod_folder'))
-      .catch((e: BusinessError) => {
-        hilog.warn(DOMAIN, 'SDL/STARTUP',
-                   'mod folder setup failed: %{public}s', e.message);
-      });
+    scanModFolder(this.context.filesDir + '/mod_folder');
     this.startExitWatch(this.context);
     try {
         // This hands stuff to SDL's C code that it needs to deal with ArkTS interfaces. We are trying not to write scripting code, if we can

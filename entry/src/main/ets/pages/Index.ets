@@ -4,7 +4,8 @@ import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { KeyCode } from '@kit.InputKit';
 import { window } from '@kit.ArkUI';
-import { pickMods, ModImportReport, lastDownloadScan } from '../mods/ModImporter';
+import { pickMods, ensureModFolder, scanModFolder, ModImportReport,
+         lastDownloadScan } from '../mods/ModImporter';
 /* `focusControl` needs no import: it is an ArkTS framework global, like
  * getContext. Importing it from @kit.ArkUI does not compile. */
 
@@ -584,6 +585,23 @@ struct Index {
                  e.message);
       this.enterImmersive();
     });
+    /*
+     * The app's folder in Downloads, created here rather than in the ability.
+     *
+     * HERE because this is where a UI window exists. Measured: the same DOWNLOAD
+     * -mode call succeeds from a menu tap and fails with 13900042 when made from
+     * EntryAbility.onCreate, on both devices -- so it needs a window even though
+     * it shows no dialog.
+     *
+     * Checked and recreated every launch, so a folder the player deleted comes
+     * back. Runs after requestPerms() has been STARTED above but not awaited:
+     * the picker mode needs no permission, so there is nothing to wait for.
+     */
+    ensureModFolder(ctx, ctx.filesDir + '/mod_folder')
+      .then(() => { scanModFolder(ctx.filesDir + '/mod_folder'); })
+      .catch((e: BusinessError) => {
+        hilog.warn(DOMAIN, TAG, 'mod folder setup failed: %{public}s', e.message);
+      });
     this.clearStaleImeState();
     /*
      * Poll rather than be notified: the request is made by native code in the
