@@ -669,29 +669,44 @@ needs the RELEASE-SIGNED package on a device we can watch.** A release-profile-s
    made to run at 24. **Not decided; recorded so it is not forgotten.** Shipping a
    floor the app cannot meet is the worst of both: it installs, and then does not run.
 
-#### ⚠️ WHEN THE ACL IS APPROVED: PRUNE THE APPLICATION
+#### ⛔ "PRUNE THE APPLICATION" -- SUPERSEDED 2026-09-22, BY THE USER
 
-**The user asked to be reminded of this, 2026-09-22, and it is easy to lose.**
+⚠️ **This section used to carry a checklist for pruning the ACL application once it was
+approved.** It was written because the user asked to be reminded ("ACL申请完成后，把不需要的权限
+给取消了"). **They have since retracted the concern, and the correction is more useful than the
+checklist was:**
 
-Item 2 above says this permission "is the same ACL application
-`READ_WRITE_DOWNLOAD_DIRECTORY` already needs". **That is no longer true**: that
-permission was **removed from the package on 2026-09-22** (it never once worked --
-see `docs/PERMISSIONS.md`), and this app now declares **zero file permissions**.
+> **「我们的 profile 申请了多少 ACL 权限都无所谓，真正起作用的是 module.json5 中的声明。
+> 所以等权限批准之后，我重新下一下新的 profile 就好了，然后就能出 release 了。」**
+> — the user, 2026-09-22
 
-So the ACL application, which was written when both were in play, may still list
-`READ_WRITE_DOWNLOAD_DIRECTORY`. Once the approval lands:
+**What that means, operationally:**
 
-  - [ ] **Check what the approved ACL list actually contains.** If it carries
-        `READ_WRITE_DOWNLOAD_DIRECTORY`, that entry is for a permission the package
-        no longer declares -- drop it, or the approved profile and the package
-        disagree, which is the mismatch AppGallery's admission check looks for.
-  - [ ] **Then regenerate the Release Profile** from the pruned list.
-  - [ ] The only ACL this project needs is
-        `ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY`.
+| | |
+|---|---|
+| The ACL application's permission list | **not the operative gate** ⇒ **no pruning needed** |
+| `module.json5`'s declaration | **this is what takes effect** |
+| After approval | **re-download the Release Profile** — that is the whole step |
 
-⭐ And it needs to be kept to that one for a second reason: with the phone package
-declaring no ACL at all, every extra entry in the profile is a claim the phone
-package cannot back.
+⇒ ⭐ **The release path is shorter than this file used to imply.** There is no list to audit,
+no profile to regenerate "from the pruned list", and no mismatch for AppGallery to find. The
+open item in `Index.ets`/`RELEASE-MAINTENANCE.md` that said *"PRUNE THE APPLICATION"* — and the
+reminder the user asked for — are both **closed by this**. Recorded rather than deleted, per
+this project's rule that a superseded plan stays visible with the reason it was superseded.
+
+🔶 **Not independently verified by me**: *why* the declaration is the operative half — I have
+no measurement of AGC's internals, and none is needed, because the consequence is a
+simplification rather than a risk. It is recorded as the user's statement, which is how this
+project treats their platform knowledge.
+
+⚠️ **ONE THING THAT DOES NOT CHANGE, and it is a measurement rather than a deduction:**
+do **not** hand-edit `module.json5` to declare `ALLOW_WRITABLE_CODE_MEMORY` **before** the ACL
+is in effect. Measured earlier: a package declaring a restricted permission its profile cannot
+grant fails to install with *"install failed due to grant request permissions failed"*. The
+declaration being operative is exactly **why** its absence of a matching grant is fatal — the
+two halves of the user's statement are the same fact seen from either end. So the ordering
+stays: **approval → re-downloaded profile → `bash scripts/make_store_app.sh tablet`** (which
+does the injection at the right moment and strips it again on the way out).
 
 
 ### 2.11b Why a debug install proves nothing about the store build
