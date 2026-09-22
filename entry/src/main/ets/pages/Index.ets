@@ -4,7 +4,7 @@ import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { KeyCode } from '@kit.InputKit';
 import { window } from '@kit.ArkUI';
-import { pickMods, chooseModFolder, ModImportReport, lastDownloadScan } from '../mods/ModImporter';
+import { pickMods, ModImportReport, lastDownloadScan } from '../mods/ModImporter';
 /* `focusControl` needs no import: it is an ArkTS framework global, like
  * getContext. Importing it from @kit.ArkUI does not compile. */
 
@@ -994,26 +994,6 @@ struct Index {
    * See ModImporter for why this entry has to exist at all -- the game's own
    * import button cannot work on this platform.
    */
-  /*
-   * Create the app's folder in Downloads and remember it, then scan it.
-   *
-   * No dialog appears: DOWNLOAD mode skips the picker UI. The toast is the only
-   * feedback the player gets, so it says where the folder is rather than just
-   * that something happened.
-   */
-  async chooseModDir(): Promise<void> {
-    const ctx = getContext(this) as common.UIAbilityContext;
-    const report: ModImportReport =
-      await chooseModFolder(ctx, ctx.filesDir + '/mod_folder_uri');
-    if (report.error !== '') {
-      this.toast(report.error);
-      return;
-    }
-    this.toast(report.landed.length > 0
-      ? ('模组文件夹已就绪，已导入 ' + report.landed.length + ' 个文件；重启游戏生效')
-      : '模组文件夹已就绪（在「下载」里）。把模组放进去，重启游戏即可');
-  }
-
   async importMods(): Promise<void> {
     const ctx = getContext(this) as common.UIAbilityContext;
     const report: ModImportReport = await pickMods(ctx);
@@ -1910,10 +1890,6 @@ struct Index {
            * the vertical span obvious, which is the half of the problem a larger
            * gap alone would not fix.
            */
-          Divider()
-            .strokeWidth(BALL_MENU_DIVIDER_VP)
-            .color('#22ffffff')
-
           /*
            * Entry: bring mod files in.
            *
@@ -1941,28 +1917,6 @@ struct Index {
             .strokeWidth(BALL_MENU_DIVIDER_VP)
             .color('#22ffffff')
 
-          /*
-           * Entry: make the app's own folder in Downloads, once.
-           *
-           * The system creates Download/<bundle name>/ and hands back a
-           * directory URI the app may write to -- no permission, and no dialog,
-           * because DocumentPickerMode.DOWNLOAD skips the picker UI. After this
-           * the player can drop mod files into that folder from any file
-           * manager, which is how the other apps on the phone work.
-           *
-           * See mods/ModImporter.ets for why reaching into Downloads directly
-           * was not an option on a phone.
-           */
-          Row() {
-            Text('模组文件夹')
-              .fontSize(BALL_MENU_FONT_VP)
-              .fontColor('#eef2f9')
-            Blank()
-            Text('在下载中创建').fontSize(BALL_MENU_HINT_FONT_VP).fontColor('#8fb4ff')
-          }
-          .width('100%')
-          .height(BALL_MENU_ROW_VP)
-          .onClick(() => { this.chooseModDir(); })
         }
         .width(BALL_MENU_W_VP)
         .padding({ left: 14, right: 14, top: 8, bottom: 8 })

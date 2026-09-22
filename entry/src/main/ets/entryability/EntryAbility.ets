@@ -5,7 +5,7 @@ import { window } from '@kit.ArkUI';
 import { i18n } from '@kit.LocalizationKit';
 import { inputMethod } from '@kit.IMEKit';
 import { fileIo as fs, fileUri, Environment } from '@kit.CoreFileKit';
-import { scanModFolder } from '../mods/ModImporter';
+import { ensureModFolder, scanModFolder } from '../mods/ModImporter';
 import pointer from "@ohos.multimodalInput.pointer"
 import sdl from 'libSDL3.so';
 
@@ -232,14 +232,36 @@ export default class EntryAbility extends UIAbility {
     writeUserDirs(this.context.filesDir);
     /*
      * Before the game scans its mods directory -- which happens exactly once,
-     * inside Vars.load(), and downstream of the XComponent mounting. So
-     * anything the player leaves in <Downloads>/MindustryMods is live on this
-     * launch, with no further ceremony.
+     * inside Vars.load(), and downstream of the XComponent mounting. So anything
+     * the player leaves in the app's folder in Downloads is live on this launch,
+     * with no further ceremony.
      *
-     * Fails soft by design: the Downloads grant is an ACL permission, and a
-     * profile without it must not affect anything else. See ModImporter.
+     * Fails soft by design: if the folder cannot be created or read, the launch
+     * carries on and the mod list is simply empty. See ModImporter.
      */
-    scanModFolder(this.context.filesDir + '/mod_folder_uri');
+    /*
+     * Create the folder first, then scan it.
+     *
+     * ORDER MATTERS AND IS NOT OBVIOUS: writeUserDirs() above reads the stored
+     * folder URI to tell the launcher where to point the game's file browser.
+     * On a fresh install there is no URI yet, so the browser would be told
+     * nothing and would open in the sandbox. Creating the folder here means
+     * that by the time the JVM starts, the URI exists and the browser opens on
+     * the player's mod files.
+     *
+     * writeUserDirs() has already run by this point, so the bridge file it wrote
+     * does NOT contain the folder -- which is correct for this launch and
+     * handled by the launcher falling back to the sandbox. From the next launch
+     * on, the folder is known. Doing it the other way round would mean awaiting
+     * the picker before JVM options are written, which delays the start for no
+     * gain.
+     */
+    ensureModFolder(this.context, this.context.filesDir + '/mod_folder_uri')
+      .then(() => scanModFolder(this.context.filesDir + '/mod_folder_uri'))
+      .catch((e: BusinessError) => {
+        hilog.warn(DOMAIN, 'SDL/STARTUP',
+                   'mod folder setup failed: %{public}s', e.message);
+      });
     this.startExitWatch(this.context);
     try {
         // This hands stuff to SDL's C code that it needs to deal with ArkTS interfaces. We are trying not to write scripting code, if we can

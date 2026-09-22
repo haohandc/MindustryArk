@@ -509,3 +509,36 @@ export async function chooseModFolder(ctx: common.UIAbilityContext,
   const scanned: ModImportReport = scanModFolder(uriFilePath);
   return scanned;
 }
+
+
+/**
+ * Make sure the app's folder in Downloads exists, creating it if this is a
+ * fresh install. Safe to call on every launch.
+ *
+ * WHY THIS IS NOT A BUTTON ANY MORE
+ *   It was one -- a "模组文件夹" row in the ball's menu -- and the user is right
+ *   that it should not be: creating a folder is not something to make a player
+ *   ask for. It is also needed EARLIER than any menu could provide it, because
+ *   the launcher points the game's file browser at that folder when the JVM
+ *   starts, and the folder has to exist by then.
+ *
+ * So it runs at startup, before the browser is told where to open. DOWNLOAD mode
+ * shows no UI, so there is nothing to answer and nothing to wait for.
+ *
+ * If a URI is already stored, the folder was created on an earlier launch --
+ * this returns without touching the picker. If the stored URI has gone stale the
+ * scan is what notices, and this will not silently replace it with a new one:
+ * re-creating a folder the player may have filled is a worse failure than
+ * reporting nothing.
+ */
+export async function ensureModFolder(ctx: common.UIAbilityContext,
+                                    uriFilePath: string): Promise<void> {
+  if (readModFolderUri(uriFilePath) !== '') {
+    return;
+  }
+  const report: ModImportReport = await chooseModFolder(ctx, uriFilePath);
+  if (report.error !== '') {
+    hilog.warn(DOMAIN, TAG, 'mods: could not create the mod folder: %{public}s',
+               report.error);
+  }
+}
