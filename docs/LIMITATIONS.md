@@ -156,7 +156,22 @@ permission request: ....READ_WRITE_DOWNLOAD_DIRECTORY -> auth=2 dialogShown=true
 字段说明推出来的**，而上面的实测组合**不支持**这个推断。已撤回。**能确定的是结果**：
 **权限没授予，玩家看不到任何提示。**
 
-⇒ 这是**设备能力差异**，不是包坏了、也不是签名问题。
+⚠️ **但「设备能力差异」这句也被后续测量推翻了一半**：`atm dump --definition` 在两台设备上
+给出的定义**逐字相同** ——
+
+```text
+permissionName : ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY
+grantMode      : USER_GRANT      <- 普通用户授权，不是 ACL
+availableLevel : NORMAL
+provisionEnable: true
+```
+
+⇒ 它**不是 ACL 权限、也不分设备类型**，**本来就该能在手机上授予**。两台设备的系统版本
+也完全相同（`OpenHarmony-7.0.0.105`、API 26、同一 build）。
+**所以「为什么手机上弹窗不出来」至今没有解释**，只知道结果。
+
+⇒ 能确定的只有：**在这台手机上，这个权限拿不到，且用户看不到任何提示。**
+
 
 **影响**：在这类机型上，
 「存档从下载目录导入/导出」与「Downloads 文件夹放模组」**用不了**。
@@ -371,8 +386,25 @@ description**, and the measured combination above does not support it.
 Withdrawn. **What is certain is the outcome**: the permission is not granted and
 the player sees no prompt.
 
-⇒ a **device capability difference**, not a broken package and not a signing
-problem.
+⚠️ **But "a device capability difference" was itself half-refuted by a later
+measurement**: `atm dump --definition` returns a **byte-identical** definition on
+both devices --
+
+```text
+permissionName : ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY
+grantMode      : USER_GRANT      <- an ordinary user grant, not an ACL
+availableLevel : NORMAL
+provisionEnable: true
+```
+
+⇒ it is **not an ACL permission and not device-type restricted**, so it *should*
+be grantable on the phone. The two devices also run the **same OS build**
+(`OpenHarmony-7.0.0.105`, API 26). **Why the dialog fails to appear on the phone
+is therefore still unexplained**; only the outcome is known.
+
+⇒ What is certain: **on this phone the permission cannot be obtained, and the
+player is shown nothing.**
+
 
 **What it costs**: on such a device, "import/export a save via the Download
 folder" and "drop mods in the Downloads folder" **do not work**.

@@ -2571,17 +2571,40 @@ static int start_jvm(void)
                  read_control_mode_mobile() ? "true" : "false");
 
     {
-        /* Read the platform's own answer rather than guessing a path. Empty
-         * result leaves the property unset, and SdlFiles then keeps its old
-         * behaviour -- a browser rooted in the sandbox. Browsing still works;
-         * only importing is impossible, which is exactly what it was before. */
+        /* Read the platform's own answer rather than guessing a path.
+         *
+         * WHEN THERE IS NO ANSWER THE OPTION IS LEFT OUT ENTIRELY, and that is a
+         * correction, not a detail.
+         *
+         * This branch used to pass the empty literal "-Darc.sdl.chooserPath=",
+         * under a comment claiming an empty result "leaves the property unset".
+         * It does not. The property is SET, to "", and
+         *
+         *     SdlFiles.chooserPath = System.getProperty("arc.sdl.chooserPath", externalPath)
+         *
+         * only falls back to externalPath when the property is ABSENT. So an
+         * empty value is a decision, not a no-op -- and it is the wrong one. The
+         * note earlier in this file on read_user_dir() already said so: an empty
+         * chooserPath makes the game's file browser open at the filesystem root,
+         * "which is worse than not trying". The two comments disagreed and the
+         * code followed the wrong one.
+         *
+         * Left out, chooserPath falls back to externalPath, which SdlFiles
+         * computes as user.home + separator -- and this launcher points user.home
+         * at its own sandbox. So the browser opens where the player's mods,
+         * saves, schematics and maps actually are. That is a usable browser.
+         *
+         * Measured consequence of the old behaviour: on a device where ArkTS
+         * cannot report a Download directory (see probe_user_dirs), the game's
+         * browser opened nowhere useful instead of in the sandbox. */
         char dl[512];
         if (read_user_dir("download", dl, sizeof(dl)) > 0) {
             SDL_snprintf(opt_chooser, sizeof(opt_chooser), "-Darc.sdl.chooserPath=%s", dl);
             SDL_Log(" file browser will open at: %s", dl);
         } else {
-            SDL_strlcpy(opt_chooser, "-Darc.sdl.chooserPath=", sizeof(opt_chooser));
-            SDL_Log(" no user download dir available -- file browser stays in the sandbox");
+            opt_chooser[0] = '\0';       /* empty means UNSET -- see option_slot() */
+            SDL_Log(" no user download dir available -- the browser will open in the");
+            SDL_Log(" sandbox instead (where mods/ and saves/ are)");
         }
     }
 
@@ -2605,7 +2628,12 @@ static int start_jvm(void)
     options[14].optionString = opt_lwjglpath; options[14].extraInfo = NULL;
     options[15].optionString = opt_gles;      options[15].extraInfo = NULL;
     options[16].optionString = opt_mobile;    options[16].extraInfo = NULL;
-    options[17].optionString = opt_chooser;   options[17].extraInfo = NULL;
+    /* A built option that came out EMPTY means "do not pass this one", and it is
+     * expressed as NULL so the compaction below can drop it. Passing the empty
+     * string would set the property, which is not the same thing -- see the note
+     * on opt_chooser. */
+    options[17].optionString = (opt_chooser[0] != '\0') ? opt_chooser : NULL;
+    options[17].extraInfo = NULL;
 
     /*
      * MINIMAL MODE -- a one-line switch in the runtime options file.
@@ -2674,6 +2702,24 @@ static int start_jvm(void)
         for (int i = 0; i < nOpts; i++) options[i] = kept[i];
     } else {
         nOpts = BASE_OPTS + nExtra;
+    }
+
+    /*
+     * Drop the options that were deliberately left unset.
+     *
+     * Done here rather than at each construction site because the count has to
+     * match the list that is actually handed over, and doing it in one place
+     * means a later option can be made conditional the same way without having
+     * to know how nOpts is assembled. Both branches above have finished by now,
+     * including the MINIMAL one that rebuilds the list by index.
+     */
+    {
+        int kept = 0;
+        for (int i = 0; i < nOpts; i++) {
+            if (options[i].optionString != NULL) options[kept++] = options[i];
+        }
+        if (kept != nOpts) SDL_Log(" %d option(s) left unset and not passed", nOpts - kept);
+        nOpts = kept;
     }
 
     JavaVMInitArgs args;
