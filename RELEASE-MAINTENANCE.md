@@ -846,6 +846,26 @@ A question has been drafted for Huawei's ACL channel. Until it is answered, the
 split is a requirement with no implementation, and that is a larger unknown than
 anything left in the app.
 
+#### Corroboration, and what has now been checked by eye
+
+⭐ **The user's own observation, which is worth more than the argument above**: other
+HarmonyOS applications that need the JIT have **narrowed themselves to PC and
+tablet** rather than telling anyone to upgrade. That is independent evidence that
+the ACL route's shape -- tablet-side JIT, phone-side fallback -- matches what other
+projects in this position ended up doing.
+
+⇒ Which is also why `docs/LIMITATIONS.md` now **states the behaviour and gives no
+advice**. It used to end with "update tablets to HarmonyOS 7"; that was removed at
+the user's request. Documenting a phenomenon is our job. Recommending a course of
+action is not, and a recommendation built on a premise we have not measured does
+not belong in a document users read.
+
+✅ **The notice appears before the game** -- confirmed by the user, by eye. That was
+the last unverified step of the compatibility feature: the log line proved the code
+path ran, and only the user could confirm the pixels. Both are now true, and route
+B is verified end to end except for the one thing it can never verify here, which
+is whether `-Xint` rescues an actual API 24 device.
+
 
 ## 3. Release page copy
 

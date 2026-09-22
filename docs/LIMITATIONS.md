@@ -98,8 +98,8 @@
 ⇒ 原因是「渲染」是原生的（不受影响），而「单位与瓦片的模拟」跑在 Java 上：
 屏幕越大，每帧要更新的东西越多，而帧预算不变。
 
-⚠️ 所以：**平板请更新到 HarmonyOS 7**（或使用本应用在应用市场分发的版本），
-手机在相容的屏幕尺寸下体验是可接受的。
+⚠️ 汇总：兼容模式只影响「模拟」这部分（渲染不受影响），
+且代价随**视野面积**放大 —— 屏幕越大越吃力。
 
 
 # English
@@ -210,5 +210,6 @@ Java runtime runs **interpreted** instead of just-in-time compiled.
 ⇒ because rendering is native (unaffected) while the unit and tile simulation is
 Java: a larger viewport means more work per frame at the same frame budget.
 
-⚠️ So: **update tablets to HarmonyOS 7** (or use the build distributed through
-AppGallery), and phones are acceptable at a comparable screen size.
+⚠️ In summary: compatibility mode affects the simulation only -- rendering is
+untouched -- and its cost grows with the VISIBLE AREA, so a larger screen suffers
+more.
