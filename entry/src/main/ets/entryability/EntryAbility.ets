@@ -82,8 +82,19 @@ function writeJvmOptions(want: Want, filesDir: string): void {
  *   readability with the same libc the game uses. So ArkTS writes them down and
  *   native reads them back. A wrong guess would cost a build and a 171 MB
  *   install, so this is deliberately two-sided rather than assumed.
+ *
+ * ⚠️ CALLED TWICE PER LAUNCH, AND THAT IS THE FIX FOR A REAL DEFECT.
+ *   Here in onCreate, and again from the page once ensureModFolder has made the
+ *   folder. The reason is ordering: this runs before the page, so on the first
+ *   launch after an install the folder does not exist yet and the `mods=` line
+ *   cannot be written -- which sent the game's file browser to a directory this
+ *   app cannot read. Re-writing once the folder is known repairs that launch
+ *   whenever the write beats the launcher's read (the launcher reads it when
+ *   SDL_main starts, which is when the XComponent mounts -- later than
+ *   aboutToAppear), and is harmless when it does not.
+ *   Exported for exactly that second call; see Index.ets.
  */
-function writeUserDirs(filesDir: string): void {
+export function writeUserDirs(filesDir: string): void {
   const lines: string[] = [];
   try {
     lines.push('download=' + Environment.getUserDownloadDir());

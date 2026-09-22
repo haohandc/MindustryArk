@@ -2629,25 +2629,38 @@ static int start_jvm(void)
          * browser opened nowhere useful instead of in the sandbox. */
         char dl[512];
         /*
-         * The app's own mod folder first, then the Download directory.
+         * The app's own folder, and NOTHING ELSE.
          *
-         * The mod folder is the better answer when it exists: it is where the
-         * player was told to put mod files, so the game's "import mod" button
-         * opens on them. The plain Download directory is only a fallback for
-         * devices where that folder was never created.
+         * A fallback to the plain platform Download directory used to sit here,
+         * for launches where the app's folder did not exist yet. Measured, it
+         * made those launches WORSE rather than better -- the probe above reports
+         * that directory as
+         *
+         *     download  NOT READABLE  errno=1 (Operation not permitted)
+         *
+         * so pointing the browser at it opens on a directory this app cannot
+         * list: an empty browser, which reads as a broken feature. Leaving
+         * chooserPath UNSET is both honest and strictly better -- the browser
+         * then opens in the sandbox, where mods/, saves/ and schematics/ are,
+         * which is at least somewhere this app can read.
+         *
+         * NOTE: the folder can legitimately be missing on exactly ONE launch -- the
+         * first after an install or an uninstall. It is created from the page,
+         * because the DOWNLOAD-mode picker needs a window (measured: 13900042
+         * from onCreate), and this code runs earlier than that. The page
+         * re-writes the bridge as soon as it has the folder, so most of those
+         * launches are correct too; and from the second launch on it always is.
+         *
+         * Do not re-add the fallback. "No usable directory" and "a directory
+         * that cannot be read" are different answers, and only one of them is
+         * true here.
          */
-        const char *which = NULL;
         if (read_user_dir("mods", dl, sizeof(dl)) > 0) {
-            which = "mod folder";
-        } else if (read_user_dir("download", dl, sizeof(dl)) > 0) {
-            which = "Download";
-        }
-        if (which != NULL) {
             SDL_snprintf(opt_chooser, sizeof(opt_chooser), "-Darc.sdl.chooserPath=%s", dl);
-            SDL_Log(" file browser will open at (%s): %s", which, dl);
+            SDL_Log(" file browser will open at the mod folder: %s", dl);
         } else {
             opt_chooser[0] = '\0';       /* empty means UNSET -- see option_slot() */
-            SDL_Log(" no user download dir available -- the browser will open in the");
+            SDL_Log(" no mod folder in the bridge yet -- the browser will open in the");
             SDL_Log(" sandbox instead (where mods/ and saves/ are)");
         }
     }

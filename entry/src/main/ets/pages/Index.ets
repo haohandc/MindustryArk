@@ -5,6 +5,9 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { KeyCode } from '@kit.InputKit';
 import { window } from '@kit.ArkUI';
 import { ensureModFolder } from '../mods/ModImporter';
+/* Exported so this page can write the bridge a second time, once the folder it
+ * names actually exists. See the note at the ensureModFolder() call. */
+import { writeUserDirs } from '../entryability/EntryAbility';
 /* `focusControl` needs no import: it is an ArkTS framework global, like
  * getContext. Importing it from @kit.ArkUI does not compile. */
 
@@ -684,6 +687,28 @@ struct Index {
      *   though it were a mod.
      */
     ensureModFolder(ctx, ctx.filesDir + '/mod_folder')
+      .then(() => {
+        /*
+         * The bridge is written AGAIN here, and that is the fix for the file
+         * browser opening in the wrong place.
+         *
+         * writeUserDirs runs in the ability's onCreate, which is BEFORE this --
+         * and the folder is made here, because the DOWNLOAD-mode picker needs a
+         * window. So on the first launch after an install or an uninstall the
+         * bridge has no `mods=` line, and the launcher used to fall back to the
+         * plain Download directory -- which it MEASURES as unreadable
+         * ("download NOT READABLE errno=1"), so the browser opened on nothing.
+         *
+         * Rewriting once the folder is known fixes that launch whenever this
+         * beats the launcher's read, and is harmless when it does not. The
+         * launcher reads the file when SDL_main starts, i.e. when the XComponent
+         * mounts, which is after aboutToAppear -- so the write is normally in
+         * time. There is no attempt to guarantee it: a lost race costs one
+         * launch with the browser in the sandbox, and the next launch is right
+         * regardless.
+         */
+        writeUserDirs(ctx.filesDir);
+      })
       .catch((e: BusinessError) => {
         hilog.warn(DOMAIN, TAG, 'mod folder setup failed: %{public}s', e.message);
       });
