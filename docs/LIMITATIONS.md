@@ -53,6 +53,22 @@
 以上各条背后的原因写在**对应代码的注释里**，而不在这份文档里 —— 入口是 `entry/src/main/cpp/launcher.c`。
 
 ---
+## ⚠️ 局域网里同一个服务器可能被列出两次
+
+**现象**：开一台服务器，另一台设备在「加入游戏」的局域网列表里**看到两条**，
+指向同一台机器。
+
+**原因在 ArcNet 自己**（游戏用的网络库，不在我们这层）：`Client.discoverHosts()`
+会**同时**发两个独立探测 —— 一个 **UDP 广播**、一个**多播**，各自一个 socket，
+各自对每个回应回调一次，**全程没有按地址去重**。一个**同时响应这两种探测**的服务器
+就会上报两次，界面于是画两条。
+
+🔶 **推断部分**：上面那句「两种探测都成功」我**没有实测**，是从本平台网络探测
+（`socket`/`epoll`/广播都通）推出来的。可确定的是**代码里确实没有去重**。
+
+⇒ **不影响使用**：两条指向同一台服务器，点哪条都能进。
+⚠️ 这是**上游行为**，不是本移植引入的；手机/平板上都可能有。
+
 ## ⚠️ 在部分设备上应用装了却起不来
 
 **现象**：应用安装成功，一点就退，**没有任何崩溃提示**。
@@ -162,7 +178,7 @@ permission request: ....READ_WRITE_DOWNLOAD_DIRECTORY -> auth=2 dialogShown=true
 
 | 方式 | 怎么用 |
 | --- | --- |
-| **游戏自带的「导入模组」** | 游戏模组界面里那个按钮。✅ **可用**（设备上实测过）。⚠️ 它会先弹一个**网络不可用**的提示 —— 那是它在尝试联网取社区模组，而**联机还没做**，关掉提示继续即可 |
+| **游戏自带的「导入模组」** | 游戏模组界面里那个按钮。✅ **可用**（设备上实测过）。⚠️ 它会先弹一个**取不到社区模组列表**的提示 —— 那是它在联网，平台层的网络已经通了，取不到是服务端/链路的问题（实测是 `Connection refused`），关掉提示继续即可 |
 | **悬浮球菜单 → 导入模组** | 在**系统文件选择器**里选 `.jar` / `.zip`。**不需要任何权限** |
 | **Download 文件夹** | 把模组放进 `Download/MindustryMods/`，**下次启动自动**搬进去 |
 
@@ -239,6 +255,25 @@ permission request: ....READ_WRITE_DOWNLOAD_DIRECTORY -> auth=2 dialogShown=true
   three attributed lines.
 
 The reasoning behind each of those is in the source comments where the code is, rather than here -- `entry/src/main/cpp/launcher.c` is the place to start.
+
+## ⚠️ One LAN server can be listed twice
+
+**What happens**: with a server running, another device's LAN list in "Join game"
+shows **two entries** for the same machine.
+
+**The cause is in ArcNet itself** (the game's networking library, not our layer):
+`Client.discoverHosts()` fires **two independent probes** -- one **UDP
+broadcast**, one **multicast** -- each on its own socket, each calling the
+callback once per reply, with **no de-duplication by address anywhere**. A server
+that answers *both* probes is therefore reported twice and drawn twice.
+
+🔶 **The inferred part**: that both probes do succeed here is **not measured** --
+it is inferred from this platform's network probe (socket/epoll/broadcast all
+pass). What is certain is that **the code contains no de-duplication**.
+
+⇒ **Harmless**: both entries point at the same server and either one connects.
+⚠️ This is **upstream behaviour**, not something this port introduced; it can
+happen on phones and tablets alike.
 
 ## ⚠️ On some devices it installs and will not start
 
@@ -360,7 +395,7 @@ which is the reason there are two entry points.
 
 | Way | How |
 | --- | --- |
-| **The game's own "import mod"** | the button in the game's mods screen. ✅ **Works** (confirmed on the device). ⚠️ It shows a **network-unavailable** notice first -- it is trying to reach the community mod list, and networking is not ported -- dismiss it and carry on |
+| **The game's own "import mod"** | the button in the game's mods screen. ✅ **Works** (confirmed on the device). ⚠️ It shows a **cannot-reach-the-community-mod-list** notice first -- it is going online, and the platform-level network path works; failing to fetch is a server/route condition (measured: `Connection refused`). Dismiss it and carry on |
 | **导入模组 in the ball's menu** | pick a `.jar` / `.zip` in the **system file picker**. **Needs no permission** |
 | **Downloads folder** | drop the file in `Download/MindustryMods/` and it is taken in **automatically on the next launch** |
 
