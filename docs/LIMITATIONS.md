@@ -102,6 +102,41 @@
 且代价随**视野面积**放大 —— 屏幕越大越吃力。
 
 
+## ⚠️「下载」目录：部分机型上这个功能根本不存在
+
+**现象**：在 **Mate 80 Pro 手机**上，应用申请「下载目录」权限时**不弹窗**，
+权限列表里也看不到它，而且**「Download/MindustryMods/」这个入口用不了**。
+**在 MatePad Pro 平板上一切正常。**
+
+**依据（同一份 HAP、同一个签名 —— `appId` 逐字符相同，两台设备实测）**：
+
+| | 权限状态 |
+| --- | --- |
+| 平板 MatePad Pro | `[0, 0]` 两个都**已授予** |
+| 手机 Mate 80 Pro | `[0, -1]` 下载权限**未授予** |
+
+手机上应用自己记录的原文：
+
+```text
+mods: no Downloads directory (The device doesn't support this api)
+requestPermissionsFromUser: ....READ_WRITE_DOWNLOAD_DIRECTORY -> 2
+```
+
+`authResults = 2` **不是「被拒绝」**，而是**「无效请求」**（SDK：
+`security/PermissionRequestResult.d.ts`）—— 系统直接不受理，**所以永远不会弹窗**，
+再申请多少次也没用。同一个设备上 `Environment.getUserDownloadDir()` 抛出的
+「The device doesn't support this api」是同一件事的另一面。
+
+⇒ 这是**设备能力差异**，不是包坏了、也不是签名问题。
+
+**影响**：在这类机型上，
+「存档从下载目录导入/导出」与「Downloads 文件夹放模组」**用不了**。
+
+**不受影响**：悬浮球菜单里的**「导入模组」走系统文件选择器，不需要任何权限**，
+在这些机型上照常可用 —— 这也是当初做两个入口的原因。
+
+---
+
 ## ⚠️ 模组：导入后要重启，文件在沙箱内
 
 **模组文件放在**（应用沙箱内）：
@@ -243,6 +278,45 @@ Java: a larger viewport means more work per frame at the same frame budget.
 untouched -- and its cost grows with the VISIBLE AREA, so a larger screen suffers
 more.
 
+
+## ⚠️ The Download folder does not exist on every device
+
+**What happens**: on the **Mate 80 Pro phone**, requesting the Download-directory
+permission shows **no dialog**, the permission does not appear in the permission
+list, and **the `Download/MindustryMods/` entry point does not work**. On the
+**MatePad Pro tablet** all of it works.
+
+**Evidence** (one HAP, one signature -- identical `appId` -- measured on both):
+
+| | permission state |
+| --- | --- |
+| tablet, MatePad Pro | `[0, 0]` -- both granted |
+| phone, Mate 80 Pro | `[0, -1]` -- the Download one **not granted** |
+
+The app's own log from the phone:
+
+```text
+mods: no Downloads directory (The device doesn't support this api)
+requestPermissionsFromUser: ....READ_WRITE_DOWNLOAD_DIRECTORY -> 2
+```
+
+`authResults = 2` is **not "denied"** -- it is **INVALID REQUEST** (SDK,
+`security/PermissionRequestResult.d.ts`), so the system refuses to consider the
+request at all and **no dialog will ever appear**, however many times it is
+asked. `Environment.getUserDownloadDir()` throwing "The device doesn't support
+this api" on the same device is the same fact from the other side.
+
+⇒ a **device capability difference**, not a broken package and not a signing
+problem.
+
+**What it costs**: on such a device, "import/export a save via the Download
+folder" and "drop mods in the Downloads folder" **do not work**.
+
+**What is unaffected**: **导入模组 in the ball's menu uses the system file
+picker and needs no permission at all**, so it keeps working on those devices --
+which is the reason there are two entry points.
+
+---
 
 ## ⚠️ Mods: a restart applies them, and the files live in the sandbox
 

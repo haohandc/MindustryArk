@@ -50,14 +50,32 @@ const MIN_API_FOR_JIT = 26;
 const FORCE_COMPAT_MODE = false;
 
 /**
- * Request the Download directory permission, so the player can import save
- * files and game data from there.
+ * The permission the game's own file browsing needs: import/export of saves and
+ * game data goes through files the player puts in Download, and without this
+ * grant the app's opendir() on that path fails with EPERM.
  *
- * The game's data import/export reads files the player puts in Download, and
- * without this grant the app's own opendir() on that path fails with EPERM.
+ * ⚠️ NOT AVAILABLE ON EVERY DEVICE, and the failure is silent.
  *
- * Note that reinstalling resets the grant: the dialog comes back after every
- * deploy and has to be answered again.
+ *   This file used to say "reinstalling resets the grant: the dialog comes back
+ *   after every deploy". That was true on the tablet and is false on the phone,
+ *   and the difference is the device rather than the build. Measured, same HAP,
+ *   same signature (identical appId):
+ *
+ *     tablet : reqPermissionStates [0, 0]  -- both granted
+ *     phone  : reqPermissionStates [0, -1] -- this one NOT granted
+ *
+ *   On the phone, requestPermissionsFromUser returns authResults = 2, which is
+ *   not "denied" but "INVALID REQUEST" -- the system refuses to consider it, so
+ *   no dialog is ever shown and re-asking at every launch cannot help. The same
+ *   device says "The device doesn't support this api" from
+ *   Environment.getUserDownloadDir(), which is the same fact from the other side
+ *   and matches the SDK's own build-time warning that this API "is not supported
+ *   on all devices".
+ *
+ *   So the request is a best-effort: on hardware that offers it the player is
+ *   asked once, and on hardware that does not, nothing happens and nothing
+ *   breaks -- the mods folder in Downloads is simply unavailable there, and the
+ *   picker in the ball's menu still works. See docs/LIMITATIONS.md.
  */
 const WANTED: Permissions[] = [
   'ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY'
@@ -76,9 +94,48 @@ async function requestPerms(ctx: common.UIAbilityContext): Promise<void> {
     }
 
     const res = await atm.requestPermissionsFromUser(ctx, WANTED);
+    /*
+     * Log all four fields, not just the two that were obvious.
+     *
+     * This loop used to print only permissions/authResults, which is why a
+     * report of "the permission prompt has stopped appearing" took a session to
+     * explain. The result carries dialogShownResults and errorReasons as well,
+     * and those are the two that answer "why was no dialog shown?" -- see
+     * security/PermissionRequestResult.d.ts:
+     *
+     *   authResults  0 = granted, -1 = not authorized, 2 = INVALID REQUEST
+     *                (not declared / bad name / request conditions unmet)
+     *   dialogShown  true = a dialog was shown; false = the system did not show
+     *                one, because the permission state, type or policy does not
+     *                allow the dialog path
+     *   errorReasons 0 valid, 1 bad name, 2 not declared, 3 conditions unmet,
+     *                4 privacy statement not accepted, 5 this permission does
+     *                not support being requested by dialog, 6 manual_settings --
+     *                can only be granted from the Settings page, 12 service error
+     *
+     * Measured on the HarmonyOS 7 phone: authResults came back 2 for
+     * READ_WRITE_DOWNLOAD_DIRECTORY, so no dialog appeared, and the state stayed
+     * -1. That phone also reports "The device doesn't support this api" from
+     * Environment.getUserDownloadDir(), which is the same fact from the other
+     * side. See docs/LIMITATIONS.md.
+     */
     for (let i = 0; i < res.permissions.length; i++) {
-      hilog.info(DOMAIN, TAG, 'requestPermissionsFromUser: %{public}s -> %{public}d',
-        res.permissions[i], res.authResults[i]);
+      const shown: string = (res.dialogShownResults !== undefined
+        && i < res.dialogShownResults.length)
+        ? String(res.dialogShownResults[i]) : 'n/a';
+      const reason: number = (res.errorReasons !== undefined
+        && i < res.errorReasons.length) ? res.errorReasons[i] : -999;
+      hilog.info(DOMAIN, TAG,
+        'permission request: %{public}s -> auth=%{public}d dialogShown=%{public}s errorReason=%{public}d',
+        res.permissions[i], res.authResults[i], shown, reason);
+      if (res.authResults[i] === 2) {
+        /* Not "denied" -- the system refused to consider the request at all, so
+         * there will never be a dialog and re-asking every launch cannot help.
+         * The reason code above says which of the causes applies. */
+        hilog.warn(DOMAIN, TAG,
+          '  %{public}s: the system rejected this request as invalid; no dialog '
+          + 'will appear (reason %{public}d)', res.permissions[i], reason);
+      }
     }
   } catch (e) {
     const err = e as BusinessError;

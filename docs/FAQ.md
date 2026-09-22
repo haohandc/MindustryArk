@@ -38,6 +38,10 @@
 **普通使用不需要碰它** —— 用游戏内的导入 / 导出功能，走「下载」目录往返，
 这也正是那个权限的用途。
 
+⚠️ **但这条只在部分机型上成立**：手机 Mate 80 Pro 上系统把该权限申请判为「无效请求」
+（`authResults = 2`），不弹窗也不授权，「下载」目录用不了。详见
+[已知限制](LIMITATIONS.md)。
+
 ## DevEco 的稳定性测试报了一堆 `cppcrash`，是我装坏了吗？
 
 **不是安装或签名的问题。** 有**两件性质完全不同**的事都会被报成 `CppCrash`：
@@ -104,6 +108,11 @@ gives you a mobile UI driven by desktop input.)
 Inside the app sandbox, at `/data/storage/el2/base/files/.local/share/Mindustry/`.
 **You should never need to touch it** — use the in-game import / export, which goes through
 your Downloads folder. That is what the download permission is for.
+
+⚠️ **On some devices that route does not exist.** On the Mate 80 Pro phone the
+system returns "invalid request" (`authResults = 2`) for that permission, shows
+no dialog, never grants it, and the Download folder is unusable. See
+[limitations](LIMITATIONS.md).
 
 ## DevEco's stability test reports a pile of `cppcrash`. Did I install it wrong?
 

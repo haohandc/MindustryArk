@@ -21,7 +21,8 @@ where the platform-specific work lives.
 Working on HarmonyOS 7 / API 26 devices — a HUAWEI MatePad Pro 12.2" 2025 tablet
 and a HUAWEI Mate 80 Pro phone. The main menu renders, the mobile layout is
 used, audio plays through OHAudio, touch and physical keyboard both work, and
-saves can be imported from the Download folder.
+import/export via the Download folder works **on some devices only** -- see
+[limitations](docs/LIMITATIONS.md).
 
 | Area | State |
 |---|---|
@@ -31,8 +32,8 @@ saves can be imported from the Download folder.
 | Touch | Works, including two-finger pinch zoom |
 | Keyboard | Works (physical keyboard; WASD and ESC). Typing into game text fields uses an on-screen field with full input-method support — see [limitations](docs/LIMITATIONS.md) |
 | Gamepad / mouse | Mouse works. Gamepad untested |
-| Save import/export | Works, from/to the Download folder |
-| Mods | Work. Three ways in: the game's own "import mod" button, "导入模组" in the floating ball's menu, or drop the file in `Download/MindustryMods/`. The latter two **need an app restart** — see [limitations](docs/LIMITATIONS.md) |
+| Save import/export | Via the Download folder -- **only on devices that offer it** (not the Mate 80 Pro phone) -- see [limitations](docs/LIMITATIONS.md) |
+| Mods | Work. Three ways in: the game's own "import mod" button, "导入模组" in the floating ball's menu, or drop the file in `Download/MindustryMods/` (that last one **only on devices that offer the Download folder**). The latter two **need an app restart** — see [limitations](docs/LIMITATIONS.md) |
 | Desktop/mobile mode switch | Switches, but needs an app restart — see the [FAQ](docs/FAQ.md) |
 | Networking / multiplayer | **The platform side works** — `socket`, `epoll`, DNS, TCP, TLS and HTTP all measured working here. ⚠️ **But no actual multiplayer match has been tried yet** |
 
