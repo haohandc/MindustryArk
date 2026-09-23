@@ -1,6 +1,6 @@
 # 仓库结构 · MindustryArk
 
-[← 返回 README](../README.zh-CN.md) · [← Back to README](../README.md)
+[← 返回 README](../README.md) · [← Back to README](../README.en.md)
 
 ---
 # 中文

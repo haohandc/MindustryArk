@@ -1,6 +1,6 @@
 # 已知限制 · MindustryArk
 
-[← 返回 README](../README.zh-CN.md) · [← Back to README](../README.md)
+[← 返回 README](../README.md) · [← Back to README](../README.en.md)
 
 > 这些是**已知且有意保留**的行为，不是待修的缺陷清单。
 > 频繁问到的问题另见 **[FAQ.md](FAQ.md)**。

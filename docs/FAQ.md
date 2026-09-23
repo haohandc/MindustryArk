@@ -1,6 +1,6 @@
 # 常见问题 · MindustryArk
 
-[← 返回 README](../README.zh-CN.md) · [← Back to README](../README.md)
+[← 返回 README](../README.md) · [← Back to README](../README.en.md)
 
 > 这里只放**反复被问到、但「已知限制」里没写**的问题。
 > 有意保留的行为清单在 **[LIMITATIONS.md](LIMITATIONS.md)**。
