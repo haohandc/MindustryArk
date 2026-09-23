@@ -10,6 +10,7 @@
 /.clang-tidy
 **/.test
 /.appanalyzer
+/.codegenie
 
 # Python bytecode from running the scripts in scripts/
 __pycache__/
