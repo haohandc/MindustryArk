@@ -6,6 +6,7 @@ import { i18n } from '@kit.LocalizationKit';
 import { inputMethod } from '@kit.IMEKit';
 import { fileIo as fs, Environment } from '@kit.CoreFileKit';
 import { modFolderPath } from '../mods/ModImporter';
+import { stashIfAny } from '../diagnostics/ExportDiagnostics';
 import pointer from "@ohos.multimodalInput.pointer"
 import sdl from 'libSDL3.so';
 
@@ -236,6 +237,20 @@ export default class EntryAbility extends UIAbility {
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(DOMAIN, 'SDL/STARTUP', '%{public}s', 'Handing control from ArkTS to native SDL.');
+    /*
+     * FIRST, and the position is the whole point.
+     *
+     * launcher.c unlinks crash.txt every time main() is entered, so the previous
+     * launch's crash report survives only until native code starts. The handover
+     * to native is provideArkTSObjects() at the END of this method, and main() is
+     * what that starts -- so everything above that call runs while the report is
+     * still on disk, and nothing below it is guaranteed to.
+     *
+     * The cost of getting this wrong is silent: the report is simply gone, and
+     * the one case it exists for is the one where we have no other evidence.
+     * See diagnostics/ExportDiagnostics.ets.
+     */
+    stashIfAny(this.context.filesDir);
     writeJvmOptions(want, this.context.filesDir);
     writeUserDirs(this.context.filesDir);
     /*

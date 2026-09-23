@@ -4,10 +4,14 @@ import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { KeyCode } from '@kit.InputKit';
 import { window } from '@kit.ArkUI';
-import { ensureModFolder } from '../mods/ModImporter';
+import { ensureModFolder, modFolderPath } from '../mods/ModImporter';
 /* Exported so this page can write the bridge a second time, once the folder it
  * names actually exists. See the note at the ensureModFolder() call. */
 import { writeUserDirs } from '../entryability/EntryAbility';
+/* The crash report is CAPTURED in the ability's onCreate (it has to be read
+ * before native code unlinks it) and PUBLISHED here, which is the first moment
+ * the Download folder is known to exist. See diagnostics/ExportDiagnostics.ets. */
+import { publish as publishCrash, exportNow as exportDiagnosticsNow } from '../diagnostics/ExportDiagnostics';
 /* `focusControl` needs no import: it is an ArkTS framework global, like
  * getContext. Importing it from @kit.ArkUI does not compile. */
 
@@ -426,7 +430,7 @@ const BALL_MENU_PAD_VP = 16;
  * would have reserved a row's height that is not drawn, and the menu would hang
  * that much lower than it needs to.
  */
-const BALL_MENU_ROWS = 2;
+const BALL_MENU_ROWS = 3;
 const BALL_MENU_H_VP = BALL_MENU_ROWS * BALL_MENU_ROW_VP
                      + (BALL_MENU_ROWS - 1) * BALL_MENU_DIVIDER_VP
                      + BALL_MENU_PAD_VP;
@@ -708,6 +712,20 @@ struct Index {
          * regardless.
          */
         writeUserDirs(ctx.filesDir);
+        /*
+         * Second half of the crash-report export, and it belongs exactly here.
+         *
+         * The crash itself was captured in the ability's onCreate, because it has
+         * to be read before native code unlinks it. It could not be WRITTEN to
+         * Downloads there: on the phone that folder is only reachable through
+         * the DOWNLOAD-mode picker's grant, and the picker needs a window -- the
+         * same constraint that puts the folder's creation on this page.
+         *
+         * So: capture early, publish once the folder is known-good. The publish
+         * is idempotent (named after the crash, skipped if present) and does
+         * nothing at all when there was no crash, which is the normal case.
+         */
+        publishCrash(modFolderPath(ctx.filesDir + '/mod_folder'), ctx.filesDir);
       })
       .catch((e: BusinessError) => {
         hilog.warn(DOMAIN, TAG, 'mod folder setup failed: %{public}s', e.message);
@@ -1094,6 +1112,33 @@ struct Index {
    * JVM starts, and the honest thing to do is say so rather than change nothing
    * visible and let the player think the button is broken.
    */
+  /*
+   * Write a diagnostics bundle to the app's Downloads folder and say so.
+   *
+   * The folder is recomputed here rather than remembered from the launch-time
+   * ensureModFolder() call, because this can be pressed long after that resolved
+   * and the player may have moved or made the folder since. modFolderPath() reads
+   * the same state file the folder setup writes, so it reflects the current
+   * answer; when it is empty the export fails loudly rather than writing nowhere.
+   */
+  exportDiagnostics(): void {
+    try {
+      const ctx = getContext(this) as common.UIAbilityContext;
+      const where: string = exportDiagnosticsNow(
+        modFolderPath(ctx.filesDir + '/mod_folder'), ctx.filesDir);
+      if (where === '') {
+        this.toast('导出失败：下载文件夹不可用');
+        return;
+      }
+      hilog.info(DOMAIN, TAG, 'diagnostics exported to %{public}s', where);
+      this.toast('已导出到「下载 / Mindustry Ark / diagnostics」');
+    } catch (e) {
+      const err = e as BusinessError;
+      hilog.error(DOMAIN, TAG, 'exportDiagnostics threw: %{public}s', err.message);
+      this.toast('导出失败');
+    }
+  }
+
   toggleControlMode(): void {
     const next: string = this.controlMode === CONTROL_MODE_MOBILE
       ? CONTROL_MODE_DESKTOP : CONTROL_MODE_MOBILE;
@@ -2050,6 +2095,33 @@ struct Index {
           .width('100%')
           .height(BALL_MENU_ROW_VP)
           .onClick(() => { this.openAbout(); })
+
+          Divider()
+            .strokeWidth(BALL_MENU_DIVIDER_VP)
+            .color('#22ffffff')
+
+          /*
+           * Support, in one tap.
+           *
+           * The app already exports a crash report by itself, but only when there
+           * IS one -- and the case that is hardest to act on has no crash at all
+           * ("it will not start", "it misbehaves"). On a release-signed install
+           * nothing outside the app can read the sandbox, so without this the
+           * answer to "please send me the log" is "there is no way to get it".
+           *
+           * It writes to the app's Downloads folder, which is where a player
+           * already knows how to look because it is the same place mods go.
+           */
+          Row() {
+            Text('导出诊断')
+              .fontSize(BALL_MENU_FONT_VP)
+              .fontColor('#eef2f9')
+            Blank()
+            Text('日志').fontSize(BALL_MENU_HINT_FONT_VP).fontColor('#8fb4ff')
+          }
+          .width('100%')
+          .height(BALL_MENU_ROW_VP)
+          .onClick(() => { this.exportDiagnostics(); })
         }
         .width(BALL_MENU_W_VP)
         .padding({ left: 14, right: 14, top: 8, bottom: 8 })
