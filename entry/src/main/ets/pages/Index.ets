@@ -430,7 +430,7 @@ const BALL_MENU_PAD_VP = 16;
  * would have reserved a row's height that is not drawn, and the menu would hang
  * that much lower than it needs to.
  */
-const BALL_MENU_ROWS = 3;
+const BALL_MENU_ROWS = 3;   /* verified on the tablet as a 3-row card, 2026-09-23 */
 const BALL_MENU_H_VP = BALL_MENU_ROWS * BALL_MENU_ROW_VP
                      + (BALL_MENU_ROWS - 1) * BALL_MENU_DIVIDER_VP
                      + BALL_MENU_PAD_VP;
