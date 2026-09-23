@@ -1960,6 +1960,17 @@ Doing only the first two ships a package named after the previous version.
       ⭐ This check has caught real defects twice, including a hard-coded absolute path in
       `scripts/test_version_gate.py` that would have failed with a confusing `ImportError`
       in any other checkout.
+
+      ⚠️ **This check and the binary one below return DIFFERENT numbers. Do not mix them
+      up.** Measured 2026-09-23: this text check returns **15 lines**; the binary check
+      returns **14 hits**. Reading "14" here and getting 15 looks exactly like a
+      regression and is not one. Of the 15, **14 are not defects at all** — they are the
+      documentation of this check itself (the control's `bad E:/u/x`, the note about
+      `https://x`) plus the standard install-location defaults (`E:/Program Files/DevEco
+      Studio`, `C:/Program Files/Java/jdk-17`, all overridable by env). The remaining
+      **one carries a username**: `scripts/config.py`'s `C:\Users\Haohandc\Arc` default
+      for `ARK_ARC_SRC`. That is not a secret — the GitHub account is `haohandc` — but it
+      is the only line here worth neutralising the next time that file is touched.
 - [x] **No local absolute paths in the BINARIES either** — ✅ **DONE 2026-09-22**, 395 → 14.
       See the note at the end of this item for what is left and why. The `git grep` above only sees
       text files, so it cannot see the four native libraries — and they carry `__FILE__`
@@ -2046,5 +2057,70 @@ Doing only the first two ships a package named after the previous version.
       the only acceptable check is counting the strings in the produced HAP.
       Verified after this change: the game still launches on the tablet
       (`Mindustry 160.4`, load 5502 ms, audio mixer running, no `crash.txt`).
+
+      ⚠️ **The snippet above globs `dist/*.zip` as well as the HAPs, so it prints 27, not
+      14.** The extra 13 are not a second leak: the payload zip ships the same two
+      vendored libraries, so `libarcarm64.so` (7) and `libcxxabi_shim.so` (6) get counted
+      once per artifact. Per artifact: **HAP 14, payload 13**, and both are the known set —
+      the payload simply does not carry `libmain.so`, which is a build output and not in
+      `entry/libs/`. Re-measured 2026-09-23 on the `1.0.0.1` pair and unchanged.
 - [ ] **Signed HAP is not attached.**
 - [ ] Tag target pinned to a commit, not the default branch.
+
+---
+
+### Verified as published — v1.0.0.1, 2026-09-23
+
+| | |
+|---|---|
+| Release id | `v1.0.0.1`, published 2026-09-22T16:27:43Z |
+| Tag | `v1.0.0.1` = **`425ee52c7d3d15634264f91bfa1ece29b1e81b2a`** — the commit that adds `release-notes/1.0.0.1.en.md` ✅ |
+| Pre-release | ✅ set (this is an RC) |
+| Assets | **two**, and neither is the signed HAP ✅ |
+
+⭐ **The digests were read from the API rather than by re-downloading**, at the user's
+direction — `GET /repos/…/releases/tags/v1.0.0.1` returns an `asset.digest` field of the
+form `sha256:<hex>`. Both match the local files exactly, **and so do the byte sizes**;
+equal sizes plus equal hashes is the same guarantee the v0.2.0-beta.1 block got from
+downloading, for a few hundred MB less traffic:
+
+| Asset | bytes | sha256 (published == local) |
+|---|---|---|
+| `…-1.0.0.1-unsigned.hap` | 273,094,166 | `4e59a189b0dda1d7f91550ca02f1fb24a122319f429e4265d46b9317e3cee779` |
+| `…-1.0.0.1-payload.zip` | 147,314,127 | `58d0b7e32f9dcf809a61b43736d1adeae41c36ae33967b012094dc10b4655015` |
+
+⭐ **The shipped HAP is byte-identical to `entry/build/default/outputs/default/…-unsigned.hap`**
+(same sha256), so the gate was run against the bytes that were uploaded rather than
+against a copy of them.
+
+Everything on the checklist above, run on the published pair:
+
+| check | result |
+|---|---|
+| `scripts/verify_hap.py` | **PASS** |
+| `scripts/test_version_gate.py` | **7/7** |
+| signature block, candidate | markers **0/4**, hex64 **0** |
+| signature block, signed control | markers **4/4**, hex64 **6** — **the control lit up, so the check has proving power** |
+| `dist/` HAP vs build output | identical sha256 |
+| payload vs `entry/libs/` | **104 ↔ 104**, zero difference either way; `testzip` clean |
+| payload REQUIRED entries | all 5 present |
+| shared binaries, HAP vs payload | **73 shared, 0 byte-differing** |
+| `scripts/check_sources_ascii.py` | OK, 3 sources pure ASCII |
+
+⚠️ **Two path-prefix mistakes were made while producing the two set comparisons above,
+and both produced a confident wrong answer.** The HAP spells its entries
+`libs/arm64-v8a/…` while the payload spells them `arm64-v8a/…` and `entry/libs/` is
+walked without either prefix. Comparing the raw name sets gave an **empty intersection**,
+which printed as "0 shared, 0 differ" — indistinguishable from agreement; and a later
+walk that dropped the `libs/` prefix printed "dropped 100% of the tree". Both were caught
+only by looking at *which* entries came back, never by the totals.
+⭐ **A totals-only check cannot tell "no differences" from "nothing was compared".**
+
+Run on the published pair: the unsigned HAP carries `versionName 1.0.0.1`,
+`versionCode 1000001`, `deviceTypes ['phone','tablet','2in1','tv']` (phone **kept** — the
+self-signed channel depends on it, see 2.12) and exactly one permission, `INTERNET`.
+`buildMode` is `debug`, which is correct for the `default` product. `minAPIVersion` is
+`60101024`, i.e. 6.1.1(24). ⚠️ `tv` comes from the DevEco template and is a genuine
+mismatch with the release notes' device table, which lists tablet / phone / PC·2in1; it is
+harmless (a TV cannot get the ACL either) and was left alone rather than trigger a rebuild
+of an already-published artifact.
