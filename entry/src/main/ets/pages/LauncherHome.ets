@@ -269,7 +269,8 @@ export struct LauncherHome {
   @State bundledVer: string = '';
 
   /* [A]
-   * 给**人**看的那个文件夹路径，例如 `Downloads/Mindustry Ark/games`。
+   * 给**人**看的那个文件夹路径，例如 `Download/Mindustry Ark/games`。
+   * ⚠️ 是 `Download` 单数 —— 那是磁盘上的真名；写 `Downloads` 会让玩家找不到。
    *
    * ⚠️⚠️ 为什么真实路径不够用（用户 2026-10-02 指出）：那个文件夹在磁盘上叫
    *    `com.haohandc.mindustryark`（由 ModImporter 用 bundle 名创建），
@@ -403,7 +404,12 @@ export struct LauncherHome {
     this.resolution = resolveGame(this.filesDir, this.bundleCodeDir);
     this.bundledVer = bundledGameVersion(this.bundleCodeDir);
     this.jarDirHint = gameJarDir(this.filesDir);
-    this.jarDirHuman = this.jarDirHint === '' ? '' : ('Downloads/' + this.appLabel + '/games');
+    /* ⚠️ 父文件夹叫 `Download`（单数）—— 这是**磁盘上的名字**，不是英文惯用的
+     * "Downloads"。判据：`user_dirs.txt` 里记的是
+     * `/storage/Users/currentUser/Download/com.haohandc.mindustryark`，
+     * 而 `Environment.getUserDownloadDir()` 也返回 `.../currentUser/Download`。
+     * 文件管理器显示的就是磁盘上的名字，所以写复数会让玩家去找一个不存在的文件夹。 */
+    this.jarDirHuman = this.jarDirHint === '' ? '' : ('Download/' + this.appLabel + '/games');
     hilog.info(DOMAIN, TAG, 'launcher: %{public}d jar(s), resolved=%{public}s (%{public}s)',
                this.games.length, this.resolution.path === '' ? '(none)' : this.resolution.path,
                this.resolution.source);

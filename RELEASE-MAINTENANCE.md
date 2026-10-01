@@ -2322,7 +2322,7 @@ been read back from the API — a local hash proves nothing about what somebody 
 
 | Asset | bytes | sha256 (local, unverified) |
 |---|---|---|
-| `…-1.2.0.1-unsigned.hap` | 275,371,680 | `80c9c7b9a9a59b105adf6087c40977ccad7d0d7f5eb573602888e98359afa8d2` |
+| `…-1.2.0.1-unsigned.hap` | 275,371,717 | `5cf9ff9847a9398d0522355703f1757f6e7350de666e4e22cfcd4d93d4274882` |
 | `…-1.2.0.1-payload.zip` | 149,337,475 | `de7d153506a6de229e5e5d3a05995d56e5e5f72ee78d707b94bdfef7572eeb47` |
 
 **How to close this block**
@@ -2336,16 +2336,17 @@ Record the release id, the commit the tag points at, whether the pre-release fla
 both `sha256:` digests — then replace the two ⏳ rows above with the confirmed ones and retitle
 the block to `### Verified as published — v1.2.0.1, <date>`.
 
-⚠️ **The HAP hash above is the THIRD build of this version**, and each rebuild replaced the
+⚠️ **The HAP hash above is the FOURTH build of this version**, and each rebuild replaced the
 previous hash rather than being kept beside it.
 
 | Build | bytes | sha256 | what forced it |
 |---|---|---|---|
 | 1st | 275,367,303 | `5aed81eb…` | — |
-| 2nd | 275,367,325 | `d2ca2b18…` | Downloads subfolder renamed `game` → `games` |
-| **3rd** | **275,371,680** | **`80c9c7b9…`** | the folder path shown in the launcher became two lines, and the app's own display name is now read from `EntryAbility_label` at runtime |
+| 2nd | 275,367,325 | `d2ca2b18…` | the `game` → `games` subfolder rename |
+| 3rd | 275,371,680 | `80c9c7b9…` | the folder path shown in the launcher became two lines, and the app's own display name is now read from `EntryAbility_label` at runtime |
+| **4th** | **275,371,717** | **`5cf9ff98…`** | that second line said `Downloads/` — the folder is `Download/` |
 
-**⭐ The payload zip has been unchanged through all three builds — same bytes, same hash.**
+**⭐ The payload zip has been unchanged through all four builds — same bytes, same hash.**
 That is not luck and it is a real check on both artifacts. What the payload carries is
 `entry/libs/arm64-v8a/` and nothing else: measured, the zip holds **73 `.so` files plus the
 JDK tree, and zero source files** (`.ets`/`.ts`/`.py`/`.c`/`.h`/`.java`/`.json5`/`.md` count: 0;
@@ -2354,14 +2355,28 @@ build of this version *does* move it, something changed a binary in `entry/libs/
 worth knowing before publishing.
 
 ⚠️ **"The payload is unchanged" is therefore a statement about `entry/libs/`, not about the
-source tree** — the source *did* change in the 3rd build. Do not read a matching hash as
+source tree** — the source changed in the 3rd *and* 4th builds. Do not read a matching hash as
 "nothing changed".
 
-⚠️ Both of the ArkTS edits behind the 3rd build are **unverified on a device**: `hdc list
-targets` was empty when the artifact was cut, so nobody has looked at the two-line path on a
-screen. The rebuild is justified anyway because it corrects a *wording* bug that a reviewer
-would see immediately — the path shown to the player used the bundle name, which is the name
-nobody sees. See the "app label" note below.
+⚠️ **No build of this version has been seen on a screen.** `hdc list targets` was empty for all
+four, so the two-line path, the label lookup and the width fix are all *built and gated*, and
+*nothing more than that*. Two of the four rebuilds were for **wording** bugs that a Chinese
+reviewer would meet on the first run and that no gate in this repository can see — the path is
+a string the app prints, and every assertion here reads files, not screens.
+
+⭐ The 4th is worth stating plainly as a lesson, because it was introduced in the same commit
+that fixed the *same class* of bug. The 3rd build was cut to stop the launcher printing a name
+the player cannot find (`com.haohandc.mindustryark` rather than `Mindustry Ark`). The string
+added to fix it then printed `Downloads/Mindustry Ark/games`, and **the directory on disk is
+`Download`** — so the replacement line was unfindable in exactly the way the line it replaced
+had been. Both were caught by a human reading the string, not by a tool.
+
+⇒ **Judged by measurement, not by feel**: `Environment.getUserDownloadDir()` returns
+`/storage/Users/currentUser/Download`, and `user_dirs.txt` records
+`mods=/storage/Users/currentUser/Download/com.haohandc.mindustryark`. Measured, both.
+`docs/LIMITATIONS.md` already spelled it correctly in ten places — the new code did not read
+them. The correction is recorded at `GameLibrary.ets`, next to the function that resolves the
+folder, so the next person writing a user-facing path meets it. See the "app label" note below.
 
 **What changed in this version, for whoever reads this block later**
 
@@ -2412,7 +2427,7 @@ touches a resource this file may not find.
 
 | Line | Example | Job |
 |---|---|---|
-| human-readable | `Downloads/Mindustry Ark/games` | **navigate to it** — matches what the file manager shows |
+| human-readable | `Download/Mindustry Ark/games` | **navigate to it** — matches what the file manager shows |
 | real path | `/storage/Users/currentUser/Download/com.haohandc.mindustryark/games` | **copy it** — the only form any tool accepts |
 
 ⚠️ Ark Launcher's copy of this file is byte-identical, and it prints its own label without a
