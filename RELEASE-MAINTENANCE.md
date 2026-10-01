@@ -1964,8 +1964,9 @@ strands the reader at step one. One line solves that; the sections do not have t
 - ⚠️ **The unofficial + GPL-3.0 notice.** It lives beside the opening description and was
   deleted along with it once already. It is the load-bearing statement about what this
   project is; keep it in **both** language halves.
-- ⚠️ **The embedded game version** (`Mindustry v8 Build 160.4`). Our own version number says
-  nothing about which upstream build is inside, and the body is where a downloader looks.
+- ⚠️ **The embedded game version.** Our own version number says nothing about which upstream
+  build is inside, and the body is where a downloader looks. ⭐ **Since 1.2.0.1 it is also the
+  only place it appears** — the release title stopped carrying it, see §3. Still required.
 
 ⇒ To produce a body: take the version sections, keep the notice, add "what is new", and end
 with the pointer. The material that was dropped lives in `README.md` / `README.en.md` and
@@ -1977,11 +1978,31 @@ tag points at the commit that produced the previous binary. See 2.3.
 
 ### Repository description (one line)
 
+**Current form** — set by the user 2026-10-02:
+
 ```
-在 HarmonyOS / OpenHarmony 上运行 Mindustry 的自建启动器：内嵌 JDK、native 起 JVM、SDL3 出画面，已真机跑通。
+在 HarmonyOS / OpenHarmony 上运行 Mindustry 的自建启动器，已真机跑通。
 ```
 
 ```
+A self-built launcher that runs Mindustry on HarmonyOS / OpenHarmony, tested on real devices.
+```
+
+⭐ **The trailing implementation list is gone.** The description used to end
+`— embedded JDK, native JVM startup, real SDL3 window.` Three reasons it left:
+
+1. **Those are means, and a description is about what the reader gets.** "Embedded JDK" is not
+   something anyone downloads a project for; "runs Mindustry on your tablet" is.
+2. ⚠️ **It had started to go stale.** Since 1.2.0.1 the player **chooses which game jar to
+   load**, so the app is no longer well described as one that carries a particular game and a
+   particular runtime. A description that lists internals ages every time the internals move.
+3. **`已真机跑通` is the one clause that stated a result, not a method** — and it is the one
+   worth keeping. Most projects in this space are experimental; that clause is the difference.
+
+⚠️ **Historical descriptions, as published** (kept verbatim, same reason as the release titles):
+
+```
+在 HarmonyOS / OpenHarmony 上运行 Mindustry 的自建启动器：内嵌 JDK、native 起 JVM、SDL3 出画面，已真机跑通。
 Run Mindustry on HarmonyOS / OpenHarmony via a self-built launcher — embedded JDK, native JVM startup, real SDL3 window.
 ```
 
