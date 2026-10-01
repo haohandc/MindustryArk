@@ -2251,3 +2251,49 @@ describe it as 「架构更新」 rather than as a candidate or as a first stabl
 ⚠️ **The game version in the title is `160.5`, not `160.4`.** Both RC titles still say
 `Mindustry v8 Build 160.4` because that was true of them; this one ships the upstream jar
 whose sha256 is Anuken's published digest.
+
+---
+
+### ⏳ PENDING VERIFICATION — v1.2.0.1, 2026-10-02
+
+⚠️ **This is not a ledger entry yet.** The rows below are the **local** build's hashes. By the
+rule stated above they become entries only after the release exists **and** both assets have
+been read back from the API — a local hash proves nothing about what somebody else downloads.
+
+| | |
+|---|---|
+| Release id | ⏳ not created yet |
+| Tag | ⏳ `v1.2.0.1` = **not created yet** |
+| Pre-release | ⏳ to be decided (the flag came off at v1.1.0.1 — see that block) |
+| Assets | two, and **neither may be the signed HAP** |
+
+| Asset | bytes | sha256 (local, unverified) |
+|---|---|---|
+| `…-1.2.0.1-unsigned.hap` | 275,367,303 | `5aed81ebef080a3a888b63ff0a0bc74473fdf142d421c80c48d0ce28e6078dc0` |
+| `…-1.2.0.1-payload.zip` | 149,337,475 | `de7d153506a6de229e5e5d3a05995d56e5e5f72ee78d707b94bdfef7572eeb47` |
+
+**How to close this block**
+
+```bash
+curl -s https://api.github.com/repos/haohandc/MindustryArk/releases/tags/v1.2.0.1 \
+  | grep -E '"id"|"tag_name"|"prerelease"|"digest"|"size"'
+```
+
+Record the release id, the commit the tag points at, whether the pre-release flag is set, and
+both `sha256:` digests — then replace the two ⏳ rows above with the confirmed ones and retitle
+the block to `### Verified as published — v1.2.0.1, <date>`.
+
+**What changed in this version, for whoever reads this block later**
+
+⭐ The launcher now lets the player **choose which game jar to load**, so
+`entry/libs/arm64-v8a/game/mindustry.so` is one entry among several rather than the only one.
+The bundled copy itself is unchanged — still the unmodified upstream jar, `v8 Build 160.5`.
+
+⚠️ **The version bump touched three files**: `scripts/config.py` (`APP_VERSION` / `VERSION_CODE`,
+self-checked at import), `AppScope/app.json5` (`versionName` / `versionCode`), and
+`entry/build-profile.json5` (`artifactName` — a **hand-written duplicate**, not derived).
+`verify_hap.py` §0 cross-checks all three and reported `OK` for 1.2.0.1 before this artifact
+was built.
+
+⚠️ **Ark Launcher carries the same version number, `1.2.0.1`, and publishes nothing.**
+It is a store-only fork; its `${versionName}` is deliberately not a separate track.
