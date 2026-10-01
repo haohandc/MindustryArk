@@ -268,6 +268,23 @@ export struct LauncherHome {
   /** [A] 包内那份自带游戏的版本号；读不出时是 ''，界面显示成「未知版本」。 */
   @State bundledVer: string = '';
 
+  /* [A]
+   * 给**人**看的那个文件夹路径，例如 `Downloads/Mindustry Ark/games`。
+   *
+   * ⚠️⚠️ 为什么真实路径不够用（用户 2026-10-02 指出）：那个文件夹在磁盘上叫
+   *    `com.haohandc.mindustryark`（由 ModImporter 用 bundle 名创建），
+   *    而**文件管理器把它显示成应用名**「Mindustry Ark」。⇒ 玩家照着应用里的
+   *    那一串去文件管理器找，**找不到**。
+   *    ⚠️ 只有应用被卸载之后，它才退化成显示包名。
+   *
+   * ⇒ 两行都给：这一行用来**找**，真实路径那一行用来**复制**。
+   *   两者都要，任缺其一都会让一部分人卡住。
+   */
+  @State jarDirHuman: string = '';
+
+  /* [B] 应用自己的显示名，由 resolveAppLabel() 从资源读出；读不到时是 ''。 */
+  private appLabel: string = '';
+
   /** [B] 应用版本，设置页那个「关于」入口用。由 Index.ets 传进来 —— 那边已经从 bundle 问到。 */
   appVersion: string = '';
 
@@ -292,6 +309,7 @@ export struct LauncherHome {
     this.contentPct = readWidthPct(this.filesDir);
     this.sliderPct = this.contentPct;
     this.launchMode = readLaunchMode(this.filesDir);
+    this.appLabel = this.resolveAppLabel();
     this.refresh();
   }
 
@@ -309,6 +327,27 @@ export struct LauncherHome {
   onFolderSettled(): void {
     if (this.folderSettled) {
       this.refresh();
+    }
+  }
+
+  /* [A]
+   * 应用自己的显示名 —— 也就是文件管理器给那个文件夹看的名。
+   *
+   * ⚠️ **从资源读，不硬编码。** 两个仓库的应用名不同（Mindustry Ark / Ark Launcher），
+   *    硬编码意味着其中一边必然写错，而且改名时不会有人想起来改这里。
+   *    走资源还顺带拿到**当前语言**下的名字。
+   *
+   * ⚠️ 读不到就返回 ''，调用方那时只显示真实路径 —— 退化成改之前的行为，
+   *    比显示一个错的路径好。
+   */
+  private resolveAppLabel(): string {
+    try {
+      const rm = getContext(this).resourceManager;
+      return rm.getStringSync($r('app.string.EntryAbility_label').id);
+    } catch (e) {
+      const err = e as BusinessError;
+      hilog.info(DOMAIN, TAG, 'launcher: cannot read the app label (%{public}s)', err.message);
+      return '';
     }
   }
 
@@ -364,6 +403,7 @@ export struct LauncherHome {
     this.resolution = resolveGame(this.filesDir, this.bundleCodeDir);
     this.bundledVer = bundledGameVersion(this.bundleCodeDir);
     this.jarDirHint = gameJarDir(this.filesDir);
+    this.jarDirHuman = this.jarDirHint === '' ? '' : ('Downloads/' + this.appLabel + '/games');
     hilog.info(DOMAIN, TAG, 'launcher: %{public}d jar(s), resolved=%{public}s (%{public}s)',
                this.games.length, this.resolution.path === '' ? '(none)' : this.resolution.path,
                this.resolution.source);
@@ -478,9 +518,19 @@ export struct LauncherHome {
               .fontSize(13).fontColor($r('sys.color.font_secondary'))
               .margin({ top: 12 })
               .textAlign(TextAlign.Center)
+            /* [A]
+             * ⚠️ 两行，缺一不可（用户 2026-10-02 定的）：
+             *   第一行给人【找】—— 文件夹在磁盘上叫包名，而文件管理器显示的是应用名，
+             *            ⇒ 照着真实路径去文件管理器找是找不到的
+             *   第二行给人【复制】—— 真实路径可以直接粘进文件管理器的地址栏
+             */
+            Text(this.jarDirHuman === '' ? '　' : this.jarDirHuman)
+              .fontSize(13).fontColor($r('sys.color.font_secondary'))
+              .margin({ top: 8 })
+              .textAlign(TextAlign.Center)
             Text(this.jarDirHint === '' ? '（这个设备上还拿不到 Download 文件夹）' : this.jarDirHint)
               .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-              .margin({ top: 8 })
+              .margin({ top: 2 })
               .textAlign(TextAlign.Center)
               .copyOption(CopyOptions.LocalDevice)
             Text('内置游戏：' + (this.resolution.source === 'bundled' ? '有' : '无'))
@@ -637,9 +687,13 @@ export struct LauncherHome {
       Column() {
         Text('游戏 jar 目录')
           .fontSize(14).fontColor($r('sys.color.font_secondary'))
+        /* [B] 与空状态同款两行：给人找的一行 + 可复制的一行。理由见空状态里的说明。 */
+        Text(this.jarDirHuman === '' ? '　' : this.jarDirHuman)
+          .fontSize(13).fontColor($r('sys.color.font_secondary'))
+          .margin({ top: 4 })
         Text(this.jarDirHint === '' ? '（本设备上拿不到）' : this.jarDirHint)
           .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-          .margin({ top: 4 })
+          .margin({ top: 2 })
           .copyOption(CopyOptions.LocalDevice)
       }
       .width(this.contentWidthVp())

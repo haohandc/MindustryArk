@@ -2322,7 +2322,7 @@ been read back from the API — a local hash proves nothing about what somebody 
 
 | Asset | bytes | sha256 (local, unverified) |
 |---|---|---|
-| `…-1.2.0.1-unsigned.hap` | 275,367,325 | `d2ca2b184be93ce95b5e38fd0d6c3b444cc64558200a5e3af92c0492f6466fbc` |
+| `…-1.2.0.1-unsigned.hap` | 275,371,680 | `80c9c7b9a9a59b105adf6087c40977ccad7d0d7f5eb573602888e98359afa8d2` |
 | `…-1.2.0.1-payload.zip` | 149,337,475 | `de7d153506a6de229e5e5d3a05995d56e5e5f72ee78d707b94bdfef7572eeb47` |
 
 **How to close this block**
@@ -2336,13 +2336,32 @@ Record the release id, the commit the tag points at, whether the pre-release fla
 both `sha256:` digests — then replace the two ⏳ rows above with the confirmed ones and retitle
 the block to `### Verified as published — v1.2.0.1, <date>`.
 
-⚠️ **The HAP hash above is the SECOND build of this version.** A first build existed and its
-hash was recorded here (`5aed81eb…`, 275,367,303 B) before the Downloads subfolder was renamed
-from `game` to `games`. That rename is one string in `GameLibrary.ets`, and it changes the
-compiled ArkTS, so the artifact had to be rebuilt and the hash replaced. The **payload zip is
-unchanged** (same bytes, same hash) because it carries build inputs rather than compiled code —
-which is a useful check that the two artifacts were affected by the edit in the way they should
-have been.
+⚠️ **The HAP hash above is the THIRD build of this version**, and each rebuild replaced the
+previous hash rather than being kept beside it.
+
+| Build | bytes | sha256 | what forced it |
+|---|---|---|---|
+| 1st | 275,367,303 | `5aed81eb…` | — |
+| 2nd | 275,367,325 | `d2ca2b18…` | Downloads subfolder renamed `game` → `games` |
+| **3rd** | **275,371,680** | **`80c9c7b9…`** | the folder path shown in the launcher became two lines, and the app's own display name is now read from `EntryAbility_label` at runtime |
+
+**⭐ The payload zip has been unchanged through all three builds — same bytes, same hash.**
+That is not luck and it is a real check on both artifacts. What the payload carries is
+`entry/libs/arm64-v8a/` and nothing else: measured, the zip holds **73 `.so` files plus the
+JDK tree, and zero source files** (`.ets`/`.ts`/`.py`/`.c`/`.h`/`.java`/`.json5`/`.md` count: 0;
+106 entries in total). So a recompile that touches ArkTS **cannot** move it, and if a future
+build of this version *does* move it, something changed a binary in `entry/libs/` and that is
+worth knowing before publishing.
+
+⚠️ **"The payload is unchanged" is therefore a statement about `entry/libs/`, not about the
+source tree** — the source *did* change in the 3rd build. Do not read a matching hash as
+"nothing changed".
+
+⚠️ Both of the ArkTS edits behind the 3rd build are **unverified on a device**: `hdc list
+targets` was empty when the artifact was cut, so nobody has looked at the two-line path on a
+screen. The rebuild is justified anyway because it corrects a *wording* bug that a reviewer
+would see immediately — the path shown to the player used the bundle name, which is the name
+nobody sees. See the "app label" note below.
 
 **What changed in this version, for whoever reads this block later**
 
@@ -2358,3 +2377,43 @@ was built.
 
 ⚠️ **Ark Launcher carries the same version number, `1.2.0.1`, and publishes nothing.**
 It is a store-only fork; its `${versionName}` is deliberately not a separate track.
+
+---
+
+#### The app label is not the bundle name — the launcher was showing the wrong one
+
+⭐ **Two different names refer to this app, and they are shown to two different audiences.**
+
+| Name | Value here | Who shows it |
+|---|---|---|
+| **bundle name** | `com.haohandc.mindustryark` | the shell, `bm`, log files — **never the user** |
+| **app label** | `EntryAbility_label` → `Mindustry Ark` | the home screen, and **the file manager's folder name for the app's Download directory** |
+
+⚠️ **The launcher was printing a path built from the bundle name.** The player opens the file
+manager, sees `Download/Mindustry Ark/games`, and the app tells them to look in
+`Download/com.haohandc.mindustryark/games`. Same folder, two spellings, and the one the app
+printed was the one that appears **nowhere** in the UI they are looking at. Reported by the
+user with the rule stated exactly: *"what the user actually sees is our app name, not the
+package name. The package name only shows up if our app has been uninstalled."*
+
+⚠️ **It cannot be derived from the bundle name.** `com.haohandc.mindustryark` → `MindustryArk`
+is a guess that happens to be wrong (`Mindustry Ark` has a space), and on Ark Launcher the
+same code has to print `Ark Launcher`. So it is **read from the resource at runtime**:
+
+```ts
+const rm = getContext(this).resourceManager;
+return rm.getStringSync($r('app.string.EntryAbility_label').id);
+```
+
+wrapped in `try`, returning `''` on failure — the same fail-soft shape as everything else that
+touches a resource this file may not find.
+
+⭐ **The line is now two lines**, and they are for two different jobs:
+
+| Line | Example | Job |
+|---|---|---|
+| human-readable | `Downloads/Mindustry Ark/games` | **navigate to it** — matches what the file manager shows |
+| real path | `/storage/Users/currentUser/Download/com.haohandc.mindustryark/games` | **copy it** — the only form any tool accepts |
+
+⚠️ Ark Launcher's copy of this file is byte-identical, and it prints its own label without a
+second code path, because `EntryAbility_label` differs between the two repos.
