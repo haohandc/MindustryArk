@@ -1817,22 +1817,25 @@ untouched, and every back-link points at a file that exists.
 **Current form** — set by the user 2026-10-02:
 
 ```
-v1.2.0.1 - unofficial HarmonyOS / OpenHarmony port
+v1.2.0.1
 ```
 
-⭐ **The embedded game version is no longer in the title.** It was, up to and including
-`v1.1.0.1` (`v1.1.0.1 - Mindustry v8 Build 160.5`). The reason it left is that the app stopped
-being one game: from 1.2.0.1 the player **chooses which game jar to load**, so a single version
-number in the title would have described only the copy that happens to be bundled — and would
-have been wrong for everyone running something else.
+⭐ **The title is the version number and nothing else.** It carried a subtitle before
+(`v1.1.0.1 - Mindustry v8 Build 160.5`), and the subtitle went in two steps:
 
-⚠️ **The game version still has to be stated, in the body.** It is the first line of 概要 /
-Overview, in the form `v8 Build 160.5`. Putting it in the title is what was dropped, not the
-fact itself.
+1. the **game version** left first, because from 1.2.0.1 the player chooses which game jar to
+   load — a single game version in the title would describe only the copy that happens to be
+   bundled, and would be wrong for everyone running something else
+2. the **rest of the subtitle** (`unofficial HarmonyOS / OpenHarmony port`) left next, on the
+   ground that a release title does not need to restate what the repository description and the
+   body already say
 
-⭐ **Two hyphens, not an em dash** — ` - ` reads correctly in the GitHub title bar, where a long
-dash can be hard to tell from a hyphen in some fonts. Historical titles below use the em dash;
-they are left as published.
+⚠️ **The game version still has to be stated in the body.** It is the first line of 概要 /
+Overview, as a blockquote: `> **内置版本 \`Mindustry v8 Build 160.5\`**`. Removing it from the
+title is not a licence to remove it everywhere.
+
+⭐ **The tag and the title are the same string**, `v1.2.0.1` — the tag keeps the leading `v`, the
+versionName must not have one (see the character rules in `scripts/config.py`).
 
 <details>
 <summary>Historical titles (as published)</summary>
@@ -2319,7 +2322,7 @@ been read back from the API — a local hash proves nothing about what somebody 
 
 | Asset | bytes | sha256 (local, unverified) |
 |---|---|---|
-| `…-1.2.0.1-unsigned.hap` | 275,367,303 | `5aed81ebef080a3a888b63ff0a0bc74473fdf142d421c80c48d0ce28e6078dc0` |
+| `…-1.2.0.1-unsigned.hap` | 275,367,325 | `d2ca2b184be93ce95b5e38fd0d6c3b444cc64558200a5e3af92c0492f6466fbc` |
 | `…-1.2.0.1-payload.zip` | 149,337,475 | `de7d153506a6de229e5e5d3a05995d56e5e5f72ee78d707b94bdfef7572eeb47` |
 
 **How to close this block**
@@ -2332,6 +2335,14 @@ curl -s https://api.github.com/repos/haohandc/MindustryArk/releases/tags/v1.2.0.
 Record the release id, the commit the tag points at, whether the pre-release flag is set, and
 both `sha256:` digests — then replace the two ⏳ rows above with the confirmed ones and retitle
 the block to `### Verified as published — v1.2.0.1, <date>`.
+
+⚠️ **The HAP hash above is the SECOND build of this version.** A first build existed and its
+hash was recorded here (`5aed81eb…`, 275,367,303 B) before the Downloads subfolder was renamed
+from `game` to `games`. That rename is one string in `GameLibrary.ets`, and it changes the
+compiled ArkTS, so the artifact had to be rebuilt and the hash replaced. The **payload zip is
+unchanged** (same bytes, same hash) because it carries build inputs rather than compiled code —
+which is a useful check that the two artifacts were affected by the edit in the way they should
+have been.
 
 **What changed in this version, for whoever reads this block later**
 
