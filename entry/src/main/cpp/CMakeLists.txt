@@ -160,6 +160,13 @@ add_library(main SHARED launcher.c)
 # a device-security query has nothing to do with it.
 add_library(shield SHARED shield.c)
 target_link_libraries(shield PUBLIC libace_napi.z.so dl)
+
+# Reads the version out of a game jar. Needs a real zlib: the entry is raw deflate
+# and @ohos.zlib only exposes the zlib-format entry point. libz is in the NDK
+# sysroot (openharmony/native/sysroot/usr/lib/<abi>/libz.so), so this is a link
+# flag rather than a vendored copy.
+add_library(jarver SHARED jarver.c)
+target_link_libraries(jarver PUBLIC libace_napi.z.so z)
 # libhilog_ndk.z.so: the launcher mirrors its diagnostics there, because a
 # RELEASE-signed build's sandbox log files cannot be read over hdc -- measured,
 # "Permission denied", and with no faultlog entry either. Without this the store

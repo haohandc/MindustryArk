@@ -26,6 +26,9 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { modFolderPath } from '../mods/ModImporter';
+/* [A] 从 jar 里读出版本号。原生实现（cpp/jarver.c），理由见那个文件的开头 ——
+ * 简言之：version.properties 在 ZIP 里是 raw deflate，而 @ohos.zlib 只给 zlib 格式。 */
+import jarver from 'libjarver.so';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
@@ -73,6 +76,14 @@ export interface GameJar {
   size: number;
   /** [B] Unix 秒。 */
   mtime: number;
+  /* [A]
+   * jar 里自带的游戏版本，例如 '160.5'；**读不出时是空串**。
+   *
+   * ⚠️ 空串表示「不知道」，不是错误 —— 调用方把它显示成「未知版本」，
+   *    而不是让这一行消失或让整个列表失败。一份不是游戏的 jar（比如模组）
+   *    正常就会走到这里，而它照样应当能被选中、被启动。
+   */
+  version: string;
 }
 
 /** [B] 解析结果。path 为 '' 表示【没有】任何可加载的游戏。 */
@@ -148,7 +159,8 @@ export function listGameJars(filesDir: string): GameJar[] {
       if (!st.isFile()) {
         continue;
       }
-      out.push({ name: name, path: path, size: st.size, mtime: st.mtime });
+      out.push({ name: name, path: path, size: st.size, mtime: st.mtime,
+                 version: gameVersionOf(path) });
     } catch (e) {
       /* [B] 单个文件读不到 stat 就跳过 —— 一个列表项不值得让整个界面失败。 */
       hilog.info(DOMAIN, TAG, 'games: skipping %{public}s', name);
@@ -202,6 +214,82 @@ export function bundledGamePath(bundleCodeDir: string): string {
     base = base.substring(0, base.length - 1);
   }
   return base + BUNDLED_GAME_REL;
+}
+
+/* [A]
+ * 取 `version.properties` 里某个字段的值；没有这一行时返回 ''。
+ *
+ * ⚠️⚠️ **必须用「这一行是否以 key 开头」判断，不能用 indexOf / 子串搜索。**
+ *    文件里同时有 `build=` 和 `buildDate=`，而 `buildDate` 就在 `build` 之后 ——
+ *    一次子串搜索会**先命中 `buildDate`**，版本号于是变成
+ *    「September 20, 2026 13:57 PM」。同一个坑也写在 cpp/jarver.c 的对应位置。
+ */
+function propField(text: string, key: string): string {
+  const lines: string[] = text.split('\n');
+  for (const raw of lines) {
+    /* [B] 去掉行尾的 CR。这个文件由 Java 的 Properties.store() 写出，在别的平台上
+     * 可能带 CRLF —— 那样 "160.5\r" 会显示成结尾多一个方块。 */
+    const line: string = raw.endsWith('\r') ? raw.substring(0, raw.length - 1) : raw;
+    if (line.startsWith(key)) {
+      return line.substring(key.length).trim();
+    }
+  }
+  return '';
+}
+
+/* [A]
+ * 一个 jar 的显示用版本号，形如 `v8 Build 160.5`；读不出时是【空串】。
+ *
+ * ⭐ 两个字段拼起来才是完整版本（用户 2026-10-01 定的）：
+ *   · `number=8` 是**大版本** —— 玩家在别处看到的就是「v8」
+ *   · `build=160.5` 是具体构建号 —— 游戏里显示的就是它
+ *   ⇒ 官方发布页对早期版本写的是「7.0 Build xxx」，而这里**统一写 vN**（v8 / v7…），
+ *     因为 `number` 字段本来就是这个意思。
+ *
+ * ⚠️ 只有一半时给一半，**不硬凑**：缺 build 就只给 `v8`，缺 number 就只给
+ *    `Build 160.5`。拼出一个「v Build」这种半成品比缺一半更糟 —— 它看起来像读成功了。
+ *
+ * ⚠️ **每次调用都真读一遍，刻意不缓存。** 缓存要以路径为键，而玩家完全可以
+ *    把一个新 jar 放到旧名字上（`mindustry.jar` 是常见的起法）—— 那时缓存会
+ *    继续报旧版本，而且**从界面上完全看不出来**。实测单次读取是毫秒级
+ *    （只读中央目录 + 127 字节的一小段），几个 jar 加起来远不到值得缓存的程度。
+ *
+ * ⚠️ 原生那侧对畸形文件是防御性的，读不出就返回空串；这里的 try 兜的是
+ *    「原生模块本身出问题」，那也只是这一次读不出，不该影响列表。
+ */
+export function gameVersionOf(jarPath: string): string {
+  if (!isReadableJar(jarPath)) {
+    return '';
+  }
+  let text: string = '';
+  try {
+    text = jarver.jarVersionText(jarPath);
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.info(DOMAIN, TAG, 'games: jarVersionText(%{public}s) failed (%{public}s)', jarPath, err.message);
+    return '';
+  }
+  if (text === '') {
+    return '';
+  }
+  const number: string = propField(text, 'number=');
+  const build: string = propField(text, 'build=');
+  if (number !== '' && build !== '') {
+    return 'v' + number + ' Build ' + build;
+  }
+  if (number !== '') {
+    return 'v' + number;
+  }
+  if (build !== '') {
+    return 'Build ' + build;
+  }
+  return '';
+}
+
+/** [A] 包内那份自带游戏的版本号；没有包内游戏、或读不出时是空串。 */
+export function bundledGameVersion(bundleCodeDir: string): string {
+  const p: string = bundledGamePath(bundleCodeDir);
+  return p === '' ? '' : gameVersionOf(p);
 }
 
 /** [B] 玩家选中的那个 jar 的路径；没选过时为 ''。 */

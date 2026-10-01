@@ -40,7 +40,8 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { uiMaterial } from '@kit.ArkUI';
 import { GameJar, GameResolution, listGameJars, readSelection, writeSelection,
-         resolveGame, gameJarDir, ensureGameJarDir } from '../games/GameLibrary';
+         resolveGame, gameJarDir, ensureGameJarDir,
+         bundledGameVersion } from '../games/GameLibrary';
 /* [A] 界面偏好（内容宽度）。单独一个文件，因为它不是「游戏知识」——
  * 理由见那个文件的开头。 */
 import { readWidthPct, writeWidthPct, WIDTH_PCT_MIN, WIDTH_PCT_MAX,
@@ -264,6 +265,9 @@ export struct LauncherHome {
   /** [B] 下拉刷新是否在进行中。`$$` 双向绑定给 Refresh，由 onRefreshing 放回 false。 */
   @State isRefreshing: boolean = false;
 
+  /** [A] 包内那份自带游戏的版本号；读不出时是 ''，界面显示成「未知版本」。 */
+  @State bundledVer: string = '';
+
   /** [B] 应用版本，设置页那个「关于」入口用。由 Index.ets 传进来 —— 那边已经从 bundle 问到。 */
   appVersion: string = '';
 
@@ -358,6 +362,7 @@ export struct LauncherHome {
     this.games = listGameJars(this.filesDir);
     this.selected = readSelection(this.filesDir);
     this.resolution = resolveGame(this.filesDir, this.bundleCodeDir);
+    this.bundledVer = bundledGameVersion(this.bundleCodeDir);
     this.jarDirHint = gameJarDir(this.filesDir);
     hilog.info(DOMAIN, TAG, 'launcher: %{public}d jar(s), resolved=%{public}s (%{public}s)',
                this.games.length, this.resolution.path === '' ? '(none)' : this.resolution.path,
@@ -498,7 +503,14 @@ export struct LauncherHome {
                 Column() {
                   Text('内置游戏')
                     .fontSize(16).fontColor($r('sys.color.font_primary'))
-                  Text(this.resolution.source === 'bundled' ? '正在使用' : '包里的那一份')
+                  /* [A]
+                   * 第二行 = **版本号**，用户 2026-10-01 要的。
+                   *
+                   * ⚠️ 它【曾经】在这里随选中状态切换（「正在使用」/「包里的那一份」）。
+                   *   用户判定那个切换没必要 —— 而它是多余的：选没选中已经由右边的 ✓
+                   *   表达了，再写一遍只是把**唯一能放版本号的位置**占掉了。
+                   */
+                  Text(this.bundledVer === '' ? '未知版本' : this.bundledVer)
                     .fontSize(12).fontColor($r('sys.color.font_secondary')).margin({ top: 2 })
                 }
                 .alignItems(HorizontalAlign.Start)
@@ -518,11 +530,23 @@ export struct LauncherHome {
               ListItem() {
                 Row() {
                   Column() {
-                    Text(g.name)
+                    /* [A]
+                     * 第一行 = **版本号**，第二行 = 文件名 · 大小 · 日期（用户 2026-10-01 要的）。
+                     *
+                     * ⚠️ 与内置那一行的次序相反，这是刻意的：内置那份没有文件名可看，
+                     *   所以「内置游戏」本身就是它的标题；玩家导入的这些文件名五花八门
+                     *   （Mindustry160.5.jar / mindustry.jar / 随便什么），
+                     *   而**版本号才是选的时候真正要比的东西**。
+                     *
+                     * ⚠️ 读不出就写「未知版本」，**不是**把这一行留空或让条目消失 ——
+                     *   一个不是游戏的 jar（例如模组）本来就会走到这里，而它照样要能被选中。
+                     */
+                    Text(g.version === '' ? '未知版本' : g.version)
                       .fontSize(16).fontColor($r('sys.color.font_primary'))
                       .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-                    Text(formatSize(g.size) + '  ·  ' + formatDate(g.mtime))
+                    Text(g.name + '  ·  ' + formatSize(g.size) + '  ·  ' + formatDate(g.mtime))
                       .fontSize(12).fontColor($r('sys.color.font_secondary')).margin({ top: 2 })
+                      .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
                   }
                   .alignItems(HorizontalAlign.Start)
                   .layoutWeight(1)

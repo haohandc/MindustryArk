@@ -1,0 +1,6 @@
+{
+  "name": "libjarver.so",
+  "types": "./Index.d.ts",
+  "version": "1.0.0",
+  "description": "Reads the game version out of a jar, for ArkTS."
+}
