@@ -6,6 +6,9 @@ import { i18n } from '@kit.LocalizationKit';
 import { inputMethod } from '@kit.IMEKit';
 import { fileIo as fs, Environment } from '@kit.CoreFileKit';
 import { modFolderPath } from '../mods/ModImporter';
+/* [A] 只为了拿「玩家挑了哪个游戏 jar」—— 桥接要把它写进 user_dirs.txt 给 native 读。
+ * 方向是单向的：GameLibrary 不反过来 import 本文件，所以没有环。 */
+import { readSelection } from '../games/GameLibrary';
 import { stashIfAny } from '../diagnostics/ExportDiagnostics';
 import pointer from "@ohos.multimodalInput.pointer"
 import sdl from 'libSDL3.so';
@@ -125,6 +128,32 @@ export function writeUserDirs(filesDir: string): void {
     }
   } catch (e) {
     lines.push('mods=<threw>');
+  }
+
+  /* [A]
+   * 玩家在启动器里挑的那个游戏 jar，作为【绝对路径】。
+   *
+   * 和上面 mods= 一样的理由：native 侧没办法去问 ArkTS，所以要么 ArkTS 写下来、
+   * native 读回去，要么两边各自猜。而 native 读的就是这一行
+   * （launcher.c 的 read_user_dir("gamejar", ...)）。
+   *
+   * ⚠️ 没选过时【整行不写】，不是写一个空值。空值会让 native 必须去分辨「空」和
+   * 「没有」两种情形，而它现在的行为已经对了：没有这一行就落回包里自带的那一份。
+   * 给它一个可以什么都不写的机会，比要求它理解一个空字符串便宜。
+   *
+   * ⚠️ 这一行必须在【挂载 XComponent 之前】写进去。native 在 SDL_main 一启动时就读
+   * 这个文件，而那是挂载的后果 —— 所以启动器点了「启动游戏」之后，先调本函数、再
+   * 换屏。顺序反了的话，这一次启动加载的会是上一次的选择。
+   */
+  try {
+    const chosen: string = readSelection(filesDir);
+    if (chosen !== '') {
+      lines.push('gamejar=' + chosen);
+    }
+  } catch (e) {
+    /* [B] native 把 <threw> 当作「这一行不存在」（read_user_dir 里显式判断了它），
+     * 所以这里写下去是安全的，而它同时让「读选择失败了」在日志里可见。 */
+    lines.push('gamejar=<threw>');
   }
 
   for (const line of lines) {

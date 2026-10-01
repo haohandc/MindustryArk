@@ -3,6 +3,22 @@
     {
       "name": "start_window_background",
       "value": "#000000"
+    },
+    {
+      "name": "launcher_bg",
+      "value": "#FF101010"
+    },
+    {
+      "name": "launcher_card",
+      "value": "#FF1C1C1C"
+    },
+    {
+      "name": "launcher_border",
+      "value": "#1AFFFFFF"
+    },
+    {
+      "name": "launcher_bar",
+      "value": "#F21C1C1C"
     }
   ]
 }

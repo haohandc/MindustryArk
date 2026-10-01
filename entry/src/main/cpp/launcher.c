@@ -327,6 +327,71 @@ static int read_user_dir(const char *key, char *out, size_t outlen)
 }
 
 /* [A]
+ * 加载【哪一个】游戏 jar —— 这是启动器形态的核心，所以这里写清楚它为什么是这样。
+ *
+ * 为什么它必须是一个运行期的决定
+ *   自带的那份固定在 bundle 里（GAME_JAR），换一个游戏版本就意味着重新构建、重新
+ *   签名、再装一遍 171 MB。而启动器要做的是：玩家自己把若干个版本的 jar 丢进
+ *   Downloads 里本应用的那个文件夹，在界面上挑一个。于是「用哪个 jar」从一个编译期
+ *   常量，变成一个每次启动都要问一次的问题。
+ *
+ * 为什么复用 user_dirs.txt，而不是另开一个文件
+ *   那个文件已经在了，它的解析（read_user_dir）已经写好、已经在设备上跑过，而且它
+ *   已经在处理两种边界：键不存在（返回 0）、以及值不可用（ArkTS 写下的 "<threw>"）。
+ *   另开一个文件等于把这三件事再实现一遍 —— 本项目因为「同一份知识存在两处、其中
+ *   一处先跑偏」栽过好几次，不值得为一行格式再冒一次。
+ *
+ * 为什么存的是【路径】而不是索引或名字
+ *   两侧对「有哪些 jar」的看法必须只有一个来源。界面是 ArkTS 画的，所以那个来源是
+ *   ArkTS；它把选中的绝对路径写下来，native 只负责打开它，不去自己重扫一遍那个目录。
+ *
+ * ⚠️ 两个分支都必须能【打开】才算数
+ *   选中项 → 自带的 → 都没有（调用方据此拒绝启动）。
+ *   一条写在那里、但文件已经被删掉或根本不是 jar 的路径，必须【落回】自带游戏，
+ *   而不是让启动失败：玩家删掉一个 jar 文件是常事，那不该把应用变成起不来。
+ *
+ * ⚠️ 这里的规则与 Index.ets 的 gameAvailable() 是【同一条】。它那份存在，只是因为
+ *   ArkTS 必须在挂载 XComponent【之前】就决定要不要走启动器界面，而 native 那个
+ *   时刻还没有跑。两处都要改。
+ */
+static char game_jar_path[512];
+
+/** [B] 它存在、而且头两个字节是 'PK'（一个 ZIP/jar）时为真。 */
+static int is_readable_jar(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        return 0;
+    }
+    char magic[2] = { 0, 0 };
+    int ok = (fread(magic, 1, 2, f) == 2 && magic[0] == 'P' && magic[1] == 'K');
+    fclose(f);
+    return ok;
+}
+
+/** [A] 把要加载的 jar 解析进 game_jar_path。解析出来时为 1，两个来源都没有时为 0。 */
+static int resolve_game_jar(void)
+{
+    if (read_user_dir("gamejar", game_jar_path, sizeof(game_jar_path)) > 0) {
+        if (is_readable_jar(game_jar_path)) {
+            SDL_Log("   game jar: %s  (chosen in the launcher)", game_jar_path);
+            return 1;
+        }
+        /* [A] 值得单独一行：这一条正是「玩家删了一个 jar」在日志里留下的样子，
+         * 而它后面的那行说清了接下来会发生什么。 */
+        SDL_Log(" !! the chosen game jar is gone or is not a jar: %s", game_jar_path);
+        SDL_Log("    falling back to the bundled game");
+    }
+    if (is_readable_jar(GAME_JAR)) {
+        SDL_strlcpy(game_jar_path, GAME_JAR, sizeof(game_jar_path));
+        SDL_Log("   game jar: %s  (bundled)", game_jar_path);
+        return 1;
+    }
+    game_jar_path[0] = 0;
+    return 0;
+}
+
+/* [A]
  * 玩家选了哪种操作方案，跨启动持久化。
  *
  * Mindustry 用【一个 bit】决定它整个输入层和 UI：
@@ -2219,7 +2284,7 @@ static int launch_game(JNIEnv *env)
 
     SDL_Log(" --- step 4: launching the game ---");
 
-    SDL_Log(" classpath: %s", GAME_JAR);
+    SDL_Log(" classpath: %s", game_jar_path);
 
     jclass cls = (*env)->FindClass(env, MAIN_CLASS);
     if (!cls) {
@@ -2266,6 +2331,23 @@ static int start_jvm(void)
 {
     probe_rawfile();
     report_shipped_files();
+
+    /* [A]
+     * 在其它一切之前把「加载哪一个」定下来 —— classpath 在下面才拼，而它要的正是这个
+     * 结果。
+     *
+     * ⚠️ 没有游戏就【不创建 VM】。正常情况下走不到这里：ArkTS 在挂载 XComponent 之前
+     * 就拦住了，而没有 XComponent 就没有 libmain.so、也就没有 main()。这一条是纵深
+     * 防御 —— `aa start` 之类的路径绕过界面时，宁可在这里明确地失败、留下一条能查的
+     * 日志，也不要起一个没有游戏可跑、却白占内存和表面的 VM。
+     */
+    if (!resolve_game_jar()) {
+        SDL_Log(" !! no game jar: nothing is bundled, and none was chosen in the launcher");
+        SDL_Log("    bundle slot: %s", GAME_JAR);
+        SDL_Log("    refusing to create the JVM -- there would be nothing to run");
+        return 5;
+    }
+
     probe_gl_libs();
     probe_sandbox_exec();
     probe_user_dirs();
@@ -2346,10 +2428,12 @@ static int start_jvm(void)
      * 没有 org.lwjgl.* 就无法链接，所以找不到它们会在加载 application 的时候暴露出来，
      * 而不是在加载游戏 main class 的时候。
      * ⚠️ 第一个条目是补丁 jar，顺序承重 —— 见 PATCH_JAR 的注释。
+     * ⚠️ 第二个条目【不是】GAME_JAR 那个常量，而是它解析出来的结果 —— 玩家可能选了
+     *    别的版本。见 resolve_game_jar()。走到这一行时它必定非空，上面已经拒绝过。
      */
     SDL_snprintf(opt_classpath, sizeof(opt_classpath),
                  "-Djava.class.path=%s:%s:%s/lwjgl.so:%s/lwjgl-opengl.so:%s/lwjgl-sdl.so:%s",
-                 PATCH_JAR, GAME_JAR, LWJGL_JARS, LWJGL_JARS, LWJGL_JARS, HELPER_JAR);
+                 PATCH_JAR, game_jar_path, LWJGL_JARS, LWJGL_JARS, LWJGL_JARS, HELPER_JAR);
     /* [A]
      * bundle 库目录放在【最前】，而这个顺序正是关键。
      *

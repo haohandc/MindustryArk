@@ -12,6 +12,13 @@ import { writeUserDirs } from '../entryability/EntryAbility';
  * 再在这里【发布】—— 这是第一个能确定 Download 文件夹已存在的时刻。
  * 见 diagnostics/ExportDiagnostics.ets。 */
 import { publish as publishCrash, exportNow as exportDiagnosticsNow } from '../diagnostics/ExportDiagnostics';
+/* [A] 「加载哪一个游戏」的全部知识都在那里，本页只负责【问一次并照着做】。
+ * 为什么判定必须发生在本页、而不是 native：见 decideStartup()。 */
+import { consumeLauncherRequest, requestLauncher, resolveGame, reportGameResolution,
+         GameResolution } from '../games/GameLibrary';
+/* [A] 没有游戏可加载时显示的那一屏。它是【替换】XComponent，不是盖在它上面 ——
+ * 关于这个区别为什么决定了两边能用什么控件，见那个文件的开头。 */
+import { LauncherHome } from './LauncherHome';
 /* [A] `focusControl` 无需 import：它是 ArkTS 框架全局变量，和 getContext 一样。
  * 从 @kit.ArkUI 导入它编译不过。 */
 import shield from 'libshield.so'; // [B] 坚盾
@@ -405,10 +412,14 @@ const BALL_MENU_PAD_VP = 16;
  * 就是一个「对它写定时那个行数而言正确」的高度。现在加一行是一处改动而不是两处 ——
  * 而容易忘的那一处，正是被写下来的那一处。
  *
- * ⚠️ 它曾是 3，现在是 2，因为 "导入模组" 那一行被删掉了。这正是这个常量存在所要
- * 强制的两处改动：把它留在 3 会保留一行并不绘制的高度，菜单就会比需要的低那么多。
+ * ⚠️ 这个常量存在的全部意义，就是逼出「加/删一行要改两处」里的第二处：把它留在
+ * 旧值，会保留一段并不绘制任何东西的高度，菜单看起来只是「矮了一截」。
+ *
+ * ⚠️ 这里上面【曾】有一句「它曾是 3，现在是 2」，而紧挨着的值一直是 3 —— 也就是说
+ * 那句话在写下时就已经说错了，2026-10-01 订正。它被删掉而不是改写，因为**我不掌握
+ * 它的历史**：只留下能核实的部分（现在的值、以及改动它的规则）。
  */
-const BALL_MENU_ROWS = 3;   /* [B] 2026-09-23 在平板上确认为 3 行卡片 */
+const BALL_MENU_ROWS = 4;   /* [B] 2026-10-01 加了「启动器」那一行，3 -> 4 */
 const BALL_MENU_H_VP = BALL_MENU_ROWS * BALL_MENU_ROW_VP
                      + (BALL_MENU_ROWS - 1) * BALL_MENU_DIVIDER_VP
                      + BALL_MENU_PAD_VP;
@@ -539,6 +550,22 @@ struct Index {
    * 本项目已经被一个手工抄写的版本号坑过一次（build-profile.json5 里的
    * artifactName），再来一份副本会以完全相同的方式漂移。 */
   @State showAbout: boolean = false;
+
+  /* [A]
+   * 这一屏显示【游戏】还是【启动器】。
+   *
+   * 设置一次，在 aboutToAppear 里，由 decideStartup() 决定；之后只有两个地方改它：
+   * 启动器里点「启动游戏」（-> false），以及悬浮球菜单里点「启动器」（那一行走的是
+   * 退出握手，不是直接改这里 —— 见 backToLauncher()）。
+   *
+   * ⚠️ 它是一道【门】，所以它必须有出口。两个出口都在，而且是刻意放的：
+   *   · 启动器空状态里的「仍然尝试启动」—— 判定失误时的逃生门
+   *   · 悬浮球菜单里的「启动器」—— 进了游戏之后还能回来
+   */
+  @State showLauncher: boolean = false;
+  /* [B] 传给启动器界面的两个路径。从 context 取一次，因为那是页面才拿得到的东西。 */
+  private launcherFilesDir: string = '';
+  private launcherBundleDir: string = '';
 
   /** [A] 设置一次，在 XComponent 存在之前：见 aboutToAppear。 */
   @State shieldBlocked: boolean = false;
@@ -746,6 +773,15 @@ struct Index {
     } catch (e) {
       this.jvmIncomplete = false;
     }
+
+    /* [A]
+     * 在 XComponent 存在之前：有游戏就直接进游戏，没有就显示启动器界面。
+     * 为什么这个判定必须在这里、而不能等 native 起来再说，见 decideStartup()。
+     *
+     * ⚠️ 它排在 setupCompatMode() 【之前】不是随意的：那一句会写 jvm.options，
+     * 而既然它有可能决定根本不挂 XComponent，就没必要先写一份用不上的文件。
+     */
+    this.decideStartup();
 
     /* [A]
      * 在 XComponent 存在之前：见 setupCompatMode 上的说明。它会写出启动器要读的
@@ -1693,9 +1729,151 @@ struct Index {
 
   }
 
+  /** [A]
+   * 决定这一屏显示游戏还是启动器。**只在 aboutToAppear 里调用一次。**
+   *
+   * ⚠️⚠️ 为什么这个判定必须在 ArkTS 里、而且必须在【挂载 XComponent 之前】：
+   *
+   *     挂载 XComponent ⇒ 加载 libmain.so ⇒ main() 跑 ⇒ 一次完整的 JVM 启动
+   *
+   * 所以「先挂上、再由 native 说没有游戏」是错的 —— 那会白起一次 JVM（几百 MB 的
+   * 匿名可执行内存、一个 SDL 窗口、一整条初始化链），然后才发现无事可做。这正是
+   * `shieldBlocked` 用过的同一个形状，也是它同样在 aboutToAppear 里判定的理由。
+   *
+   * native 那一侧仍然【也】判一次（launcher.c 的 resolve_game_jar），那不是重复：
+   * 那一次防的是 `aa start` 之类的路径绕过界面直接拉起 native，而两次之间文件也可能
+   * 被删掉。
+   */
+  private decideStartup(): void {
+    const ctx = getContext(this) as common.UIAbilityContext;
+    this.launcherFilesDir = ctx.filesDir;
+    this.launcherBundleDir = ctx.bundleCodeDir;
+
+    /* ⚠️ 这个调用【顺带把标记删掉】—— 读而不清会把「点过一次启动器」变成一道永久的
+     * 门。理由写在 consumeLauncherRequest 的注释里，那里执行了删除。 */
+    const requested: boolean = consumeLauncherRequest(ctx.filesDir);
+
+    const r: GameResolution = resolveGame(ctx.filesDir, ctx.bundleCodeDir);
+    /* [A] 每一次都把这些路径写进日志。🔶 `bundleCodeDir` 的取值目前只是推断，
+     * 而「判定没有游戏」和「我把内置游戏的路径算错了」在界面上长得一模一样 ——
+     * 第一次上设备时，这几行是唯一能把两者分开的东西。 */
+    reportGameResolution(ctx.filesDir, ctx.bundleCodeDir, r);
+
+    if (requested) {
+      hilog.info(DOMAIN, TAG, 'startup: the launcher was requested -- showing it');
+      this.showLauncher = true;
+      return;
+    }
+    if (r.path === '') {
+      hilog.info(DOMAIN, TAG, 'startup: no game to load -- showing the launcher');
+      this.showLauncher = true;
+      return;
+    }
+    this.showLauncher = false;
+  }
+
+  /** [A]
+   * 启动器里点了「启动游戏」。参数是最终决定要加载的那个 jar，'' 表示「用包里的」。
+   *
+   * ⚠️ 顺序承重：桥接必须在 XComponent 挂载【之前】写。native 在 SDL_main 一启动时
+   * 就读 user_dirs.txt，而挂载是这一句之后的下一帧 —— 写晚了，这一次加载的会是上一次
+   * 选择的结果，而那种错误看起来只是「换了 jar 但没生效」。
+   */
+  private startGame(_jarPath: string): void {
+    const ctx = getContext(this) as common.UIAbilityContext;
+    /* [A] gamejar= 那一行是 writeUserDirs 从 selected_game.txt 推出来的 —— 不在这里
+     * 单独拼一遍。一份知识一个来源，而桥接的格式只由写它的那个函数拥有。 */
+    writeUserDirs(ctx.filesDir);
+    this.showLauncher = false;
+  }
+
+  /** [A]
+   * 悬浮球菜单里的「启动器」：回启动器界面。
+   *
+   * ⚠️ 它不能直接 `this.showLauncher = true` —— 那段代码运行时，游戏已经起来了，
+   * 本页的树里挂着一个活的 XComponent，把它从树上摘掉等于在 native 正在跑的时候拆它的
+   * surface。所以走的是【既有的退出握手】的同一个形状（悬浮球的其它退出路径也是）：
+   * 记下意图，然后 terminateSelf，让框架按它自己的顺序拆。下次启动时
+   * decideStartup() 读到那个意图。
+   */
+  private backToLauncher(): void {
+    const ctx = getContext(this) as common.UIAbilityContext;
+
+    /* [A]
+     * 【先】记下意图，再重启。
+     *
+     * ⚠️ 顺序不能反，而且这一句不只是「顺手」：它是 restartApp 失败时的唯一退路。
+     * 先写标记 ⇒ 无论重启成不成，下一次启动都会进启动器，只是多要点一下图标。
+     */
+    requestLauncher(ctx.filesDir);
+
+    /* [A]
+     * 用 `ApplicationContext.restartApp()` 一次性重启进程并拉起本 ability —— 用户要的
+     * 「点悬浮球的启动器，自动重启回到主界面」。
+     *
+     * 为什么必须是「重启」而不是「直接切界面」
+     *   换一个游戏 = 换一个 jar = **必须重开 JVM**：classpath 在 VM 创建时就定死了，
+     *   `main()` 也已经跑过一个循环。所以「切到启动器」如果只是换一屏，
+     *   它换的也是一个**仍然加载着旧 jar 的进程** —— 看着对了，实际什么都没换。
+     *   ⇒ 重启不是实现上的将就，而是这件事本身的要求。
+     *
+     * ⚠️ 为什么是 ApplicationContext 那一版，不是 `UIAbilityContext.restartApp`
+     *   SDK 原文（UIAbilityContext 版）：
+     *     "This API can be properly called only on phones. If it is called on other
+     *      device types, error code 801 is returned."
+     *   ⛔ 那我们最主要的设备（平板）就不能用。`ApplicationContext.restartApp` 的文档里
+     *   **没有**这条限制，而且从 API 12 就有。
+     *
+     * ⚠️ 它会抛，而且理由各不相同（16000053 不在前台 / 16000063 目标不对 /
+     *   16000064 三秒内重启过频）。**一律落到退路**：上面的标记已经写好了，
+     *   terminateSelf 之后玩家点一下图标就能回到启动器。
+     */
+    try {
+      ctx.getApplicationContext().restartApp({
+        bundleName: ctx.applicationInfo.name,
+        abilityName: ctx.abilityInfo.name,
+      });
+      hilog.info(DOMAIN, TAG, 'restartApp requested -- the app will come back on the launcher');
+      return;
+    } catch (e) {
+      const err = e as BusinessError;
+      hilog.error(DOMAIN, TAG,
+                  'restartApp failed (code=%{public}d %{public}s) -- falling back to terminateSelf',
+                  err.code, err.message);
+    }
+
+    /* [B] 退路：关掉自己。下一次启动读到上面那个标记，照样进启动器。 */
+    ctx.terminateSelf().catch((err: BusinessError) => {
+      hilog.error(DOMAIN, TAG, 'terminateSelf failed: %{public}s', err.message);
+    });
+  }
+
   build() {
     /* [B] 用 Stack，让文本框浮在游戏之上，而不是让游戏表面重排给它腾地方。 */
     Stack({ alignContent: Alignment.Top }) {
+    /* [A]
+     * 启动器【替换】整棵游戏树，而不是盖在它上面。这不是审美选择：
+     *
+     *   · 盖上去的话，XComponent 仍然会被挂载 ⇒ native 仍然会起一次 JVM ——
+     *     而「没有游戏可加载」的那一屏之所以存在，正是为了【不要】起那一次。
+     *   · 而且游戏树里那个隐形的 TextInput 是可获焦的，它会压在启动器的按钮之上，
+     *     于是点击落到它身上。这个项目在焦点上栽过不止一次。
+     *
+     * ⚠️ 下面那一段的缩进【刻意没有】跟着 else 往右移四百多行：那样做会让这个唯一的
+     * 真实改动被埋进一个巨大的空白 diff 里，而审查一遍看不出改了什么。这里的代价
+     * 只是 else 块的内层缩进比它该有的少两级。
+     */
+    if (this.showLauncher) {
+      LauncherHome({
+        filesDir: this.launcherFilesDir,
+        bundleCodeDir: this.launcherBundleDir,
+        onLaunch: (jarPath: string) => { this.startGame(jarPath); },
+        /* [A] 「仍然尝试启动」：绕开判定，直接进游戏树。它是逃生门 —— 判定没有游戏有
+         * 三个来源（真的没有 / 我把路径算错了 / 那台设备上建不出文件夹），而其中两个
+         * 是我的问题。没有它，一次判断失误就把应用变成永远打不开游戏的启动器。 */
+        onForceLaunch: () => { this.startGame(''); },
+      })
+    } else {
     Row() {
       Column() {
         if (!this.shieldBlocked) {
@@ -1908,6 +2086,32 @@ struct Index {
 
       if (this.ballMenu) {
         Column() {
+          /* [A]
+           * 条目：回启动器。
+           *
+           * 为什么它必须有：游戏一旦起来，本应用就没有别的路回到那一屏了 —— 启动器
+           * 界面只在 decideStartup() 判定「不启动游戏」时出现，而那个判定每次启动只做
+           * 一次。没有这一行，玩家换了 jar 之后想再换一个就只能卸载重装。
+           *
+           * ⚠️ 它退出应用，不是切界面。理由见 backToLauncher()：这段代码运行时
+           * XComponent 已经挂上了，把那棵树从页面上摘掉等于在 native 正在跑的时候拆它
+           * 的 surface。所以它走的是和其它退出路径同一个握手：记下意图，交给框架拆。
+           */
+          Row() {
+            Text('启动器')
+              .fontSize(BALL_MENU_FONT_VP)
+              .fontColor('#eef2f9')
+            Blank()
+            Text('选择游戏').fontSize(BALL_MENU_HINT_FONT_VP).fontColor('#8fb4ff')
+          }
+          .width('100%')
+          .height(BALL_MENU_ROW_VP)
+          .onClick(() => { this.backToLauncher(); })
+
+          Divider()
+            .strokeWidth(BALL_MENU_DIVIDER_VP)
+            .color('#22ffffff')
+
           /* [A]
            * 条目：当前生效的是哪套操作方案，以及那个切换开关。
            *
@@ -2137,6 +2341,9 @@ struct Index {
         .focusable(false)
         .onClick(() => { this.jvmIncomplete = false; })
       }
+    }
+    /* [A] ↑ 这一行关的是「游戏树」那个 else 分支。下面这一行关 Stack ——
+     * 两行本来是同一个括号，这里只是把它拆成了两个。 */
     }
     /* [B] 这个修饰符唯一的任务就是学到窗口尺寸，一次，好让球能对着正确的矩形摆放和
      * clamp。 */
