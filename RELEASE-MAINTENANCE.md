@@ -1814,9 +1814,38 @@ untouched, and every back-link points at a file that exists.
 
 ### Title
 
+**Current form** — set by the user 2026-10-02:
+
 ```
+v1.2.0.1 - unofficial HarmonyOS / OpenHarmony port
+```
+
+⭐ **The embedded game version is no longer in the title.** It was, up to and including
+`v1.1.0.1` (`v1.1.0.1 - Mindustry v8 Build 160.5`). The reason it left is that the app stopped
+being one game: from 1.2.0.1 the player **chooses which game jar to load**, so a single version
+number in the title would have described only the copy that happens to be bundled — and would
+have been wrong for everyone running something else.
+
+⚠️ **The game version still has to be stated, in the body.** It is the first line of 概要 /
+Overview, in the form `v8 Build 160.5`. Putting it in the title is what was dropped, not the
+fact itself.
+
+⭐ **Two hyphens, not an em dash** — ` - ` reads correctly in the GitHub title bar, where a long
+dash can be hard to tell from a hyphen in some fonts. Historical titles below use the em dash;
+they are left as published.
+
+<details>
+<summary>Historical titles (as published)</summary>
+
+```
+v0.1.0-beta.1 — Mindustry v8 Build 160.4 (unofficial HarmonyOS port)
 v0.2.0-beta.1 — Mindustry v8 Build 160.4 (unofficial HarmonyOS port)
+v1.0.0.1 - Mindustry v8 Build 160.4
+v1.0.0.2 - Mindustry v8 Build 160.5
+v1.1.0.1 - Mindustry v8 Build 160.5
 ```
+
+</details>
 
 ### Body
 
