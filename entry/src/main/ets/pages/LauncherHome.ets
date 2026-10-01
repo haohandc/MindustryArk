@@ -44,7 +44,8 @@ import { GameJar, GameResolution, listGameJars, readSelection, writeSelection,
 /* [A] 界面偏好（内容宽度）。单独一个文件，因为它不是「游戏知识」——
  * 理由见那个文件的开头。 */
 import { readWidthPct, writeWidthPct, WIDTH_PCT_MIN, WIDTH_PCT_MAX,
-         WIDTH_PCT_DEFAULT } from '../settings/LauncherPrefs';
+         WIDTH_PCT_DEFAULT, readLaunchMode, writeLaunchMode,
+         LAUNCH_MODE_HOME, LAUNCH_MODE_GAME } from '../settings/LauncherPrefs';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
@@ -109,6 +110,47 @@ const CARD_RADIUS_VP = 14;
  * 会不一样大 —— 用户在设置页看到的正是这个。 */
 const BUTTON_FONT_VP = 16;
 
+/* [A]
+ * 失败弹窗里那块文字的高度上限（vp）。
+ *
+ * ⚠️ 有上限是【必须】的，不是审美：那一块末尾是启动器自己的日志，长度不定，而弹窗下面
+ * 那两个按钮（「仍然尝试启动」和「知道了」）才是它存在的理由 —— 日志把按钮顶出屏幕，
+ * 就等于逃生门被日志关上了。文字自己滚，按钮永远在。
+ */
+const FAULT_BOX_VP = 240;
+
+/* [A]
+ * 弹窗宽度 = **窗口宽度的这一半**，窄屏上不低于下面的下限。
+ *
+ * ⚠️ 演进过程，两步都记着，免得下次又跳回去：
+ *   ① 最初：只有 24 vp 左右内边距，盒子也没有底色 ⇒ 平板上看着「左右没有空隙」
+ *   ② 然后：我写死 420 vp 封顶 ⇒ 用户 2026-10-01 报「有点小了，**矫枉过正**了。
+ *      我觉得铺满屏幕的 50% 差不多」
+ *   ③ 现在：比例而不是绝对数。⭐ 教训是**「封顶」这个动作本身没错，错的是那个数是拍脑袋
+ *      定的** —— 用窗口宽度的比例，平板和手机就各自得到合适的宽度，不需要为每种设备配一个数。
+ *
+ * ⚠️ 下限仍然必要：手机上 50% 只有约 190 vp，那样连一行地址都放不下。
+ *   有了下限，窄屏上它自动接近满宽 —— 这正是弹窗在手机上该有的样子。
+ */
+const DIALOG_WIDTH_FRACTION = 0.5;
+const DIALOG_MIN_VP = 320;
+
+/* [A]
+ * 「仍然尝试启动」的底色与文字色。
+ *
+ * ⚠️ 用户 2026-10-01 要的：「背景应该搞成灰色的（**不希望用户点击**）」。
+ * 所以它是个**次要**动作 —— 主推的是「知道了」，而这个绕开判定的入口要看着不起眼。
+ *
+ * ⚠️⚠️ 但它**必须仍然可点**。灰底只是「不建议」，不是「禁用」：它整个存在的意义就是
+ * 在判定失误时留一条出路，把它真的禁用掉，就等于把逃生门拆了装成一个门把手。
+ * ⇒ 视觉上压下去，功能上一个字节都不减。
+ *
+ * ⚠️ 用半透明的白，而不是一个固定的灰：弹窗底是硬编码的深色（`#F01C1C1C`），
+ * 半透明灰在那上面读得出来，而且换底色也不用跟着改。
+ */
+const SECONDARY_BG = '#2EFFFFFF';
+const SECONDARY_FG = '#B0FFFFFF';
+
 /** [A]
  * 底部页签的材质。拿不到就返回 undefined，界面退回普通样式。
  *
@@ -162,6 +204,21 @@ export struct LauncherHome {
   filesDir: string = '';
   bundleCodeDir: string = '';
 
+  /* [A]
+   * Index.ets 在 Download 那个文件夹确认可用之后把它翻成 true。
+   *
+   * ⚠️ 为什么需要它：那个文件夹是父组件**异步**创建的（mkdir 或 picker，两者都得等），
+   * 而本页的 aboutToAppear 紧接着**同步**跑 —— 全新安装的第一次，读到的状态文件还
+   * 不存在，于是 jarDirHint 是空的。2026-10-01 在 MatePad Pro 上实测复现：
+   * 第一次显示「还没读到文件夹」、同一分钟文件夹才落盘；不点任何东西重启一次即恢复。
+   *
+   * ⇒ 父组件不阻塞地通知一句，这里重读一遍 —— 与按一次「重新扫描」是同一件事。
+   *
+   * ⚠️ 反过来也不行：本页【不能】自己去 ensure，因为那要一个 UIAbilityContext，
+   * 而本组件只拿到了 filesDir 这个字符串。让持有 ctx 的那一层去做，是唯一干净的分工。
+   */
+  @Prop @Watch('onFolderSettled') folderSettled: boolean = false;
+
   /** [B] 玩家点了「启动游戏」。参数是最终决定要加载的那个 jar。 */
   onLaunch: (jarPath: string) => void = (jarPath: string) => {};
   /** [B] 玩家点了「仍然尝试启动」—— 逃生门，见下面空状态里的说明。 */
@@ -195,6 +252,30 @@ export struct LauncherHome {
   /** [B] 滑条手柄当前的位置。拖动时只有它变。 */
   @State sliderPct: number = WIDTH_PCT_DEFAULT;
 
+  /** [B] 启动后进哪里。由设置里那个开关写盘，启动时由 Index.ets 读。 */
+  @State launchMode: string = LAUNCH_MODE_HOME;
+
+  /** [B] 玩家点过「知道了」。只活这一次会话 —— 不再是失败状态就不会再显示。 */
+  @State faultAck: boolean = false;
+
+  /** [B] 「关于」那个窗口开着没有。由设置页那一行打开，右上角的 ✕ 关掉。 */
+  @State showAbout: boolean = false;
+
+  /** [B] 下拉刷新是否在进行中。`$$` 双向绑定给 Refresh，由 onRefreshing 放回 false。 */
+  @State isRefreshing: boolean = false;
+
+  /** [B] 应用版本，设置页那个「关于」入口用。由 Index.ets 传进来 —— 那边已经从 bundle 问到。 */
+  appVersion: string = '';
+
+  /* [A]
+   * 上一次启动失败的记录；'' 表示没失败过。
+   *
+   * ⚠️ 它是【上一次】的判定，不是即时的。理由：失败发生时进程已经死了，那一瞬间没有
+   * 任何界面可以弹窗 —— 唯一的物证是 native 在游戏入口之前留下的东西，而它要等
+   * **下一次启动**才被读到。⇒ 弹窗出现在**重开之后**，这也是它唯一能出现的地方。
+   */
+  launchFault: string = '';
+
   /* [A]
    * 底部页签的悬浮样式（也就是沉浸光感生效的地方）是 @since 26.0.0。
    * 在更低的 API 上那个属性方法根本不存在，调用它会抛 —— 而那发生在 build() 里，
@@ -206,7 +287,35 @@ export struct LauncherHome {
   aboutToAppear(): void {
     this.contentPct = readWidthPct(this.filesDir);
     this.sliderPct = this.contentPct;
+    this.launchMode = readLaunchMode(this.filesDir);
     this.refresh();
+  }
+
+  /* [A]
+   * 那个文件夹就绪了，重读一遍。
+   *
+   * ⚠️ 只在 true 时重读。父组件只会把它从 false 翻到 true（没有回头路），所以这里的
+   * 判断其实是冗余的 —— 留着是因为「值变了一下就重干活」这个形状如果哪天被改成双向，
+   * 冗余的那一半就成了唯一挡住无谓重读的东西。
+   *
+   * ⚠️ 重读是【幂等】的：refresh() 只是按当前磁盘重新算 games/selected/resolution，
+   * 不写任何东西（writeSelection 只在玩家点选时走）。所以玩家在等待期间已经点过选择，
+   * 也不会被这次重读抹掉 —— 它读的正是玩家那次写下的。
+   */
+  onFolderSettled(): void {
+    if (this.folderSettled) {
+      this.refresh();
+    }
+  }
+
+  /* [A]
+   * 弹窗宽度（vp）。两个弹窗都用它 —— ⚠️ 一个地方拥有这个规则，不然两处会各自漂移。
+   *
+   * ⚠️ `winW` 在 onAreaChange 之前是 0，那时返回下限。它是 @State，所以量到宽度之后
+   * build 会重跑，宽度自己就到位了。
+   */
+  private dialogWidthVp(): number {
+    return Math.max(DIALOG_MIN_VP, this.winW * DIALOG_WIDTH_FRACTION);
   }
 
   @Builder
@@ -313,8 +422,37 @@ export struct LauncherHome {
   @Builder
   GamesTab() {
     Column() {
-      Column() {
-        if (this.games.length === 0) {
+      /* [A]
+       * 下拉刷新。用户 2026-10-01 要的：
+       *   「重新扫描我们能搞成下拉刷新吗，游戏列表直接下拉刷新不方便多了。
+       *     原来的按钮可以留着当备份。」
+       *
+       * ⇒ 列表上直接下拉就重扫；设置页那个「重新扫描」按钮**保留**当备份
+       *   （下拉是一条手势，手势失败时按钮还在 —— 出口多一点比少一点安全）。
+       *
+       * ⚠️ 刷新的动作就是 `refresh()`，与按钮**完全同一个函数**。不要在两边各写一份
+       *    读盘逻辑：那是「同一件事存在两处、其中一处先跑偏」的经典形态，本项目为此
+       *    付过好几次代价。
+       *
+       * ⚠️ `refresh()` 是**同步**的（只是列目录 + 读两个小文件），所以这里可以立刻
+       *    把 isRefreshing 放回 false。转圈会一闪而过 —— 那是诚实的：它确实就那么快。
+       *    刻意**不**加延时去「让动画好看一点」，那等于让界面撒谎说它等了很久。
+       */
+      Refresh({ refreshing: $$this.isRefreshing }) {
+        /* [A]
+         * ⚠️ 必须有一个**可滚动**的子节点，否则下拉手势不一定触发 —— Refresh 是靠
+         *   内容能滚动来判断「用户拉的是列表」的。原来那层直接是 Column（不可滚），
+         *   所以这里包一层 Scroll。
+         *
+         * ⚠️ 再加一层 Row 是为了**恢复左对齐**。装上下拉刷新时我漏了这件事：Refresh 的
+         *   内容区默认居中，于是卡片从屏幕左边跑到了中间，而用户给的规格是
+         *   「内容本身占 30%，在**最左边**，像 AMCL 那样」。Row + justifyStart 把这条
+         *   规格恢复回来，而且靠的是结构而不是调数值。
+         */
+        Scroll() {
+          Row() {
+            Column() {
+              if (this.games.length === 0) {
           /* [A]
            * 空状态，而它同时是【逃生门】。
            *
@@ -329,7 +467,9 @@ export struct LauncherHome {
           Column() {
             Text('没有找到游戏')
               .fontSize(18).fontColor($r('sys.color.font_primary'))
-            Text('把 Mindustry 的 .jar 放进下面这个文件夹，然后点「重新扫描」：')
+            /* [B] 提示里给**两条**路。下拉是本页就能做的，而设置页那个按钮是备用的 ——
+             * 两者都写，免得玩家以为只有一个办法。 */
+            Text('把 Mindustry 的 .jar 放进下面这个文件夹，然后下拉刷新（或到「设置」里点「重新扫描」）：')
               .fontSize(13).fontColor($r('sys.color.font_secondary'))
               .margin({ top: 12 })
               .textAlign(TextAlign.Center)
@@ -400,11 +540,37 @@ export struct LauncherHome {
           }
           .width('100%')
           .padding({ left: 16, right: 16, top: 16 })
+            }
+            }
+            .width(this.contentWidthVp())
+            .animation({ duration: 300, curve: Curve.FastOutSlowIn })
+          }
+          /* [B] 靠左**且**靠上 —— 见上面那层 Row 的说明。
+           *
+           * ⚠️ `height('100%')` 不是多余的：Row 自适应高度时，Scroll 会把它**垂直居中**，
+           * 于是列表上下各空出一大块（实测截图里第一张卡片落在屏幕 33% 处）。
+           * 撑满之后 `VerticalAlign.Top` 才真正把它钉在顶部。 */
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Start)
+          .alignItems(VerticalAlign.Top)
         }
+        .width('100%')
+        .height('100%')
+        /* [B] 关掉滚动条：内容通常只有几行，一条忽隐忽现的滚动条只是噪音。 */
+        .scrollBar(BarState.Off)
       }
-      .width(this.contentWidthVp())
-      .animation({ duration: 300, curve: Curve.FastOutSlowIn })
+      /* [A] Refresh 自己拿 layoutWeight(1)，让「列表 + 空状态」这块占满按钮以上的空间。
+       *
+       * ⚠️ 里面那几层**不**要再要 layoutWeight：高度由 Refresh 决定，两处都要会让高度
+       * 被算两次，症状是列表比可用空间矮一截。
+       */
       .layoutWeight(1)
+      .width('100%')
+      .onRefreshing(() => {
+        this.refresh();
+        this.isRefreshing = false;
+      })
 
       /* [A]
        * 主按钮。它被禁用的唯一理由是「确实没有任何可加载的东西」——
@@ -418,12 +584,15 @@ export struct LauncherHome {
           .enabled(this.resolution.path !== '')
           .onClick(() => { this.onLaunch(this.resolution.path); })
 
-        if (this.resolution.path === '') {
-          Text('仍然尝试启动')
-            .fontSize(13).fontColor($r('sys.color.brand'))
-            .margin({ top: 12 })
-            .onClick(() => { this.onForceLaunch(); })
-        }
+        /* ⛔ 这里【曾经】有一行「仍然尝试启动」，只在没有选中 jar 时出现，就贴在
+         * 「启动游戏」正下方。
+         *
+         * 用户 2026-10-01 去掉它，理由是它**常驻**：
+         *   「这个仍然尝试启动不要放在启动的下面吧，应该是启动失败了才有的东西
+         *     （弹窗告知的）」
+         *
+         * ⇒ 它现在只在**上一次启动失败**时出现，而且是弹窗，见 build() 末尾那个浮层。
+         *   设置页里那个同名的按钮也一并撤了 —— 同一个东西不该有两处常驻入口。 */
       }
       .width(this.contentWidthVp())
       .animation({ duration: 300, curve: Curve.FastOutSlowIn })
@@ -565,32 +734,102 @@ export struct LauncherHome {
       .padding({ left: 16, right: 16, top: 24 })
 
       /* [A]
-       * ⚠️ 两个按钮**上下堆叠**，不是并排。
+       * 现在只剩一个按钮。
        *
-       * 用户实测反馈：「字号一致，但**分配的左边区域太小了，导致字挤在一起**」。
-       * 并排时每个只拿到一半宽度，而「仍然尝试启动」有六个字 —— 16 vp 下约 96 vp，
-       * 再算上按钮自己的内边距就紧张。
+       * ⛔ 这里【曾经】是「重新扫描」+「仍然尝试启动」**上下堆叠**的两个按钮，而堆叠
+       * 本身是为一处实测缺陷做的修复：「字号一致，但**分配的左边区域太小了，导致字挤在
+       * 一起**」—— 并排时每个只拿一半宽度，而「仍然尝试启动」有六个字。
        *
-       * ⇒ 堆叠之后**每个都占满整行**，这一类挤压在结构上不可能发生。
-       *   代价是纵向多占一行，而设置页本来就空着（下面有个 Blank()）。
-       *   本项目在别处（`barOverlap`）刚学到同一条：**能靠结构解决的，不要靠调数值**。
+       * ⚠️ 那段历史的结论仍然成立（**能靠结构解决的，不要靠调数值**），只是对象没了：
+       * 用户 2026-10-01 要求「仍然尝试启动」只在启动失败时以弹窗出现，所以它从这里撤走，
+       * 不再有第二个标签要和它争宽度。
        */
       Column() {
-        /* [A] 两个按钮的字号【都要给】。不给的话按钮会按各自标签长度自适应，
-         * 长的那个被缩小 —— 那正是用户报的「两个按钮字体大小不一样」。 */
+        /* [A] 字号【要给】。不给的话按钮会按标签长度自适应，长标签会被缩小 ——
+         * 那正是当初「两个按钮字体大小不一样」的成因，换到别处同样成立。 */
         Button('重新扫描')
           .fontSize(BUTTON_FONT_VP)
           .width('100%')
           .onClick(() => { this.refresh(); })
-        Button('仍然尝试启动')
-          .fontSize(BUTTON_FONT_VP)
-          .width('100%')
-          .margin({ top: 12 })
-          .onClick(() => { this.onForceLaunch(); })
       }
       .width(this.contentWidthVp())
       .animation({ duration: 300, curve: Curve.FastOutSlowIn })
       .padding({ left: 16, right: 16, top: 28 })
+
+      /* [A]
+       * 启动后进哪里。用户 2026-10-01 要的：「加一个开关，用于选择是否启动进入首页/直接进入游戏」。
+       *
+       * ⭐ 这个开关是从一次真实的卡死里长出来的：他把一个 **mod 当成游戏**选了，于是
+       * 每次打开都直接进游戏树、立刻闪退，而**没有任何界面能让他改回来**。
+       * 检测机制（launch_pending）现在也能把他送回启动器，但这是**不依赖检测**的那条路 ——
+       * 一个存在感为零、却让最坏情况有出口的开关。
+       *
+       * ⚠️ 默认是「先进首页」，见 LauncherPrefs 的 LAUNCH_MODE_DEFAULT。想省掉这一次点击
+       * 就拨到「直接进游戏」；拨完立刻写盘，下一次启动生效。
+       */
+      Column() {
+        Row() {
+          Column() {
+            Text('启动时')
+              .fontSize(14).fontColor($r('sys.color.font_secondary'))
+            Text(this.launchMode === LAUNCH_MODE_GAME
+                 ? '直接进入游戏（跳过这个界面）'
+                 : '先进这个界面，由你点「启动游戏」')
+              .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+              .margin({ top: 4 })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          /* [B] 开关的「开」= 直接进游戏。写成左侧标签 + 右侧开关，而不是两个单选，
+           * 是因为它确实是一个二元选择，没有第三种。 */
+          Toggle({ type: ToggleType.Switch,
+                   isOn: this.launchMode === LAUNCH_MODE_GAME })
+            .onChange((on: boolean) => {
+              this.launchMode = on ? LAUNCH_MODE_GAME : LAUNCH_MODE_HOME;
+              writeLaunchMode(this.filesDir, this.launchMode);
+            })
+        }
+        .width('100%')
+      }
+      .width(this.contentWidthVp())
+      .animation({ duration: 300, curve: Curve.FastOutSlowIn })
+      .padding({ left: 16, right: 16, top: 28 })
+
+      /* [A]
+       * 关于 —— 现在是一个【入口】，点开才是内容。
+       *
+       * 用户 2026-10-01 的原话：「关于独立出来，点击出现一个有关闭按钮（右上角）的窗口
+       * 展示信息。」
+       *
+       * ⚠️ 它【曾经】是把整块信息平铺在这一页上的。那样做的问题不是好不好看，而是：
+       * 设置页的主语是**设置**，而一块只能读、不能改的长文字会把真正的设置项挤下去。
+       * ⇒ 收成一行，点开再看。
+       *
+       * ⚠️ 游戏那边（本页之外的悬浮球 →「关于」）还有一份同内容的浮层。它们够不到彼此
+       * （那个在游戏树里），所以两份都得留；改文案时两边一起改。 */
+      Column() {
+        Row() {
+          Column() {
+            Text('关于')
+              .fontSize(14).fontColor($r('sys.color.font_secondary'))
+            Text(this.appVersion === '' ? 'Mindustry Ark' : ('Mindustry Ark  ' + this.appVersion))
+              .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+              .margin({ top: 4 })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+          /* [B] 一个朝右的箭头，表示「点进去还有一页」。用符号字形而不是字符，
+           * 免得不同字体下宽度跳变。 */
+          SymbolGlyph($r('sys.symbol.chevron_right'))
+            .fontSize(16).fontColor([$r('sys.color.font_tertiary')])
+        }
+        .width('100%')
+      }
+      .width(this.contentWidthVp())
+      .animation({ duration: 300, curve: Curve.FastOutSlowIn })
+      .padding({ left: 16, right: 16, top: 28, bottom: 16 })
+      .onClick(() => { this.showAbout = true; })
 
       Blank()
     }
@@ -602,6 +841,14 @@ export struct LauncherHome {
   }
 
   build() {
+    /* [A]
+     * 外面这层 Stack 只为了在界面之上放两个弹窗（build 末尾那两个 if）。
+     *
+     * ⚠️ 内层的 Navigation 及其整条链**刻意没有重新缩进**。理由与 Index.ets 里那处
+     * 完全一样：给几百行整体加两格缩进，会让「多了一个 Stack」这个唯一真实的改动被埋进
+     * 一片空白 diff 里，审查时看不出来。代价只是这一块的缩进比它该有的少两级。
+     */
+    Stack() {
     Navigation() {
       /* [A]
        * 两条分支只差悬浮样式那一块，理由见 canFloat 的注释。
@@ -749,5 +996,171 @@ export struct LauncherHome {
       this.winW = Number(n.width);
     })
     .backgroundColor($r('app.color.launcher_bg'))
+
+    /* [A]
+     * 关于那个窗口。
+     *
+     * ⚠️ 它排在失败弹窗【前面】，所以失败弹窗会盖在它上面（Stack 里后面的在上层）。
+     * 这是对的：失败弹窗是必须处理的，关于是可选的。
+     *
+     * ⚠️ 关闭按钮放在**右上角**，这是用户点名的位置。它必须真的存在 ——
+     * 这个项目在别处踩过「门关上了却没有开的路径」，而一个只有内容没有出口的窗口
+     * 就是同一类东西的界面版本。点遮罩也关（顺手），但出口以那个按钮为准。
+     */
+    if (this.showAbout) {
+      Column() {
+        Column() {
+          /* [B] 标题行：左边标题，右边 ✕。用 Row 是为了让 ✕ 真的在右上角，
+           * 而不是靠 margin 把它推到看起来像角落的地方。 */
+          Row() {
+            Text('关于')
+              .fontSize(18).fontColor($r('sys.color.font_primary'))
+              .layoutWeight(1)
+            Text('✕')
+              .fontSize(18).fontColor($r('sys.color.font_secondary'))
+              .padding({ left: 14, right: 4, top: 2, bottom: 2 })
+              .onClick(() => { this.showAbout = false; })
+          }
+          .width('100%')
+
+          Text('Mindustry Ark' + (this.appVersion === '' ? '' : ('  ' + this.appVersion)))
+            .fontSize(14).fontColor($r('sys.color.font_secondary'))
+            .margin({ top: 14 })
+          Text('在 HarmonyOS / OpenHarmony 上运行 Mindustry')
+            .fontSize(13).fontColor($r('sys.color.font_secondary'))
+            .margin({ top: 8 })
+          Text('以 GPL-3.0 分发。')
+            .fontSize(13).fontColor($r('sys.color.font_secondary'))
+            .margin({ top: 4 })
+
+          /* ⚠️ 上游与本仓库是两个地址，别合并：本应用是上游的 fork，而「报问题」应当去
+           * 它自己那个仓库。两个都列是因为它们回答的是不同的问题。 */
+            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+            .margin({ top: 16 })
+          Text('https://github.com/haohandc/MindustryArk')
+            .fontSize(12).fontColor($r('sys.color.brand'))
+            .margin({ top: 2 }).copyOption(CopyOptions.LocalDevice)
+          Text('本仓库')
+            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+            .margin({ top: 10 })
+          Text('https://github.com/haohandc/MindustryArk')
+            .fontSize(12).fontColor($r('sys.color.brand'))
+            .margin({ top: 2 }).copyOption(CopyOptions.LocalDevice)
+          Text('问题反馈')
+            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+            .margin({ top: 10 })
+          Text('https://github.com/haohandc/MindustryArk/issues')
+            .fontSize(12).fontColor($r('sys.color.brand'))
+            .margin({ top: 2 }).copyOption(CopyOptions.LocalDevice)
+
+          Text('非官方项目。与 Mindustry 及其作者 Anuken 无隶属关系，未获其认可或支持。以 GPL-3.0 分发。')
+            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+            .margin({ top: 16 })
+        }
+        .width('100%')
+        .constraintSize({ maxWidth: this.dialogWidthVp() })
+        .padding(20)
+        .backgroundColor($r('app.color.launcher_card'))
+        .borderRadius(CARD_RADIUS_VP)
+        .alignItems(HorizontalAlign.Start)
+        /* [A] 吞掉落在卡片上的点击，不让它冒泡到下面那层遮罩。
+         *
+         * ⚠️ 没有这一句，点卡片里的任意一行文字都会把窗口关掉 —— 而那里面有几条**要抄走
+         * 的网址**（它们带 copyOption），正好是最需要点一下的地方。
+         *
+         * ⚠️ 空处理器是有意的：这里不需要做任何事，只需要**接管**这一次手势。
+         * ArkUI 的手势竞争是子优先，所以这一句就足以让点卡片不再等于点遮罩。 */
+        .onClick(() => {})
+      }
+      .width('100%').height('100%')
+      .backgroundColor('#80000000')
+      .justifyContent(FlexAlign.Center)
+      .padding({ left: 32, right: 32 })
+      /* [B] 点卡片【外面】的空白处也关。与右上角那个 ✕ 并存 —— 两个都是出口，
+       * 而出口多一点，比少一点安全。 */
+      .onClick(() => { this.showAbout = false; })
+    }
+
+    if (this.launchFault !== '' && !this.faultAck) {
+      /* [A] 外面这层是【同屏遮罩】，里面那层是【盒子】—— 与「关于」那个窗口结构一致。
+       * 两层各拿各的修饰符，**不要合成一层**：合成之后背景色、对齐、内边距会互相覆盖，
+       * 而那种错误只在视觉上体现，编译期看不出来。 */
+      Column() {
+        Column() {
+          Text('上次没能启动成功')
+            .fontSize(20).fontColor($r('sys.color.font_primary'))
+          /* [A]
+           * 内容在【可滚动】的一块里，而不是一个裸 Text。
+           *
+           * ⚠️ 这一块的末尾是启动器自己的日志（最多 1.2 KB），行数不定。裸 Text 会让
+           * 弹窗随着日志变长而撑高，最后把下面那两个按钮顶出屏幕 —— 而按钮正是这个弹窗
+           * 存在的理由（它是逃生门）。给一个上限，让文字自己滚。
+           *
+           * ⚠️ 它【不】截断日志：截断了就等于把原因藏起来，而原因正是玩家要看的东西。
+           */
+          Scroll() {
+            Text(this.launchFault)
+              .fontSize(12).fontColor($r('sys.color.font_secondary'))
+              .width('100%')
+              .textAlign(TextAlign.Start)
+          }
+          .width('100%')
+          .constraintSize({ maxHeight: FAULT_BOX_VP })
+          .align(Alignment.TopStart)
+          .margin({ top: 12 })
+
+          /* [A] 逃生门必须写明它绕开的是什么，否则玩家不知道按了会发生什么。 */
+          Text('若你确认设备本可以运行游戏，可以用「仍然尝试启动」绕开这次判定。')
+            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+            .margin({ top: 10 })
+
+          /* [A]
+           * 按钮**并排**，各占一半。
+           *
+           * ⚠️ 两个都用 `layoutWeight(1)` —— 在 Row 里它让子项**平分**可用宽度，所以两者
+           *   **宽度严格相等**，而且一起铺满弹窗。用户报过「知道了这个按钮有点窄」，
+           *   那正是因为按内容收缩时短标签必然更窄；`layoutWeight(1)` 让「一样宽」由
+           *   **结构**保证，不需要给 `minWidth` 填一个拍脑袋的数。
+           *
+           * ⚠️ 顺序：次要的（灰）在左，主推的（主题色）在右 —— 各类对话框的通行次序。
+           *
+           * ⚠️ ⛔ **不要**因为「看着不建议」就把「仍然尝试启动」禁用掉：灰底只是视觉上的
+           *   次要，而它整个存在的意义就是在判定失误时留一条出路。禁用它等于把逃生门
+           *   拆了装成一个门把手。
+           */
+          Row({ space: 12 }) {
+            Button('仍然尝试启动')
+              .fontSize(BUTTON_FONT_VP).height(44)
+              .layoutWeight(1)
+              .fontColor(SECONDARY_FG)
+              .backgroundColor(SECONDARY_BG)
+              .onClick(() => {
+                this.faultAck = true;
+                this.onForceLaunch();
+              })
+            Button('知道了')
+              .fontSize(BUTTON_FONT_VP).height(44)
+              .layoutWeight(1)
+              .onClick(() => { this.faultAck = true; })
+          }
+          .width('100%')
+          .margin({ top: 18 })
+        }
+        /* [A] 盒子的修饰符。⚠️ `constraintSize` 是【上限】，而宽度给 100% 是为了窄屏
+         * （手机）上占满可用宽度 —— 两者分工不同，缺了上限就是用户报的「太宽了」。 */
+        .width('100%')
+        .constraintSize({ maxWidth: this.dialogWidthVp() })
+        .padding(20)
+        .backgroundColor('#F01C1C1C')
+        .borderRadius(CARD_RADIUS_VP)
+        .alignItems(HorizontalAlign.Start)
+      }
+      /* [B] 遮罩的修饰符。盒子之外再留一层，窄屏上也不至于贴边。 */
+      .width('100%').height('100%')
+      .backgroundColor('#B0000000')
+      .justifyContent(FlexAlign.Center)
+      .padding({ left: 32, right: 32 })
+    }
+    }
   }
 }

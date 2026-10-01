@@ -177,6 +177,23 @@ function readTail(path: string, limit: number): string {
 }
 
 /** [A]
+ * native 侧 stderr.log 的尾巴，给「上次没能启动成功」那个弹窗用。
+ *
+ * ⚠️ 这一条往往就是**原因本身**，不是补充材料：启动器把每一处失败都写在这里，
+ * 例如把一个 mod 当成游戏选中的情形，日志里就是
+ *
+ *     !! mindustry.core.Vars is NOT on the classpath
+ *
+ * ⇒ 与其自己编一句「可能是不兼容的 jar」，不如把启动器已经写下的那句话交出去。
+ *
+ * ⚠️ 复用同一个 readTail：它已经处理了「文件不存在 / 空 / 读不了」三种情况，
+ * 各自返回一句说明而不是抛异常 —— 弹窗不能因为日志读不到而打不开。
+ */
+export function readStartupLogTail(maxBytes: number): string {
+  return readTail(NATIVE_FILES + '/stderr.log', maxBytes);
+}
+
+/** [A]
  * 支持包：我们会向用户索要的一切，按需写出。
  *
  * 为什么它在自动路径之外单独存在

@@ -33,6 +33,28 @@ const TAG = 'MindustryLauncher';
 /** [B] 玩家选中的那个 jar 的绝对路径；一行纯文本。不存在 = 没选过。 */
 const SELECTION_FILE_NAME = 'selected_game.txt';
 
+/* [A]
+ * 「正在尝试启动」的标记 —— 本文件【写】，native 侧（launcher.c）在拿到游戏的入口方法
+ * 之后【删】。文件内容是被选中的那个 jar 的路径。
+ *
+ * ⭐ 不变量：**标记还在 ⟺ 上一次从来没有走到游戏入口。**
+ *
+ * 它补的是两个现有标记都看不见的那一类失败。2026-10-01 用户实际遇到的：
+ * 他把一个 **mod 当成游戏**选了，于是启动时：
+ *
+ *     JVM 创建成功          ⇒ launcher.c 已经把 jvm_incomplete 删掉了
+ *     FindClass(主类) 失败  ⇒ 那里是【干净地 return 1】，不是崩溃
+ *                           ⇒ 不写 crash.txt ⇒ last-crash.txt 也不会出现
+ *
+ * 两条证据同时消失，而应用已经闪退过一次，界面又直接进游戏树
+ * ⇒ **一打开就闪退，而且没有任何办法回到主界面**。
+ *
+ * ⚠️ 为什么不靠计时（「活过 N 秒就算成功」）：那会把「正常玩了几秒然后退出」
+ * 判成失败，而且判据随机器快慢漂移。挂在「有没有到过游戏入口」上就没有这个问题 ——
+ * 那是关于**这一次启动到底走没走通**的陈述，不是关于时间的。
+ */
+const LAUNCH_PENDING_FILE_NAME = 'launch_pending';
+
 /** [B] 「下次启动直接进启动器」的请求标记。见 consumeLauncherRequest()。 */
 const LAUNCHER_MARKER_FILE_NAME = 'show_launcher';
 
@@ -218,6 +240,76 @@ export function writeSelection(filesDir: string, jarPath: string): void {
   } catch (e) {
     const err = e as BusinessError;
     hilog.error(DOMAIN, TAG, 'games: writing the selection failed: %{public}s', err.message);
+  }
+}
+
+/** [A]
+ * 记下「正在尝试启动这个 jar」。在切到游戏树【之前】调用。
+ *
+ * 把 jar 路径写进去，是为了失败时能告诉玩家**是哪一个** jar 没起来 ——
+ * 那正是「把 mod 当游戏选了」这种情形里唯一有诊断价值的信息。
+ */
+export function markLaunchAttempt(filesDir: string, jarPath: string): void {
+  const path: string = filesDir + '/' + LAUNCH_PENDING_FILE_NAME;
+  try {
+    const f: fs.File = fs.openSync(path,
+      fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
+    try {
+      fs.writeSync(f.fd, jarPath + '\n');
+    } finally {
+      fs.closeSync(f);
+    }
+    hilog.info(DOMAIN, TAG, 'games: launch attempt -> %{public}s', jarPath);
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.error(DOMAIN, TAG, 'games: marking the attempt failed: %{public}s', err.message);
+  }
+}
+
+/** [A]
+ * 上一次的启动尝试，'' 表示没有 —— 也就是上一次确实走到了游戏入口。
+ *
+ * ⚠️ 它【不清除】。清除由调用方在决定怎么处理之后自己做，因为「读到之后要不要留」
+ * 取决于判定结果，而那是调用方才知道的事。
+ */
+export function pendingLaunchAttempt(filesDir: string): string {
+  const path: string = filesDir + '/' + LAUNCH_PENDING_FILE_NAME;
+  try {
+    if (!fs.accessSync(path)) {
+      return '';
+    }
+    return fs.readTextSync(path).trim();
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'games: reading the pending attempt failed: %{public}s', err.message);
+    return '';
+  }
+}
+
+/** [A]
+ * 清掉那个标记。
+ *
+ * ⚠️ 两个调用点，都必要：
+ *   · 启动时【报过一次失败之后】—— 否则每一次启动都会再弹一次同样的窗。这跟
+ *     consumeLauncherRequest 的读后即删是同一个形状
+ *   · 玩家从悬浮球回到启动器时 —— 那条路会重启应用，标记会被下一次启动读到，
+ *     于是「刚才明明玩得好好的」也会被报成失败
+ *
+ * ⚠️ 正常情况下【轮不到这里】清：走到游戏入口时 native 已经删了。这里清的是
+ * 判定之后的残留。
+ */
+export function clearLaunchAttempt(filesDir: string): void {
+  const path: string = filesDir + '/' + LAUNCH_PENDING_FILE_NAME;
+  try {
+    if (fs.accessSync(path)) {
+      fs.unlinkSync(path);
+      hilog.info(DOMAIN, TAG, 'games: cleared the launch attempt');
+    }
+  } catch (e) {
+    /* ⚠️ fs.unlinkSync 删不存在的文件会【抛】——所以上面先 accessSync 探一下。
+     * 这里的 catch 兜的是别的失败（权限等），而删不掉一个标记不足以让启动失败。 */
+    const err = e as BusinessError;
+    hilog.info(DOMAIN, TAG, 'games: clearing the attempt failed: %{public}s', err.message);
   }
 }
 

@@ -11,11 +11,15 @@ import { writeUserDirs } from '../entryability/EntryAbility';
 /* [A] 崩溃报告在 ability 的 onCreate 中被【捕获】（必须在原生代码 unlink 它之前读取），
  * 再在这里【发布】—— 这是第一个能确定 Download 文件夹已存在的时刻。
  * 见 diagnostics/ExportDiagnostics.ets。 */
-import { publish as publishCrash, exportNow as exportDiagnosticsNow } from '../diagnostics/ExportDiagnostics';
+import { publish as publishCrash, exportNow as exportDiagnosticsNow,
+         readStartupLogTail } from '../diagnostics/ExportDiagnostics';
 /* [A] 「加载哪一个游戏」的全部知识都在那里，本页只负责【问一次并照着做】。
  * 为什么判定必须发生在本页、而不是 native：见 decideStartup()。 */
 import { consumeLauncherRequest, requestLauncher, resolveGame, reportGameResolution,
+         markLaunchAttempt, pendingLaunchAttempt, clearLaunchAttempt,
          GameResolution } from '../games/GameLibrary';
+/* [A] 启动后进哪里 —— 设置页那开关写盘，这里读。见 LauncherPrefs 里的 LAUNCH_MODE_DEFAULT。 */
+import { readLaunchMode, LAUNCH_MODE_HOME } from '../settings/LauncherPrefs';
 /* [A] 没有游戏可加载时显示的那一屏。它是【替换】XComponent，不是盖在它上面 ——
  * 关于这个区别为什么决定了两边能用什么控件，见那个文件的开头。 */
 import { LauncherHome } from './LauncherHome';
@@ -79,6 +83,10 @@ const JVM_OPTIONS_FILE_NAME = 'jvm.options';
  */
 const EXEC_MEMORY_FILE = '/data/storage/el2/base/files/execmem';
 const JVM_INCOMPLETE_FILE = '/data/storage/el2/base/files/jvm_incomplete';
+
+/* [B] 「上次为什么没起来」那个弹窗里，日志尾巴最多给这么多字节。
+ * 这是弹窗里的一小块文字，不是导出诊断 —— 那个仍然是「导出诊断」菜单的事（128 KB）。 */
+const FAULT_LOG_BYTES = 1200;
 /* [A]
  * 那次失败启动自己的日志。它必须【尽早】读，否则就别读：launcher.c 在 main() 一
  * 启动时就以 O_TRUNC 打开它，而 main() 是在 XComponent 挂载时启动的 —— 所以运行
@@ -563,6 +571,27 @@ struct Index {
    *   · 悬浮球菜单里的「启动器」—— 进了游戏之后还能回来
    */
   @State showLauncher: boolean = false;
+
+  /* [A]
+   * Download 那个文件夹【确认可用】之后翻成 true，传给启动器界面。
+   *
+   * ⚠️ 为什么需要它：那个文件夹是在本页 aboutToAppear 里**异步**创建的
+   * （ensureModFolder 要么 mkdir、要么弹 picker，两者都得等），而启动器界面的
+   * aboutToAppear 紧接着**同步**跑 —— 于是全新安装的第一次，它读到的状态文件还
+   * 不存在。2026-10-01 在 MatePad Pro 上实测复现：第一次显示「还没读到文件夹」，
+   * 而同一分钟 mod_folder 就落盘了；不点任何东西重启一次即恢复。
+   *
+   * ⇒ 父组件不阻塞地通知一句「好了」，启动器再读一遍（等于按一次「重新扫描」）。
+   *
+   * ⚠️ 刻意**不**把关卡设在这里（例如等文件夹好了才挂载启动器界面）：那条路上
+   * picker 可能一直不返回，界面就永远不出来。本项目为「门关上了却没有开的路径」
+   * 付过代价（jvm_incomplete），不再犯 —— **不阻塞比早显示重要**。
+   *
+   * ⚠️ 两个到达顺序都要成立：若它先翻成 true、界面后创建，界面拿到的初值就是
+   * true，aboutToAppear 里那次 refresh() 读到的已经是写好的文件 —— 正确。
+   */
+  @State folderSettled: boolean = false;
+
   /* [B] 传给启动器界面的两个路径。从 context 取一次，因为那是页面才拿得到的东西。 */
   private launcherFilesDir: string = '';
   private launcherBundleDir: string = '';
@@ -575,6 +604,18 @@ struct Index {
   @State jvmFaults: string = '';
   /** [B] 启动器留下了它那个「JVM 正在创建」的标记。 */
   @State jvmIncomplete: boolean = false;
+
+  /* [A]
+   * 交给启动器界面显示的「上次为什么没起来」，'' 表示没有失败。
+   *
+   * ⚠️ 在 decideStartup() 里【组装一次】，不是在 build 里现算：它要读 stderr.log 的尾巴，
+   * 而 build() 会被调用很多次。一句提示不值得每次都去碰磁盘。
+   */
+  @State launchFault: string = '';
+
+  /** [B] 上一次尝试启动的那个 jar 的路径；判不出来时是 ''。 */
+  @State launchFaultJar: string = '';
+
   @State appVersion: string = '';
 
   /* [B] 不再有兼容性提示的状态：那个提示已经没了。为什么见文件头注释，它过去显示的
@@ -700,6 +741,17 @@ struct Index {
          * 就跳过），而且在没有崩溃时什么都不做 —— 那是正常情况。
          */
         publishCrash(modFolderPath(ctx.filesDir + '/mod_folder'), ctx.filesDir);
+        /* [A]
+         * 文件夹这件事到此为止了，通知启动器界面可以读。
+         *
+         * ⚠️ 放在这个 .then() 的**最末尾**，不是开头：它读的是上面 writeUserDirs
+         * 刚写的桥接文件，所以必须排在它之后。
+         *
+         * ⚠️ 这里【不】判断 showLauncher。启动器界面可能还没被创建（那就用初值
+         * true）、也可能已经在屏幕上（那就触发 @Watch 重读），两种情况都对 ——
+         * 这正是修一个**竞态**时该有的形状：不依赖谁先谁后。
+         */
+        this.folderSettled = true;
       })
       .catch((e: BusinessError) => {
         hilog.warn(DOMAIN, TAG, 'mod folder setup failed: %{public}s', e.message);
@@ -1744,6 +1796,41 @@ struct Index {
    * 那一次防的是 `aa start` 之类的路径绕过界面直接拉起 native，而两次之间文件也可能
    * 被删掉。
    */
+  /* [A]
+   * 把「上次为什么没起来」拼成一段给玩家看的话。
+   *
+   * ⚠️ 判据要分清，因为两句话指向的处置完全不同：
+   *   · jvm_incomplete ⇒ Java 虚拟机都没建起来。多半是设备/权限层面的事，与 jar 无关
+   *   · 走到这里但 JVM 好的 ⇒ **那个 jar 里没有游戏**。最典型的就是把一个 mod 当游戏
+   *     选了（用户 2026-10-01 实际遇到的那一种）
+   *
+   * ⚠️ 日志尾巴是【搬过来】的，不是我编的：启动器把每一处失败都写进 stderr.log，
+   * 例如 "!! mindustry.core.Vars is NOT on the classpath" —— 那一句就是原因本身。
+   * 与其写一句「可能是不兼容的 jar」，不如把启动器自己写下的那行交出去。
+   *
+   * ⚠️ 上限刻意小（1.2 KB）：这是弹窗里的一小块文字，不是导出诊断。
+   */
+  private buildLaunchFault(jarPath: string): string {
+    const lines: string[] = [];
+    if (jarPath !== '') {
+      lines.push('尝试启动的游戏：' + jarPath);
+    } else {
+      lines.push('尝试启动的游戏：（这次没能记下是哪一个）');
+    }
+    if (this.jvmIncomplete) {
+      lines.push('');
+      lines.push('上次运行时，游戏所需的 Java 虚拟机没有创建成功。');
+    } else {
+      lines.push('');
+      lines.push('启动器没有在那个文件里找到游戏。它可能不是一个可玩的 Mindustry，'
+                 + '比如把一个模组（.jar）当成游戏选中了。');
+    }
+    lines.push('');
+    lines.push('启动器留下的最后记录：');
+    lines.push(readStartupLogTail(FAULT_LOG_BYTES));
+    return lines.join(String.fromCharCode(10));
+  }
+
   private decideStartup(): void {
     const ctx = getContext(this) as common.UIAbilityContext;
     this.launcherFilesDir = ctx.filesDir;
@@ -1764,6 +1851,44 @@ struct Index {
       this.showLauncher = true;
       return;
     }
+
+    /* [A]
+     * 上一次的启动尝试没有走到游戏入口 ⇒ 回启动器，并把原因交给它显示。
+     *
+     * ⭐ 这是「一打开就闪退、回不了主界面」的解药。用户 2026-10-01 实际撞上：
+     * 他把一个 **mod 当成游戏**选了。
+     *
+     * ⚠️ 为什么现有的两个标记都盖不住它，见 GameLibrary 里 launch_pending 上的说明 ——
+     * 简单说：JVM 建起来了（jvm_incomplete 已被删），主类找不到时是**干净返回**
+     * （不写 crash.txt）。⇒ 必须有一个「有没有到过游戏入口」的独立判据。
+     *
+     * ⚠️ **读后即删**，和 consumeLauncherRequest 同一个形状：留着它会让每一次启动都
+     * 再弹一次同样的窗。删掉之后玩家再试一次，标记会被 startGame 重新写上。
+     */
+    const pending: string = pendingLaunchAttempt(ctx.filesDir);
+    if (pending !== '' || this.jvmIncomplete) {
+      this.launchFaultJar = pending;
+      this.launchFault = this.buildLaunchFault(pending);
+      hilog.info(DOMAIN, TAG,
+                 'startup: the last launch never reached the game entry point (jar=%{public}s)',
+                 pending === '' ? '(unknown)' : pending);
+      clearLaunchAttempt(ctx.filesDir);
+      this.showLauncher = true;
+      return;
+    }
+
+    /* [A]
+     * 玩家选了「启动时先进首页」。
+     *
+     * ⚠️ 排在失败判定【之后】：那是必须回的，而这一条是玩家自己的偏好，
+     * 两者都成立时理由更强的那个赢。
+     */
+    if (readLaunchMode(ctx.filesDir) === LAUNCH_MODE_HOME) {
+      hilog.info(DOMAIN, TAG, 'startup: the launch mode is "home" -- showing the launcher');
+      this.showLauncher = true;
+      return;
+    }
+
     if (r.path === '') {
       hilog.info(DOMAIN, TAG, 'startup: no game to load -- showing the launcher');
       this.showLauncher = true;
@@ -1779,11 +1904,28 @@ struct Index {
    * 就读 user_dirs.txt，而挂载是这一句之后的下一帧 —— 写晚了，这一次加载的会是上一次
    * 选择的结果，而那种错误看起来只是「换了 jar 但没生效」。
    */
-  private startGame(_jarPath: string): void {
+  private startGame(jarPath: string): void {
     const ctx = getContext(this) as common.UIAbilityContext;
     /* [A] gamejar= 那一行是 writeUserDirs 从 selected_game.txt 推出来的 —— 不在这里
      * 单独拼一遍。一份知识一个来源，而桥接的格式只由写它的那个函数拥有。 */
     writeUserDirs(ctx.filesDir);
+
+    /* [A]
+     * 记下「正在尝试启动这个 jar」，在切到游戏树【之前】—— 那是重点。
+     *
+     * ⚠️ 走到这里的路不只一条，而参数在有的路上是空的：本页里 '' 表示「用包里的那一份」
+     *   （见上面 onLaunch/onForceLaunch 的说明）。空的时候自己解析一遍，而不是把空路径
+     *   记进标记 —— 标记里那句话是失败时给玩家看的「是哪一个没起来」，写空就等于把唯一
+     *   有用的信息丢掉了。
+     *
+     * ⚠️ 这里【不】为「绕过判定」这个意图开特例：即使玩家强行启动，这一次尝试照样记账。
+     *   否则最需要它记录的那一次，恰好是它不记录的那一次。
+     */
+    const attempted: string = jarPath !== ''
+      ? jarPath
+      : resolveGame(ctx.filesDir, ctx.bundleCodeDir).path;
+    markLaunchAttempt(ctx.filesDir, attempted);
+
     this.showLauncher = false;
   }
 
@@ -1806,6 +1948,16 @@ struct Index {
      * 先写标记 ⇒ 无论重启成不成，下一次启动都会进启动器，只是多要点一下图标。
      */
     requestLauncher(ctx.filesDir);
+
+    /* [A]
+     * 顺手把「正在尝试启动」的标记清掉。
+     *
+     * ⚠️ 走到这里说明游戏**已经在跑了**（否则到不了悬浮球），也就是说那次启动是成功的，
+     * 而 native 早已在游戏入口处删过标记 —— 所以这一句在正常路径上是空操作。
+     * 它防的是另一件事：万一哪次 native 没能删成（权限、异常路径），下一次启动会把
+     * 「刚才明明玩得好好的」报成失败。清掉是幂等的，代价为零。
+     */
+    clearLaunchAttempt(ctx.filesDir);
 
     /* [A]
      * 用 `ApplicationContext.restartApp()` 一次性重启进程并拉起本 ability —— 用户要的
@@ -1867,6 +2019,13 @@ struct Index {
       LauncherHome({
         filesDir: this.launcherFilesDir,
         bundleCodeDir: this.launcherBundleDir,
+        /* [B] 见 folderSettled 上的说明：它到位之前，本页读到的是空路径。 */
+        folderSettled: this.folderSettled,
+        /* [B] 设置页的「关于」要显示版本。它由本页从 bundle 问到，见 appVersion。 */
+        appVersion: this.appVersion,
+        /* [B] 上一次启动失败的记录；'' 表示没失败过。由 decideStartup 组装，
+         * 见 buildLaunchFault —— 里面既有「是哪个 jar」，也有启动器自己写下的那几行。 */
+        launchFault: this.launchFault,
         onLaunch: (jarPath: string) => { this.startGame(jarPath); },
         /* [A] 「仍然尝试启动」：绕开判定，直接进游戏树。它是逃生门 —— 判定没有游戏有
          * 三个来源（真的没有 / 我把路径算错了 / 那台设备上建不出文件夹），而其中两个
@@ -2323,24 +2482,14 @@ struct Index {
           });
         })
       }
-      if (this.jvmIncomplete) {
-        Column() {
-          Column() {
-            Text('上次启动未完成').fontSize(22).fontColor('#FFFFFF')
-            Text('上一次运行时，游戏所需的 Java 虚拟机没有创建成功，下面是它中断前的最后记录：')
-              .fontSize(14).fontColor('#E0FFFFFF').margin({ top: 14 })
-            Text(this.jvmFaults)
-              .fontSize(12).fontColor('#B0FFD0A0').margin({ top: 10 })
-            Text('点击任意位置继续启动')
-              .fontSize(13).fontColor('#A0FFFFFF').margin({ top: 10 })
-          }
-          .padding(20).backgroundColor('#F01C1C1C').borderRadius(14).width('90%')
-        }
-        .width('100%').height('100%').backgroundColor('#B0000000')
-        .justifyContent(FlexAlign.Center)
-        .focusable(false)
-        .onClick(() => { this.jvmIncomplete = false; })
-      }
+      /* ⛔ 这里【曾经】是「上次启动未完成」的提示层。
+       *
+       * 2026-10-01 撤掉：它长在**游戏树**里，而游戏树正是失败之后不该来的地方 ——
+       * 玩家在这里唯一能做的动作是「点击任意位置继续启动」，也就是把同一次失败再试一遍。
+       *
+       * ⇒ 同样的信息现在由启动器界面上的弹窗负责（LauncherHome 的 launchFault），
+       *   而 decideStartup() 里新增的那条规则会把失败后的启动送回启动器。
+       *   ⚠️ 两处都改才算完成：只删这里，玩家会进游戏树且看不到失败提示。 */
     }
     /* [A] ↑ 这一行关的是「游戏树」那个 else 分支。下面这一行关 Stack ——
      * 两行本来是同一个括号，这里只是把它拆成了两个。 */

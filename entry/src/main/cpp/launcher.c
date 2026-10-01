@@ -280,6 +280,23 @@
  */
 #define USER_DIRS_FILE "/data/storage/el2/base/haps/entry/files/user_dirs.txt"
 
+/* [A] ArkTS 在切到游戏树【之前】写下它，本文件在【找到游戏的入口方法之后】删掉它。
+ *
+ * ⭐ 判据是这个不变量：**标记还在 ⟺ 从来没有走到游戏入口**。于是它同时覆盖两类
+ * 现有的标记都看不见的失败：
+ *   · JVM 根本没建起来（jvm_incomplete 能看到的那一类）
+ *   · JVM 建起来了，但那个 jar 里【没有游戏】—— 这正是「玩家把一个 mod 当游戏选了」
+ *     的情形，也是 2026-10-01 用户实际遇到的
+ *
+ * ⚠️ 第二类为什么两个旧标记都看不见：FindClass 找不到主类时这里是**干净地 return 1**，
+ * 不是崩溃 ⇒ 不写 crash.txt；而 JVM 创建成功 ⇒ jvm_incomplete 已经在上面被 unlink 了。
+ * 两条证据都不存在，而应用已经闪退过一次。
+ *
+ * ⚠️ 所以删除点必须在【拿到 main 方法之后】，不能在更早处：那之前的每一个
+ * `return` 都表示「这个 jar 不是一个能跑的游戏」。
+ */
+#define LAUNCH_PENDING_FILE "/data/storage/el2/base/haps/entry/files/launch_pending"
+
 /* [A]
  * 在 ArkTS 写下的文件里查一行 "key=value"。
  *
@@ -2310,6 +2327,17 @@ static int launch_game(JNIEnv *env)
         SDL_Log(" !! could not build the argument array");
         return 3;
     }
+
+    /* [A] 到这里，游戏的入口方法确实存在 —— 那个 jar 是个能跑的游戏。把「正在尝试启动」
+     * 的标记清掉，见 LAUNCH_PENDING_FILE 上的说明。
+     *
+     * ⚠️ 位置是重点，卡在【拿到 main 方法之后、调用它之前】的最后一刻：
+     *   上面的三个失败路径（主类不在 classpath / 类里没有 main / 参数数组建不出来）
+     *   每一个都 return，而它们全都意味着「这个 jar 不是游戏」—— 那些情况下标记必须留着。
+     *   而一旦走到这里，任何后续的失败（main 自己抛异常、游戏跑到一半崩了）都【不再】是
+     *   「选错了 jar」，所以不该再算作启动失败。
+     */
+    unlink(LAUNCH_PENDING_FILE);
 
     SDL_Log("   -> calling %s.main(new String[0]) ...", MAIN_CLASS);
     (*env)->CallStaticVoidMethod(env, cls, mid, argv);
