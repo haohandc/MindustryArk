@@ -505,9 +505,9 @@ export struct LauncherHome {
   /* 包内那份自带游戏**在不在**。⛔ 别从 `resolution.source` 反推 —— 那是「这次加载谁」。 */
   @State hasBundled: boolean = false;
 
-  /* 给**人**看的那个文件夹路径，例如 `Download/Mindustry Ark/games`。⚠️ `Download` 单数 —— 磁盘上的真名。
+  /* 给**人**看的那个文件夹路径，例如 `Download/Ark Launcher/games`。⚠️ `Download` 单数 —— 磁盘上的真名。
    * ⚠️ 真实路径不够用：那个文件夹磁盘上叫 `com.haohandc.mindustryark`（ModImporter 用 bundle 名
-   * 创建），而文件管理器把它显示成应用名「Mindustry Ark」⇒ 玩家照着找**找不到**（卸载后才退化成包名）。
+   * 创建），而文件管理器把它显示成应用名「Ark Launcher」⇒ 玩家照着找**找不到**（卸载后才退化成包名）。
    * ⇒ 两行都给：这一行用来**找**，真实路径那一行用来**复制**。 */
   @State jarDirHuman: string = '';
 
@@ -3356,7 +3356,7 @@ export struct LauncherHome {
             Column() {
               Text('版本与许可')
                 .fontSize(14).fontColor($r('sys.color.font_primary'))
-              Text(this.appVersion === '' ? 'Mindustry Ark' : ('Mindustry Ark  ' + this.appVersion))
+              Text(this.appVersion === '' ? 'Ark Launcher' : ('Ark Launcher  ' + this.appVersion))
                 .fontSize(12).fontColor($r('sys.color.font_tertiary'))
                 .margin({ top: 4 })
             }
@@ -3461,7 +3461,7 @@ export struct LauncherHome {
         .height('100%')
       }
     }
-    .title('Mindustry Ark')
+    .title('Ark Launcher')
     .titleMode(NavigationTitleMode.Mini)
     /* ⚠️ 必须显式写 Stack，**不能靠默认的 Auto** —— 这一行同时是两个缺陷的根因。
      * SDK 原文（`NavigationMode.Auto`）：In API version 10 and later versions: If the window width is
@@ -3743,7 +3743,7 @@ export struct LauncherHome {
           }
           .width('100%')
 
-          Text('Mindustry Ark' + (this.appVersion === '' ? '' : ('  ' + this.appVersion)))
+          Text('Ark Launcher' + (this.appVersion === '' ? '' : ('  ' + this.appVersion)))
             .fontSize(14).fontColor($r('sys.color.font_secondary'))
             .margin({ top: 14 })
           Text('在 HarmonyOS / OpenHarmony 上运行 Mindustry')
