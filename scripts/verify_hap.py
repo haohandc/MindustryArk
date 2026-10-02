@@ -325,48 +325,61 @@ def main():
     print()
 
     # ==================================================================
-    # 6. 游戏本体 -- 以及这里为什么用哈希而不是大小检查。
+    # 6. 游戏本体 —— 方向由 config.SHIPS_GAME 决定，两臂都是硬闸门。
     #
-    # 这个 jar 以 ".so" 之名发运（见 prep_game.py），意味着工具链里
-    # 没有任何东西会解析它：hvigor 不，打包器不，安装器也不。
-    # 一直到设备上它都是不透明的字节。所以唯一有意义的
-    # 问题就是设备上那 86,957,725 字节是否与固定构建的字节相同
-    # -- 而回答它的唯一办法就是对它们做哈希。
+    #   master（True）条目【必须】在，且必须逐字节等于钉住的那一份 -- 所以对
+    #                 它们做哈希。大小检查对未打补丁的 jar 会过关、对
+    #                 「重跑上游阶段却漏了下游阶段」的 jar 也会过关，而本项目
+    #                 已经这样发出去过一个错误的 jar。
+    #                 （这个 jar 以 ".so" 之名发运（见 prep_game.py），意味着
+    #                  工具链里没有任何东西会解析它：hvigor 不，打包器不，
+    #                  安装器也不。一直到设备上它都是不透明的字节 -- 所以
+    #                  哈希是唯一有意义的判据。流式读，不写下 87 MB 的副本只为删掉。）
     #
-    # 大小检查对未打补丁的 jar 也会过关，对重跑上游阶段
-    # 却漏了下游阶段的 jar 也会过关，而本项目已经
-    # 这样发出去过一个错误的 jar。
-    #
-    # 采用流式哈希，直接从归档里读，这样就不会
-    # 写下 87 MB 的副本只为把它删掉。
+    #   lite（False） 条目【必须不在】-- 它一旦出现，说明上一次 master 构建的
+    #                 残留进了包：entry/libs/ 是 gitignore 的工作区目录，
+    #                 切分支不会动它，于是那个 85 MB 的 jar 会原地留下并被装进包。
     # ==================================================================
-    print("== 6. the game jar, hashed as packaged ==")
-    import hashlib
-    # ⭐ 上游原版 jar，未修改 -- 所以这是关于 Anuken 发布的
-    # 文件的陈述，而不是关于我们自己构建产物的。见
-    # prep_game.py 里的说明。2026-09-28 更改；它曾固定的是我们多阶段的变体。
-    WANT_GAME = "8e0fd5d7dd7828fccff59a693a635948883a704b"
     GAME_ENTRY = "libs/arm64-v8a/game/mindustry.so"
-    game_ok = False
-    with zipfile.ZipFile(hap) as z:
-        if GAME_ENTRY not in z.namelist():
-            print("   MISSING from the archive: %s" % GAME_ENTRY)
-        else:
-            h = hashlib.sha1()
-            n = 0
-            with z.open(GAME_ENTRY) as src:
-                while True:
-                    b = src.read(1 << 20)
-                    if not b:
-                        break
-                    h.update(b)
-                    n += len(b)
-            got_game = h.hexdigest()
-            game_ok = got_game == WANT_GAME
-            print("   entry : %s" % GAME_ENTRY)
-            print("   bytes : %d" % n)
-            print("   expect: %s" % WANT_GAME)
-            print("   actual: %s   %s" % (got_game, "OK" if game_ok else "MISMATCH"))
+    if config.SHIPS_GAME:
+        print("== 6. the game jar, hashed as packaged ==")
+        import hashlib
+        # ⭐ 上游原版 jar，未修改 -- 所以这是关于 Anuken 发布的
+        # 文件的陈述，而不是关于我们自己构建产物的。见
+        # prep_game.py 里的说明。2026-09-28 更改；它曾固定的是我们多阶段的变体。
+        WANT_GAME = "8e0fd5d7dd7828fccff59a693a635948883a704b"
+        game_ok = False
+        with zipfile.ZipFile(hap) as z:
+            if GAME_ENTRY not in z.namelist():
+                print("   MISSING from the archive: %s" % GAME_ENTRY)
+            else:
+                h = hashlib.sha1()
+                n = 0
+                with z.open(GAME_ENTRY) as src:
+                    while True:
+                        b = src.read(1 << 20)
+                        if not b:
+                            break
+                        h.update(b)
+                        n += len(b)
+                got_game = h.hexdigest()
+                game_ok = got_game == WANT_GAME
+                print("   entry : %s" % GAME_ENTRY)
+                print("   bytes : %d" % n)
+                print("   expect: %s" % WANT_GAME)
+                print("   actual: %s   %s" % (got_game, "OK" if game_ok else "MISMATCH"))
+    else:
+        print("== 6. the game jar, absent as intended ==")
+        game_ok = True
+        with zipfile.ZipFile(hap) as z:
+            if GAME_ENTRY in z.namelist():
+                print("   PRESENT, and this build must not ship one:")
+                print("   %s" % GAME_ENTRY)
+                print("   A master build left it in entry/libs/. Run:")
+                print("       python scripts/prep_game.py")
+                game_ok = False
+            else:
+                print("   absent  %s" % GAME_ENTRY)
     print()
 
     # ==================================================================

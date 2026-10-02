@@ -69,8 +69,9 @@ REQUIRED = {
     "jdkhome/lib/security/cacerts.so":
         "the trust store. Without it TLS has no roots and networking fails "
         "in a way that looks like a server problem -- run scripts/prep_jdkconf.py",
-    "game/mindustry.so":
-        "the game jar, renamed. The classpath points at it",
+    # ⛔ "game/mindustry.so" 【不在】上面这张字面量里 —— 按 config.SHIPS_GAME 在
+    #    下面挂上/摘掉。理由与另外两处一样：这个条目在 master 上要求存在、在 lite 上
+    #    要求存在会让【每一次】构建都失败，而同一条断言的两个方向说的是同一件事。
     # "probe/probe-mod.jar.so" 曾经也在这里要求，现在不再要求，因为
     # 它已经不再产出：tools/probe-mod/build.sh 不再把它安装进
     # libs/，因为每次启动把它拷进游戏 mods 目录的 ArkTS 代码
@@ -79,6 +80,13 @@ REQUIRED = {
     # 一个在正确的工作树上失败的检查，和一个在坏掉的树上通过的检查是同一种缺陷：
     # 它会让读者学会忽略它。
 }
+
+# ⭐ 游戏本体：master 要求它在载荷包里，lite 要求它【不】在 —— 见 config.SHIPS_GAME。
+#    两臂都是断言。lite 上如果把这条留在上面那张表里，每一次构建都会停在
+#    "MISSING: entry/libs/game/mindustry.so"，而那是一个【完全正常】的工作树。
+if config.SHIPS_GAME:
+    REQUIRED["game/mindustry.so"] = \
+        "the game jar, renamed. The classpath points at it"
 
 # 故意不做的断言：libmain.so 和 libSDL3.so。
 #   它们出现在 HAP 的 libs/arm64-v8a/ 下，但它们是构建产物 ——

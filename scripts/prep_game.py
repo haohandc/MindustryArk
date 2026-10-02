@@ -23,8 +23,23 @@ WHY THIS IS A SCRIPT AND NOT A COPY COMMAND
     its SHA-1, not by its file name, and the result is verified after the copy.
     A mismatch aborts without touching the destination.
 
+⭐ 两个方向，一个开关
+
+    `config.SHIPS_GAME` 决定这个构建发不发游戏本体，而两个方向的断言是【相反】的：
+
+        master（True）  把游戏放进 entry/libs/，并按 SHA-1 回验它落对了
+        lite （False）  保证那里【没有】游戏 —— 发现残留就清掉（--check 时报 FAIL）
+
+    ⛔ 为什么 lite 方向不是「把复制那几行删掉」：
+
+        `entry/libs/` 是 gitignore 的工作区目录，**切分支不会动它**。同一个工作树
+        从 master 切到 lite，那个 85 MB 的游戏 jar 还在原地，而
+        `launcher.c` 的 `resolve_game_jar()` 会真的找到它并加载 —— lite 包
+        会带着游戏跑起来，界面上看不出来。⇒ 必须有人主动清掉它，这个脚本
+        就是那个人。反过来说：**删掉这个脚本，等于删掉「残留会被清掉」这件事本身。**
+
 Usage:  python prep_game.py [--check]
-        --check  verify only; do not copy
+        --check  verify only; do not copy (master) / do not remove (lite)
 """
 
 import argparse
@@ -74,11 +89,8 @@ def sha1_of(path, chunk=1 << 20):
     return h.hexdigest()
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--check", action="store_true")
-    a = ap.parse_args()
-
+def ship(check):
+    """master：把钉住的那份 jar 放进 entry/libs/，并回验它落对了。"""
     if not os.path.isfile(SRC):
         print("FAIL source jar is missing: %s" % SRC)
         return 1
@@ -94,7 +106,7 @@ def main():
         return 1
     print("       -> matches the pinned variant")
 
-    if a.check:
+    if check:
         if os.path.isfile(DEST):
             ok = sha1_of(DEST) == SRC_SHA1
             print("dest   : present, %s" % ("matches" if ok else "DIFFERS"))
@@ -115,6 +127,45 @@ def main():
     print("       : %d bytes, sha1 verified" % os.path.getsize(DEST))
     print("OK")
     return 0
+
+
+def strip(check):
+    """lite：保证 entry/libs/ 里【没有】游戏。
+
+    ⚠️ 这里【不】碰 SRC。lite 上不需要那个上游 jar 存在 —— 这个脚本在 lite 上的
+    职责是「确认那个槽位是空的」，而「确认空」不需要任何输入。要求 SRC 存在会
+    让一个完全正常的工作树失败，而「在正确的工作树上失败的检查」和「在坏掉的
+    工作树上通过的检查」是同一种缺陷：它会让读者学会忽略它。
+    """
+    if not os.path.isfile(DEST):
+        print("game jar : absent, as intended")
+        print("           %s" % DEST)
+        return 0
+
+    size = os.path.getsize(DEST)
+    if check:
+        print("FAIL a game jar is present: %s" % DEST)
+        print("     %d bytes. This build must not ship one." % size)
+        print("     Remove it: python scripts/prep_game.py")
+        return 1
+
+    os.remove(DEST)
+    print("game jar : removed, %d bytes" % size)
+    print("           %s" % DEST)
+    print("           %s ships no game; the player supplies one." % config.APP_NAME)
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--check", action="store_true")
+    a = ap.parse_args()
+
+    print("mode   : %s" % ("ship the game" if config.SHIPS_GAME
+                           else "no game in the package"))
+    if config.SHIPS_GAME:
+        return ship(a.check)
+    return strip(a.check)
 
 
 if __name__ == "__main__":
