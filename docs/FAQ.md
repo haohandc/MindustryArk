@@ -16,9 +16,15 @@
 
 ## 按返回键没反应，是不是坏了？
 
-不是。返回键被映射成**游戏内的 ESC**，也就是「退一层」（关掉当前对话框或菜单）。
-**在主界面上 ESC 无处可去**，所以那里按返回键看起来像没反应 —— 这是有意为之，不是缺陷。
-**要退出应用，用游戏主菜单的 Quit**（那条路已验证是干净退出）。
+分两处说，因为退出游戏之后还有启动器界面：
+
+- **在游戏里**：返回键映射成**游戏内的 ESC**，也就是「退一层」（关掉当前对话框或菜单）。
+  ⚠️ **在主菜单上 ESC 无处可去**，所以那里按返回键看起来像没反应 —— 有意为之，不是缺陷。
+- **在启动器里**（首页 / 存档 / 设置）：返回键用来**退一层界面** —— 关掉打开的窗、
+  退出存档多选、从垃圾站或手机上的详情子页返回。全都退完了才不响应。
+
+**要退出应用**：在游戏里用主菜单的 Quit（那条路已验证是干净退出）；
+或者点悬浮球 →「**启动器**」，回到启动器界面再退出。
 
 ## 沉浸模式下刘海 / 挖孔挡住东西了，怎么办？
 
@@ -34,13 +40,19 @@
 
 ## 存档和游戏数据在哪？怎么备份？
 
-在应用沙箱内：`/data/storage/el2/base/files/.local/share/Mindustry/`。
-**普通使用不需要碰它** —— 用游戏内的导入 / 导出功能，走「下载」目录往返，
-这也正是那个权限的用途。
+**没开版本隔离时**（出厂设置就是不开）—— 在应用沙箱内：
+`/data/storage/el2/base/files/.local/share/Mindustry/`。
 
-⚠️ **但这条只在部分机型上成立**：手机 Mate 80 Pro 上系统把该权限申请判为「无效请求」
-（`authResults = 2`），不弹窗也不授权，「下载」目录用不了。详见
-[已知限制](LIMITATIONS.md)。
+**开了隔离之后**，每个游戏版本各有一份，路径多出两层：
+`/data/storage/el2/base/files/instances/<隔离键>/sets/default/.local/share/Mindustry/`
+（隔离键形如 `b160.5`、`bundled`）。⚠️ 键取决于**当时选的粒度**，所以换个粒度再看，
+目录名会变 —— 旧的那份**不会**被搬走，它会作为「没有版本读它」继续列在存档页里。
+
+**普通使用不需要碰它** —— 用游戏内的导入 / 导出功能，走「下载」目录往返。
+那条路走系统的**选择器**，**不需要任何权限**（本应用是零文件权限），两台设备都实测可用。
+
+⚠️ **仍未验证**的是另一件事：**游戏自带的文件浏览器**能不能读那个路径 ——
+它走 libc 用路径，而应用的授权是按 URI 持有的。详见[已知限制](LIMITATIONS.md)。
 
 ## DevEco 的稳定性测试报了一堆 `cppcrash`，是我装坏了吗？
 
@@ -84,10 +96,17 @@ permission**.
 
 ## The Back button does nothing. Is it broken?
 
-No. Back is mapped to the game's **ESC**, which means "up one level" — close the current
-dialog or menu. **On the main menu ESC has nowhere to go**, so Back looks dead there.
-That is deliberate, not a defect. **To quit, use Quit on the game's main menu** (that path
-is the verified clean exit).
+Two places, because there is a launcher UI behind the game:
+
+- **In the game**: Back is mapped to the game's **ESC**, meaning "up one level" — close the
+  current dialog or menu. ⚠️ **On the main menu ESC has nowhere to go**, so Back looks dead
+  there. That is deliberate, not a defect.
+- **In the launcher** (Home / Saves / Settings): Back goes **up one level of UI** — it closes
+  an open dialog, leaves save multi-select, and returns from the vault or a phone detail
+  sub-page. It stops responding only once there is nothing left to close.
+
+**To quit**: use Quit on the game's main menu (that path is the verified clean exit), or tap
+the floating ball → **"launcher"** to go back to the launcher UI and exit from there.
 
 ## On a notched or hole-punch screen the cutout covers things.
 
@@ -105,14 +124,22 @@ gives you a mobile UI driven by desktop input.)
 
 ## Where do saves and game data live? Can I back them up?
 
-Inside the app sandbox, at `/data/storage/el2/base/files/.local/share/Mindustry/`.
-**You should never need to touch it** — use the in-game import / export, which goes through
-your Downloads folder. That is what the download permission is for.
+**With version isolation off** (the factory setting) — inside the app sandbox, at
+`/data/storage/el2/base/files/.local/share/Mindustry/`.
 
-⚠️ **On some devices that route does not exist.** On the Mate 80 Pro phone the
-system returns "invalid request" (`authResults = 2`) for that permission, shows
-no dialog, never grants it, and the Download folder is unusable. See
-[limitations](LIMITATIONS.md).
+**With it on**, each game version gets its own, two levels deeper:
+`/data/storage/el2/base/files/instances/<isolation key>/sets/default/.local/share/Mindustry/`
+(a key looks like `b160.5` or `bundled`). ⚠️ The key follows **the granularity selected at
+the time**, so changing granularity changes the directory name — the old copy is **not**
+moved, and stays listed on the Saves tab as "no version reads it".
+
+**You should never need to touch it** — use the in-game import / export, which goes through
+your Downloads folder. That route uses the system **picker** and needs **no permission at
+all** (this app holds zero file permissions); it is measured working on both devices.
+
+⚠️ What is **still unverified** is a different thing: whether the **game's own file browser**
+can read that path — it goes through libc with a path, while the app's grant is held per URI.
+See [limitations](LIMITATIONS.md).
 
 ## DevEco's stability test reports a pile of `cppcrash`. Did I install it wrong?
 
