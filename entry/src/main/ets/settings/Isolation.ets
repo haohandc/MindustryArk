@@ -411,6 +411,105 @@ export function describeCounts(c: GameDataCounts): string {
  *
  * 返回：'' 表示成功；否则是给玩家看的一句话。
  */
+/** [B] 递归复制的记账。`firstError` 只留第一条，够定位就行。 */
+interface CopyStat {
+  dirs: number;
+  files: number;
+  failed: number;
+  firstError: string;
+}
+
+/* [A]
+ * 递归复制一棵目录树 —— **不用 `fs.copyDirSync`**。
+ *
+ * ⛔⛔ 为什么不用那个 API：2026-10-02 在平板上**实测**过，它在我们的沙箱里**根本不可用**。
+ *   一次四用例的二分（全部在同一台设备、同一次启动里跑）：
+ *
+ *     `copyDirSync(空目录, 新路径)`        -> ❌ Invalid argument (13900020)
+ *     `copyFileSync(单个文件, 新路径)`     -> ✅ OK
+ *     `copyDirSync(saves/, 新路径)`        -> ❌ Invalid argument
+ *     `copyDirSync(整棵数据树, 新路径)`    -> ❌ Invalid argument
+ *
+ *   ⭐ **「连复制一个空目录都失败」这一条把「源的问题」和「路径的问题」一起排除了** ——
+ *      所以不是内容里有怪东西、不是父目录没建、不是路径太长。
+ *      （⚠️ 我先前正是猜「父目录没建」，还照着改了代码 —— **猜错了**。
+ *      真正把假设打死的就是那个空目录用例。）
+ *   ⇒ 我们**不需要**知道它为什么坏。**判据是：一个连空目录都复制不了的 API，不能用。**
+ *
+ * ⭐ 三个替代积木**都实测可用**：`mkdirSync`、`listFileSync`（存档列表一直在用）、
+ *    `copyFileSync`（上面那个用例 2）。它们拼起来就是一棵树的复制。
+ *
+ * ⚠️ `depth` 是**环的保护**：`statSync` 会跟随符号链接，而指向上级的链接会让递归不终止。
+ *    沙箱里实测没有符号链接，但防御要留着 —— 一个不终止的递归会把主线程钉死。
+ * ⚠️ 这是**同步**递归：几百次 IO 会把主线程占住（实测见日志里的文件数）。
+ *    它只在玩家点「复制过去」时跑一次，且那时已经过了二次确认 —— 可接受。
+ *    ⛔ 但**别把它挪进渲染路径**。
+ */
+function copyTreeInto(src: string, dst: string, depth: number, acc: CopyStat): void {
+  if (depth > 32) {
+    acc.failed += 1;
+    if (acc.firstError === '') {
+      acc.firstError = '目录层级超过 32 层（可能有环）';
+    }
+    return;
+  }
+  try {
+    if (!fs.accessSync(dst)) {
+      fs.mkdirSync(dst, true);
+    }
+  } catch (e) {
+    const err = e as BusinessError;
+    acc.failed += 1;
+    if (acc.firstError === '') {
+      acc.firstError = '建目录失败 ' + dst + '：' + err.message;
+    }
+    return;
+  }
+  acc.dirs += 1;
+
+  let names: string[] = [];
+  try {
+    names = fs.listFileSync(src);
+  } catch (e) {
+    const err = e as BusinessError;
+    acc.failed += 1;
+    if (acc.firstError === '') {
+      acc.firstError = '列目录失败 ' + src + '：' + err.message;
+    }
+    return;
+  }
+
+  for (const n of names) {
+    const s: string = src + '/' + n;
+    const d: string = dst + '/' + n;
+    let isDir: boolean = false;
+    try {
+      isDir = fs.statSync(s).isDirectory();
+    } catch (e) {
+      const err = e as BusinessError;
+      acc.failed += 1;
+      if (acc.firstError === '') {
+        acc.firstError = '读状态失败 ' + s + '：' + err.message;
+      }
+      continue;
+    }
+    if (isDir) {
+      copyTreeInto(s, d, depth + 1, acc);
+    } else {
+      try {
+        fs.copyFileSync(s, d);
+        acc.files += 1;
+      } catch (e) {
+        const err = e as BusinessError;
+        acc.failed += 1;
+        if (acc.firstError === '') {
+          acc.firstError = '复制失败 ' + s + '：' + err.message;
+        }
+      }
+    }
+  }
+}
+
 export function copyLiveDataInto(key: string): string {
   const src: string = liveGameDataDir();
   const dst: string = isolatedGameDataDir(key);
@@ -421,30 +520,33 @@ export function copyLiveDataInto(key: string): string {
     return '';
   }
 
-  /* ⚠️ 目标【父目录】必须先存在：copyDir 不会替我们建中间的层级，
-   * 而 sets/default/ 这一层由 native 在启动时才建 —— 迁移发生在启动之前。
-   * ⇒ 这里自己 mkdir -p（第二参 true = 递归）。 */
-  const parent: string = NATIVE_FILES + '/instances/' + key + SETS_SUFFIX;
-  try {
-    if (!fs.accessSync(parent)) {
-      fs.mkdirSync(parent, true);
-    }
-  } catch (e) {
-    const err = e as BusinessError;
-    hilog.error(DOMAIN, TAG, 'isolation: cannot create %{public}s (%{public}s)', parent, err.message);
-    return '建不出目标文件夹：' + err.message;
+  /* [A] ⭐ 走**自己的递归复制**，而不是 `fs.copyDirSync` —— 理由与那四条实测证据
+   * 见上面 `copyTreeInto` 的注释。这里只留一句：**那个 API 在我们的沙箱里连空目录都复制不了。**
+   *
+   * ⛔⛔ 订正（2026-10-02，同一轮里被自己的实验推翻）：
+   *   我**先**认定「失败是因为 dst 的父目录 `.local/share` 没建」，
+   *   还照着改了一版代码（把父目录从 `dst` 反推、递归 mkdir）。
+   *   **那是错的** —— 探针显示父目录建好了、`copyDirSync` 依然同一个 EINVAL，
+   *   而**连「复制一个空目录」都失败**这一条把「路径/父目录」和「源内容」一起排除了。
+   *   ⇒ ⭐ 教训：**一个报错文案列了三个成因时，不要挑其中一个去修 —— 先设计一个能区分它们的实验。**
+   *     我当时按文案里的第 2 条（「dest 不存在」）猜了一个，白改一轮；
+   *     而真正定案的是一次**四用例二分**（空目录 / 单文件 / 小子树 / 整棵树）。
+   *
+   * ⚠️ 那段「父目录」的解释已作废，别再从历史里捡回来。
+   *    ⭐ 现在的实现**不需要**预先建任何父目录 —— `copyTreeInto` 每进一层自己 mkdir。
+   */
+  const acc: CopyStat = { dirs: 0, files: 0, failed: 0, firstError: '' };
+  copyTreeInto(src, dst, 0, acc);
+  if (acc.failed > 0) {
+    /* ⚠️⚠️ 把 src / dst 与**第一个**错误都打进日志。
+     *    上一版只报错误码、不报路径，于是我只能去设备上翻目录树 ——
+     *    一条不写路径的日志，等于把排查的第一步推给下一个人。 */
+    hilog.error(DOMAIN, TAG,
+                'isolation: copy had %{public}d failure(s), first: %{public}s (%{public}s -> %{public}s)',
+                acc.failed, acc.firstError, src, dst);
+    return '复制没完成（' + String(acc.failed) + ' 个文件没复制过去）：' + acc.firstError;
   }
-
-  try {
-    fs.copyDirSync(src, dst);
-    hilog.info(DOMAIN, TAG, 'isolation: copied %{public}s -> %{public}s', src, dst);
-    return '';
-  } catch (e) {
-    const err = e as BusinessError;
-    /* ⛔ 复制失败**不是**致命错误：隔离照旧可以打开，只是那一份新目录是空的，
-     * 而**原数据完好**（因为我们是复制而不是移动）⇒ 玩家丢不了东西。
-     * ⇒ 所以这里只回报一句话，不阻止流程。 */
-    hilog.error(DOMAIN, TAG, 'isolation: copy failed (%{public}s)', err.message);
-    return '复制失败：' + err.message;
-  }
+  hilog.info(DOMAIN, TAG, 'isolation: copied %{public}d dir(s) / %{public}d file(s) %{public}s -> %{public}s',
+             acc.dirs, acc.files, src, dst);
+  return '';
 }

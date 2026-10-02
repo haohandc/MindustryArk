@@ -512,6 +512,20 @@ export struct LauncherHome {
   @State isolationNote: string = '';
 
   /* [A]
+   * ⭐ **隔离开着，但那一份数据目录根本不存在** —— 即「开关拨过去了、数据没过去」。
+   *
+   * ⛔ 为什么必须单独把它显出来：这种状态在界面上**完全看不出来**，而玩家进游戏看到的是
+   *   一整套空数据 ⇒ 他只会说「我的存档全没了」。2026-10-02 的一次复制失败就造成了它
+   *   （当时是 `writeGranularity` 跑在复制之前，见 applyIsolationCopy 上的说明）。
+   *   ⭐ 那条顺序已经改成「复制成功才落盘」，但**已经踩进去的状态不会自己出来** ——
+   *   这个提示就是给那种状态留的出口：至少玩家知道发生了什么、以及怎么退回去。
+   *
+   * ⚠️ 在 `refresh()` 里算一次存下来，⛔ 不是在渲染时去问文件系统 ——
+   *    渲染每帧都跑，而这里要 `accessSync`。理由与 `buildVersions()` 那条相同。
+   */
+  @State isolationStale: boolean = false;
+
+  /* [A]
    * 询问窗要摆出来的【现在有什么】。在打开询问窗那一刻读一次，不常驻。
    *
    * ⚠️ 每次打开都重读，刻意不缓存：玩家完全可能在两次打开之间删了一个存档或装了个模组，
@@ -654,9 +668,33 @@ export struct LauncherHome {
       this.pendingGranularity = '';
       return;
     }
+    /* [A] ⭐⭐ **先复制，成功了才落盘。**
+     *
+     * ⛔⛔ 原来这里顺序是反的（先 `writeGranularity` 再复制），而 2026-10-02 那次
+     *    复制失败就把它暴露出来了：
+     *        隔离标记已经落盘（开着）⇒ 下次进游戏 `user.home` 指向那棵**空的**新树
+     *        ⇒ 玩家看到「存档全没了」，而**报错只写在设置页的一行小字里**。
+     *    ⚠️ 原设计的一句注释说「复制失败不是致命错误，原数据完好，玩家丢不了东西」——
+     *    那句关于**数据安全**是对的，但它把两件事混成了一件：
+     *        · 数据安全：没丢 ✅
+     *        · 玩家看到什么：一整套空数据 ❌
+     *    ⇒ 玩家选的是「**复制过去**」。复制没成功 ⇒ **他选的那件事没有发生**，
+     *    那就**不该**把开关拨过去。⭐ 判据是「玩家的意图有没有被执行」，不是「数据有没有丢」。
+     *
+     * ⚠️ 这样还顺带保住了**可重试**：开关留在原处，玩家可以再打开一次
+     *    （铁律：门关上了也要有开它的路）。
+     */
+    const note: string = copyLiveDataInto(key);
+    if (note !== '') {
+      this.isolationNote = note + '。隔离没有打开，你的数据还在原来的位置。';
+      this.showIsolationAsk = false;
+      this.pendingGranularity = '';
+      return;
+    }
+
     this.granularity = g;
     writeGranularity(this.filesDir, g);
-    this.isolationNote = copyLiveDataInto(key);
+    this.isolationNote = '';
     this.showIsolationAsk = false;
     this.pendingGranularity = '';
   }
@@ -777,6 +815,20 @@ export struct LauncherHome {
     const dir: string = dataDir + '/saves';
     this.savesDirShown = dir;
     this.saves = listSaves(dir);
+    /* [A] ⭐ 「开关拨过去了、数据没过去」。判据是两条**都**成立：
+     *    ① 隔离开着；② 目标数据目录不存在，而**未隔离**那一份存在（真的丢不了东西）。
+     * ⚠️ 第二个条件不能省：全新安装、第一次就打开隔离时目标也是空的，那是**正常**的
+     *    （玩家选了「不复制」），不该报警。只有当「原来有数据、现在指向空目录」才是异常。
+     * ⚠️ 这也正是我在 `buildVersions` 里已经有 `gameDataExists` 的那个调用能顺手做掉的事。 */
+    this.isolationStale = (this.granularity !== GRANULARITY_OFF)
+                       && !gameDataExists(dataDir)
+                       && gameDataExists(liveGameDataDir());
+    /* [A] ⚠️ 只在**异常**时才记一行 —— 那就正是需要日志的时候，而它一旦修好就自动安静了。
+     * ⭐ 它把「界面上有没有那条警告」变成一条**能读出来的**事实，不必靠眼睛看屏幕。 */
+    if (this.isolationStale) {
+      hilog.error(DOMAIN, TAG, 'isolation: STALE -- on, but %{public}s does not exist '
+                + '(the un-isolated copy does)', dataDir);
+    }
     /* [B] 选中的那个已经不在了（被删了/换了目录）⇒ 清掉选择，别指着一个不存在的东西。 */
     if (this.selectedSave !== '' && !this.saves.some((x: SaveEntry) => x.id === this.selectedSave)) {
       this.selectedSave = '';
@@ -2086,6 +2138,16 @@ export struct LauncherHome {
         Text(this.granularityHint(this.granularity))
           .fontSize(12).fontColor($r('sys.color.font_secondary'))
           .margin({ top: 8 })
+
+        /* [A] ⭐⭐ 这一条是给**已经踩进去的状态**留的出口。
+         * 它不是错误提示，而是一句**诊断**：说清现在什么状态、以及怎么退回去。
+         * ⛔ 没有它，玩家只能看到「存档全没了」，而界面上没有任何线索指向隔离。 */
+        if (this.isolationStale) {
+          Text('⚠ 隔离现在是开着的，但当前版本的数据目录还不存在 —— '
+               + '进游戏会看到空数据。请把隔离关掉（或重新打开一次让它复制），原存档一直都在。')
+            .fontSize(12).fontColor($r('sys.color.warning'))
+            .margin({ top: 8 })
+        }
 
         /* [B] 迁移出问题时的提示。⛔ 它不是门 —— 隔离照旧打开，只是新目录可能是空的，
          * 而原数据完好（我们是复制）。 */
