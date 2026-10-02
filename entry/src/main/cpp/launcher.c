@@ -297,16 +297,149 @@
  */
 #define LAUNCH_PENDING_FILE "/data/storage/el2/base/haps/entry/files/launch_pending"
 
+/* [A] ⭐⭐ 版本隔离的拨杆 —— 整个功能的心脏就这一个文件。
+ *
+ * 玩家在启动器里选了「按版本隔离」之后，ArkTS 把结果写在这里，native 启动时读它、
+ * 据此算出 -Duser.home=。⛔ 游戏不知道这件事存在：它只看到一个 user.home。
+ *
+ * 格式（与 user_dirs.txt 同一种 key=value，解析复用 read_kv）：
+ *
+ *     enabled=1
+ *     key=b160.5
+ *     granularity=build        ← ⛔ native 不用它，只为排障留痕
+ *
+ * ⭐ key 由 ArkTS 算，不在这里算：版本号的读取逻辑（version.properties 的解析）已经在 ArkTS
+ * 里（短期 18 的 gameVersionOf）。让 native 再实现一遍 = 同一件事两份实现，
+ * 而那正是本项目反复付代价的形态。
+ *
+ * ⛔ 文件不在时（全新安装、老版本升级上来）⇒ enabled 读到 0 ⇒ 用 DEST_ROOT ⇒
+ * 【与今天逐字节相同】。这条是「默认不隔离」的落地证据，别让它失效。
+ */
+#define ISOLATION_FILE "/data/storage/el2/base/haps/entry/files/isolation.txt"
+
+/* [A]
+ * 隔离根。⛔ 它在 DEST_ROOT 之下、但在游戏那棵树【之外】 ——
+ * 游戏的数据目录是 user.home 拼上 ARC 强加的 ".local/share/Mindustry"，
+ * 所以 instances/ 永远不会被游戏当成数据看，粒度键与集合名都由我们说了算。
+ *
+ * 布局（A 阶段 sets 恒为 default，界面上看不见它）：
+ *
+ *     DEST_ROOT/instances/<粒度键>/sets/default/       ← -Duser.home 指到这里
+ *                  …/.local/share/Mindustry/           ← 游戏自己建的那层
+ *
+ * ⚠️ 为什么现在就铺 sets/default 这一层：以后加「集合」功能时，若那时才加，
+ * 就要把玩家数据从 <粒度键>/ 搬进 <粒度键>/sets/default/ —— 又一次「搬走玩家存档」。
+ * 一层目录现在不花钱。
+ */
+#define ISOLATION_ROOT  DEST_ROOT "/instances"
+#define ISOLATION_SET   "sets/default"
+
+/* [B] read_kv 的定义在下面（与 read_user_dir 放在一起，因为两者共用同一套解析规则）。
+ * 这里先声明，是因为下面的 resolve_user_home() 要用它 —— ⚠️ 少了这一行，
+ * 那次调用会造出一个隐式声明（隐式声明是【非 static】的），于是后面那个
+ * `static int read_kv` 变成「static 声明跟在非 static 声明之后」而编译失败。 */
+static int read_kv(const char *path, const char *key, char *out, size_t outlen);
+
+/*
+ * 算出这次启动该用哪个 user.home，写进 out，并把结论记进 USERHOME_RECORD_FILE。
+ *
+ * ⭐ 三条不变量，改动时别破坏：
+ *   1. 隔离关着 ⇒ 结果【逐字节等于 DEST_ROOT】。不是「等价」，是逐字节相同。
+ *   2. 目录必须真的存在（不存在就 mkdir 出来）。让游戏在一个不存在的 user.home 上起，
+ *      是「门关上了却没有开的路径」的同族。
+ *   3. 任何一步失败 ⇒ 回退 DEST_ROOT 并说明原因。宁可回到不隔离，也不要起不来。
+ *
+ * ⚠️⚠️ 为什么还要写一个【文件】，而不是只 SDL_Log：
+ *   这个函数在 `redirect_io()` **之前**运行（选项要早于 CreateJavaVM 备好，而重定向在更后面），
+ *   所以这里的 SDL_Log 落在进程自己的 stderr 上、**不会进 DEST_ROOT/stderr.log**。
+ *   ⇒ 只留日志的话，这个功能在设备上**没法验证** —— 而那正是最需要验证的一处。
+ *   一个一行文件既能被 hdc 直接读走，也回答了排障时的第一个问题：「上次数据用的哪个目录」。
+ */
+#define USERHOME_RECORD_FILE DEST_ROOT "/userhome_used.txt"
+
+/** [B] 把结论写进记录文件。失败就静默放过 —— 记录不下来不该拦住启动。 */
+static void record_user_home(const char *reason, const char *home)
+{
+    FILE *f = fopen(USERHOME_RECORD_FILE, "w");
+    if (!f) {
+        return;
+    }
+    fprintf(f, "reason=%s\nhome=%s\n", reason, home);
+    fclose(f);
+}
+
+static void resolve_user_home(char *out, size_t outlen)
+{
+    char enabled[8];
+    char key[128];
+
+    enabled[0] = 0;
+    key[0] = 0;
+    read_kv(ISOLATION_FILE, "enabled", enabled, sizeof(enabled));
+    read_kv(ISOLATION_FILE, "key", key, sizeof(key));
+
+    if (strcmp(enabled, "1") != 0 || key[0] == 0) {
+        SDL_strlcpy(out, DEST_ROOT, outlen);
+        SDL_Log("isolation: off, user.home=%s", out);
+        record_user_home("off", out);
+        return;
+    }
+
+    /* ⚠️ key 会进路径。只允许 [A-Za-z0-9._-]，别的一律回退 ——
+     * 它由 ArkTS 从版本号拼出来，本该干净，但「本该」不是一道闸门。 */
+    for (const char *p = key; *p; p++) {
+        int ok = (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
+                 (*p >= '0' && *p <= '9') || *p == '.' || *p == '_' || *p == '-';
+        if (!ok) {
+            SDL_Log("isolation: rejecting key '%s' (bad character), user.home=%s", key, DEST_ROOT);
+            SDL_strlcpy(out, DEST_ROOT, outlen);
+            record_user_home("bad-key", out);
+            return;
+        }
+    }
+
+    char home[512];
+    SDL_snprintf(home, sizeof(home), "%s/%s/%s", ISOLATION_ROOT, key, ISOLATION_SET);
+
+    /* mkdir -p：连着建 instances、<key>、sets、default 四层。
+     * 逐段建，因为 mkdir() 不会替你建父目录。
+     * ⚠️ 前三层失败【不算错】—— 可能是别的进程刚建好（EEXIST），而最后那一层会说明问题。 */
+    {
+        char partial[512];
+        SDL_snprintf(partial, sizeof(partial), "%s", ISOLATION_ROOT);
+        mkdir(partial, 0755);
+        SDL_snprintf(partial, sizeof(partial), "%s/%s", ISOLATION_ROOT, key);
+        mkdir(partial, 0755);
+        SDL_snprintf(partial, sizeof(partial), "%s/%s/sets", ISOLATION_ROOT, key);
+        mkdir(partial, 0755);
+        if (mkdir(home, 0755) != 0 && errno != EEXIST) {
+            SDL_Log("isolation: cannot create '%s' (errno=%d), falling back to %s",
+                    home, errno, DEST_ROOT);
+            SDL_strlcpy(out, DEST_ROOT, outlen);
+            record_user_home("mkdir-failed", out);
+            return;
+        }
+    }
+
+    SDL_strlcpy(out, home, outlen);
+    SDL_Log("isolation: on, key=%s, user.home=%s", key, out);
+    record_user_home("on", out);
+}
+
 /* [A]
  * 在 ArkTS 写下的文件里查一行 "key=value"。
  *
  * 返回拷贝的字节数（键不存在或文件不可读时为 0），这样调用方可以把一个系统属性留作未设置，
  * 而不是传一个空值 —— 一个空的 -Darc.sdl.chooserPath 会让游戏的文件浏览器打开在文件系统根，
  * 那比干脆不试还糟。
+ *
+ * ⚠️ 它带一个 path 参数（原先是硬编码 USER_DIRS_FILE），因为 isolation.txt 要用【同一种】
+ * 解析规则。下面那条 "<threw>" 与空值的规则是踩出来的，复制一份就会分叉 ——
+ * 本项目为「同一件事存在两处、其中一处先跑偏」付过好几次代价。
  */
-static int read_user_dir(const char *key, char *out, size_t outlen)
+static int read_kv(const char *path, const char *key, char *out, size_t outlen)
 {
-    FILE *f = fopen(USER_DIRS_FILE, "r");
+    FILE *f = fopen(path, "r");
     if (!f) {
         return 0;
     }
@@ -341,6 +474,12 @@ static int read_user_dir(const char *key, char *out, size_t outlen)
     }
     fclose(f);
     return found;
+}
+
+/** [B] 上面那个的薄包装：只读 USER_DIRS_FILE 里的一个键。 */
+static int read_user_dir(const char *key, char *out, size_t outlen)
+{
+    return read_kv(USER_DIRS_FILE, key, out, outlen);
 }
 
 /* [A]
@@ -2533,7 +2672,16 @@ static int start_jvm(void)
 
     /* [B] 那三个平台属性 —— 为什么见声明处 */
     SDL_strlcpy(opt_osname,   "-Dos.name=Linux", sizeof(opt_osname));
-    SDL_snprintf(opt_userhome, sizeof(opt_userhome), "-Duser.home=%s", DEST_ROOT);
+    /* [A] user.home 由 resolve_user_home() 决定 —— 隔离关着时它【逐字节等于 DEST_ROOT】，
+     * 与隔离功能出现之前完全一样。见那个函数上方的三条不变量。 */
+    {
+        char home[512];
+        resolve_user_home(home, sizeof(home));
+        SDL_snprintf(opt_userhome, sizeof(opt_userhome), "-Duser.home=%s", home);
+    }
+    /* ⚠️ user.dir 刻意【不】跟着隔离走：它是进程的工作目录，而游戏中没有东西从它派生数据路径
+     * （数据走 user.home）。真需要改的时候再说，别顺手改 —— 那会让两个属性不一致这件事
+     * 从「刻意」变成「碰巧」。 */
     SDL_snprintf(opt_userdir,  sizeof(opt_userdir),  "-Duser.dir=%s",  DEST_ROOT);
     SDL_strlcpy(opt_gles, "-Darc.sdl.glEs=true", sizeof(opt_gles));
     /* [B] 去问那个文件，而不是用常量：玩家可能自上次启动以来已切到桌面操作方案。

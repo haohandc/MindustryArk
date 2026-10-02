@@ -2307,34 +2307,44 @@ whose sha256 is Anuken's published digest.
 
 ---
 
-### ⏳ PENDING VERIFICATION — v1.2.0.1, 2026-10-02
+### ✅ Verified as published — v1.2.0.1, 2026-10-02
 
-⚠️ **This is not a ledger entry yet.** The rows below are the **local** build's hashes. By the
-rule stated above they become entries only after the release exists **and** both assets have
-been read back from the API — a local hash proves nothing about what somebody else downloads.
+⭐ **Read back from the API, not assumed.** Both digests came from `release.assets[].digest` and
+both match the local artifact byte for byte — so what a stranger downloads is what was built.
 
 | | |
 |---|---|
-| Release id | ⏳ not created yet |
-| Tag | ⏳ `v1.2.0.1` = **not created yet** |
-| Pre-release | ⏳ to be decided (the flag came off at v1.1.0.1 — see that block) |
-| Assets | two, and **neither may be the signed HAP** |
+| Release id | **401209590** |
+| Tag | **`v1.2.0.1`** |
+| Target | **`ad75d9f14b56ae743e15dff57044c4169c3d8e42`** — `fix(launcher): the folder is `Download`, not `Downloads`` |
+| Pre-release | **false** (and `draft` false) |
+| Published | **2026-10-01T17:50:41Z** = 2026-10-02 01:50:41 +08:00 |
+| Assets | two, and **neither is the signed HAP** ✅ |
 
-| Asset | bytes | sha256 (local, unverified) |
-|---|---|---|
-| `…-1.2.0.1-unsigned.hap` | 275,371,717 | `5cf9ff9847a9398d0522355703f1757f6e7350de666e4e22cfcd4d93d4274882` |
-| `…-1.2.0.1-payload.zip` | 149,337,475 | `de7d153506a6de229e5e5d3a05995d56e5e5f72ee78d707b94bdfef7572eeb47` |
+| Asset | bytes | sha256 (from the API) | matches local |
+|---|---|---|---|
+| `…-1.2.0.1-unsigned.hap` | 275,371,717 | `5cf9ff9847a9398d0522355703f1757f6e7350de666e4e22cfcd4d93d4274882` | ✅ |
+| `…-1.2.0.1-payload.zip` | 149,337,475 | `de7d153506a6de229e5e5d3a05995d56e5e5f72ee78d707b94bdfef7572eeb47` | ✅ |
 
-**How to close this block**
+⭐ **The tag points at `ad75d9f`, which is the FOURTH build's commit** — i.e. the published HAP
+contains the `Download` spelling fix. That is the check the earlier ⏳ block existed for: the
+release tree and the release artifact have to agree, and a tag pointing at an older commit while
+the artifact came from newer source is exactly the failure that check catches.
+
+**How this block was closed**
 
 ```bash
 curl -s https://api.github.com/repos/haohandc/MindustryArk/releases/tags/v1.2.0.1 \
   | grep -E '"id"|"tag_name"|"prerelease"|"digest"|"size"'
 ```
 
-Record the release id, the commit the tag points at, whether the pre-release flag is set, and
-both `sha256:` digests — then replace the two ⏳ rows above with the confirmed ones and retitle
-the block to `### Verified as published — v1.2.0.1, <date>`.
+---
+
+#### ⏳ Original block, kept for the record — v1.2.0.1, 2026-10-02
+
+⚠️ **What follows was written BEFORE the release existed**, and is kept because the build
+history in it is the only record of why this version was rebuilt four times. The ⏳ placeholders
+in it are now filled — see the verified block above.
 
 ⚠️ **The HAP hash above is the FOURTH build of this version**, and each rebuild replaced the
 previous hash rather than being kept beside it.

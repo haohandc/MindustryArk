@@ -281,22 +281,9 @@ function propField(text: string, key: string): string {
  *    「原生模块本身出问题」，那也只是这一次读不出，不该影响列表。
  */
 export function gameVersionOf(jarPath: string): string {
-  if (!isReadableJar(jarPath)) {
-    return '';
-  }
-  let text: string = '';
-  try {
-    text = jarver.jarVersionText(jarPath);
-  } catch (e) {
-    const err = e as BusinessError;
-    hilog.info(DOMAIN, TAG, 'games: jarVersionText(%{public}s) failed (%{public}s)', jarPath, err.message);
-    return '';
-  }
-  if (text === '') {
-    return '';
-  }
-  const number: string = propField(text, 'number=');
-  const build: string = propField(text, 'build=');
+  const parts: GameVersionParts = gameVersionParts(jarPath);
+  const number: string = parts.number;
+  const build: string = parts.build;
   if (number !== '' && build !== '') {
     return 'v' + number + ' Build ' + build;
   }
@@ -307,6 +294,45 @@ export function gameVersionOf(jarPath: string): string {
     return 'Build ' + build;
   }
   return '';
+}
+
+/** [B] `version.properties` 里的两个原始字段。读不出时两个都是空串。 */
+export interface GameVersionParts {
+  /** [B] 大版本，例如 '8'（= 玩家看到的 v8）。 */
+  number: string;
+  /** [B] 构建号，例如 '160.5'；没有小版本时就是 '160'。 */
+  build: string;
+}
+
+/* [A]
+ * 原始字段，**不是**给眼睛看的那种。版本隔离要靠它算目录名。
+ *
+ * ⚠️⚠️ 为什么不让调用方去解析 `gameVersionOf()` 的显示串：那个串是给玩家读的
+ * （`v8 Build 160.5`），格式随界面需要而变。**目录名是用户数据的一部分** ——
+ * 一旦格式改了，老目录名就再也解析不出来，而**你没法在升级时批量改名**
+ * （改名 = 动用户数据）。⇒ 让显示归显示、让数据归数据，两者不许互相解析。
+ *
+ * ⚠️ `build` 直接用文件里的原样字符串（'160.5' 就是 '160.5'，'160' 就是 '160'）——
+ * 游戏自己的 `Version.buildString()` 就是 `build + (revision == 0 ? "" : "." + revision)`，
+ * 所以文件里带不带点已经表达了 revision 是否为 0。这里**不要**去补 '.0'。
+ */
+export function gameVersionParts(jarPath: string): GameVersionParts {
+  const none: GameVersionParts = { number: '', build: '' };
+  if (!isReadableJar(jarPath)) {
+    return none;
+  }
+  let text: string = '';
+  try {
+    text = jarver.jarVersionText(jarPath);
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.info(DOMAIN, TAG, 'games: jarVersionText(%{public}s) failed (%{public}s)', jarPath, err.message);
+    return none;
+  }
+  if (text === '') {
+    return none;
+  }
+  return { number: propField(text, 'number='), build: propField(text, 'build=') };
 }
 
 /** [A] 包内那份自带游戏的版本号；没有包内游戏、或读不出时是空串。 */

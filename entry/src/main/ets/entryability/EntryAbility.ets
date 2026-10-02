@@ -8,7 +8,10 @@ import { fileIo as fs, Environment } from '@kit.CoreFileKit';
 import { modFolderPath } from '../mods/ModImporter';
 /* [A] 只为了拿「玩家挑了哪个游戏 jar」—— 桥接要把它写进 user_dirs.txt 给 native 读。
  * 方向是单向的：GameLibrary 不反过来 import 本文件，所以没有环。 */
-import { readSelection } from '../games/GameLibrary';
+import { GameResolution, readSelection, resolveGame } from '../games/GameLibrary';
+/* [A] 版本隔离：算出这次该用哪个数据目录，写进 isolation.txt 给 native 读。
+ * ⚠️ 方向同样是单向的 —— Isolation 不 import 本文件。 */
+import { computeKey, readGranularity, writeIsolationBridge } from '../settings/Isolation';
 import { stashIfAny } from '../diagnostics/ExportDiagnostics';
 import pointer from "@ohos.multimodalInput.pointer"
 import sdl from 'libSDL3.so';
@@ -266,6 +269,22 @@ export default class EntryAbility extends UIAbility {
     stashIfAny(this.context.filesDir);
     writeJvmOptions(want, this.context.filesDir);
     writeUserDirs(this.context.filesDir);
+    /* [A] ⭐ 版本隔离的拨杆 —— 必须在 provideArkTSObjects()（本方法末尾）【之前】写完，
+     * 因为那一下会启动 native 的 main()，而 -Duser.home= 就是在那儿算的。
+     *
+     * ⚠️ 每次启动都写，包括「不隔离」那一次：玩家可能刚刚把开关关上，而 native 只认
+     * 文件内容 —— 留着一个上次的 enabled=1 会让「关掉」看起来没生效。
+     *
+     * ⚠️ 它自己吞掉所有异常（写不进去 = 回落到不隔离），⛔ 绝不因为这一步拦住启动。 */
+    try {
+      const g: string = readGranularity(this.context.filesDir);
+      const res: GameResolution = resolveGame(this.context.filesDir, this.context.bundleCodeDir);
+      const key: string = computeKey(g, res.source, res.path);
+      writeIsolationBridge(this.context.filesDir, g, key);
+    } catch (e) {
+      const err = e as BusinessError;
+      hilog.warn(DOMAIN, 'SDL/STARTUP', 'isolation: could not decide (%{public}s)', err.message);
+    }
     /* [A]
      * 文件夹的【创建】发生在页面上，不在这里，而这里只是读。
      *

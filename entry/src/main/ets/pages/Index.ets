@@ -20,6 +20,9 @@ import { consumeLauncherRequest, requestLauncher, resolveGame, reportGameResolut
          GameResolution } from '../games/GameLibrary';
 /* [A] 启动后进哪里 —— 设置页那开关写盘，这里读。见 LauncherPrefs 里的 LAUNCH_MODE_DEFAULT。 */
 import { readLaunchMode, LAUNCH_MODE_HOME } from '../settings/LauncherPrefs';
+/* [A] 版本隔离：在**真正要启动的那一刻**把结论写给 native。⚠️ 不能只靠 EntryAbility.onCreate
+ * 那一次 —— 默认模式是「先显示启动器」，玩家会在那之后再改选 jar。见 startGame 里的说明。 */
+import { computeKey, readGranularity, writeIsolationBridge } from '../settings/Isolation';
 /* [A] 没有游戏可加载时显示的那一屏。它是【替换】XComponent，不是盖在它上面 ——
  * 关于这个区别为什么决定了两边能用什么控件，见那个文件的开头。 */
 import { LauncherHome } from './LauncherHome';
@@ -1921,10 +1924,30 @@ struct Index {
      * ⚠️ 这里【不】为「绕过判定」这个意图开特例：即使玩家强行启动，这一次尝试照样记账。
      *   否则最需要它记录的那一次，恰好是它不记录的那一次。
      */
+    const res: GameResolution = resolveGame(ctx.filesDir, ctx.bundleCodeDir);
     const attempted: string = jarPath !== ''
       ? jarPath
-      : resolveGame(ctx.filesDir, ctx.bundleCodeDir).path;
+      : res.path;
     markLaunchAttempt(ctx.filesDir, attempted);
+
+    /* [A] ⭐ 版本隔离的桥必须在【这里】再写一次 —— native 的 main() 就在下面这一句之后开始跑。
+     *
+     * ⚠️⚠️ 不能只靠 EntryAbility.onCreate 写的那一次：默认模式是「先显示启动器」，
+     * 也就是说玩家会在 onCreate 之后才改选 jar，而 onCreate 写下的键属于**上一个**选择。
+     * 那是一个无声的错：数据会落到另一个版本的目录里，而且**看起来一切正常**。
+     * （同族：本项目「在 A 事件里读 B 事件才写入的字段」那条教训。）
+     *
+     * ⚠️ 键跟着【真正要启的那个】走，而不是 resolveGame 自己的结论：
+     * 两者在这条路上本该一致，但「启动哪一个」必须只有一个来源。
+     * 所以 jarPath 给了就用它（那是玩家的选择），空了才回落到解出来的那个。 */
+    try {
+      const g: string = readGranularity(ctx.filesDir);
+      const src: string = jarPath !== '' ? 'user' : res.source;
+      writeIsolationBridge(ctx.filesDir, g, computeKey(g, src, attempted));
+    } catch (e) {
+      const err = e as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'isolation: could not decide at launch (%{public}s)', err.message);
+    }
 
     this.showLauncher = false;
   }
