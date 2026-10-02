@@ -134,5 +134,6 @@ Per-component obligations are in [THIRD-PARTY.md](THIRD-PARTY.md).
 - [**LWJGL**](https://github.com/LWJGL/lwjgl3) — the JNI bindings for OpenGL and SDL
 - [**OpenJDK 21**](https://github.com/openjdk/jdk) — the runtime
 
-Most of the code, phrases and documents in this repository were written with AI assistance
-(Claude via Cherry Studio, model deepseek-flash v4.1).
+> [!CAUTION]
+> Most of the code, phrases and documents in this repository were written with AI assistance
+> (Claude via Cherry Studio, model deepseek-flash v4.1).
