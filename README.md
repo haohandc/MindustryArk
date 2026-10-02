@@ -13,6 +13,7 @@
 另加 `arc/graphics/gl/`。编译后装进**一份独立的补丁 jar**（26 个 class 条目），在游戏之前加载。
 ⚠️ 补丁必须在 classpath 上**排在游戏前面** —— JVM 取第一个匹配，顺序反了补丁会静默失效。
 
+> [!IMPORTANT]
 > **非官方项目。** 与 Mindustry 项目及 Anuken 无隶属关系，未获其认可或支持。
 > 详见 [THIRD-PARTY.md](THIRD-PARTY.md)。
 
@@ -55,7 +56,9 @@
 
 ⭐ 隔离的一条保证：**内置那份的数据永不移动**，而且**与内置同版本的 jar 共用那一份** ——
 所以我们换内置 jar 时，玩家的数据不会因为升级而「消失」。
-⚠️ 隔离是**玩家主动打开**的（出厂是「不隔离」），打开时可以选择把现有数据复制过去、还是从空开始。
+
+> [!NOTE]
+> 隔离是**玩家主动打开**的 —— 出厂就是「不隔离」。打开时可以选择把现有数据复制过去，或从空开始。
 
 ## 如何下载、安装
 
@@ -117,5 +120,5 @@ Copyright (C) 2026 Haohandc and contributors.
 - [**SDL3**](https://github.com/libsdl-org/SDL) —— 窗口 / 输入 / 音频层
 - [**LWJGL**](https://github.com/LWJGL/lwjgl3) —— OpenGL 与 SDL 的 JNI 绑定
 - [**OpenJDK 21**](https://github.com/openjdk/jdk) —— 运行时
-
-本仓库绝大部分代码、文档和文字由 AI 辅助完成（Claude via Cherry Studio，模型 deepseek-flash v4.1）。
+> [!CAUTION]
+> 本仓库绝大部分代码、文档和文字由 AI 辅助完成（Claude via Cherry Studio，模型 deepseek-flash v4.1）。

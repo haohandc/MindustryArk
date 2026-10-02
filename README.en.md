@@ -17,6 +17,7 @@ the game.
 ⚠️ The patch has to come **first** on the class path — JVM resolution takes the
 first match, so the other order makes the patch silently do nothing.
 
+> [!IMPORTANT]
 > **Unofficial.** Not affiliated with, endorsed by, or supported by the Mindustry
 > project or Anuken. See [THIRD-PARTY.md](THIRD-PARTY.md).
 
@@ -63,8 +64,10 @@ independent of the game and **usable without starting it**.
 ⭐ One guarantee about isolation: **the bundled copy's data never moves**, and **a jar
 at the same version shares that copy** — so swapping the bundled jar cannot make a
 player's data "disappear" on upgrade.
-⚠️ Isolation is something the player **turns on** (the factory setting is off), and
-turning it on offers either copying the existing data across or starting empty.
+
+> [!NOTE]
+> Isolation is something the player **turns on** — the factory setting is off. Turning
+> it on offers either copying the existing data across or starting empty.
 
 ## How to download and install
 

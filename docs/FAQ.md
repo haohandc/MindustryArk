@@ -43,10 +43,13 @@
 **没开版本隔离时**（出厂设置就是不开）—— 在应用沙箱内：
 `/data/storage/el2/base/files/.local/share/Mindustry/`。
 
-**开了隔离之后**，每个游戏版本各有一份，路径多出两层：
-`/data/storage/el2/base/files/instances/<隔离键>/sets/default/.local/share/Mindustry/`
-（隔离键形如 `b160.5`、`bundled`）。⚠️ 键取决于**当时选的粒度**，所以换个粒度再看，
-目录名会变 —— 旧的那份**不会**被搬走，它会作为「没有版本读它」继续列在存档页里。
+> [!WARNING]
+> **开了版本隔离之后，路径会变** —— 每个游戏版本各有一份，多出两层：
+> `/data/storage/el2/base/files/instances/<隔离键>/sets/default/.local/share/Mindustry/`
+> （隔离键形如 `b160.5`、`bundled`）。
+>
+> ⚠️ 键取决于**当时选的粒度**，所以换个粒度再看，目录名会变 ——
+> **旧的那份不会被搬走**，它会作为「没有版本读它」继续列在存档页里。
 
 **普通使用不需要碰它** —— 用游戏内的导入 / 导出功能，走「下载」目录往返。
 那条路走系统的**选择器**，**不需要任何权限**（本应用是零文件权限），两台设备都实测可用。
@@ -56,7 +59,8 @@
 
 ## DevEco 的稳定性测试报了一堆 `cppcrash`，是我装坏了吗？
 
-**不是安装或签名的问题。** 有**两件性质完全不同**的事都会被报成 `CppCrash`：
+> [!NOTE]
+> 有**两件性质完全不同**的事都会被报成 `CppCrash`。**这不是安装或签名的问题。**
 
 | 情形 | 是不是崩溃 |
 |---|---|
@@ -127,11 +131,15 @@ gives you a mobile UI driven by desktop input.)
 **With version isolation off** (the factory setting) — inside the app sandbox, at
 `/data/storage/el2/base/files/.local/share/Mindustry/`.
 
-**With it on**, each game version gets its own, two levels deeper:
-`/data/storage/el2/base/files/instances/<isolation key>/sets/default/.local/share/Mindustry/`
-(a key looks like `b160.5` or `bundled`). ⚠️ The key follows **the granularity selected at
-the time**, so changing granularity changes the directory name — the old copy is **not**
-moved, and stays listed on the Saves tab as "no version reads it".
+> [!WARNING]
+> **With version isolation on, the path changes** — each game version gets its own, two levels
+> deeper:
+> `/data/storage/el2/base/files/instances/<isolation key>/sets/default/.local/share/Mindustry/`
+> (a key looks like `b160.5` or `bundled`).
+>
+> ⚠️ The key follows **the granularity selected at the time**, so changing granularity changes
+> the directory name — the old copy is **not** moved, and stays listed on the Saves tab as
+> "no version reads it".
 
 **You should never need to touch it** — use the in-game import / export, which goes through
 your Downloads folder. That route uses the system **picker** and needs **no permission at
@@ -143,8 +151,9 @@ See [limitations](LIMITATIONS.md).
 
 ## DevEco's stability test reports a pile of `cppcrash`. Did I install it wrong?
 
-**No — this has nothing to do with signing or installation.** **Two completely different
-things** get reported as `CppCrash`:
+> [!NOTE]
+> **Two completely different things** get reported as `CppCrash`. **This has nothing to do
+> with signing or installation.**
 
 | Case | Is it a crash? |
 |---|---|
