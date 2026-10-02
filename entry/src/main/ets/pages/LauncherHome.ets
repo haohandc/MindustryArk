@@ -516,7 +516,8 @@ export struct LauncherHome {
   @State jarDirHuman: string = '';
 
   /* 应用自己的显示名，由 resolveAppLabel() 从资源读出；读不到时 ''。 */
-  private appLabel: string = '';
+  /* ⚠️ 名字叫 `appName` 而不是 `appLabel`：后者是 `utils/AppLabel` 导入的【函数】名。 */
+  private appName: string = '';
 
   /** 应用版本，设置页那个「关于」入口用。由 Index.ets 从 bundle 问到后传进来。 */
   appVersion: string = '';
@@ -534,7 +535,7 @@ export struct LauncherHome {
   aboutToAppear(): void {
     this.launchMode = readLaunchMode(this.filesDir);
     this.granularity = readGranularity(this.filesDir);
-    this.appLabel = this.resolveAppLabel();
+    this.appName = this.resolveAppLabel();
     /* 把「返回一层」交给宿主页 —— 见 registerBack。 */
     this.registerBack(() => this.handleBack());
     this.refresh();
@@ -890,7 +891,7 @@ export struct LauncherHome {
     /* ⚠️ 父文件夹叫 `Download`（单数）—— 这是**磁盘上的名字**，不是英文惯用的 "Downloads"。
      * 判据：`user_dirs.txt` 里记的是 `/storage/Users/currentUser/Download/<包名>`，
      * 而 `Environment.getUserDownloadDir()` 也返回 `.../currentUser/Download` ⇒ 写复数会让玩家找错。 */
-    this.jarDirHuman = this.jarDirHint === '' ? '' : ('Download/' + this.appLabel + '/games');
+    this.jarDirHuman = this.jarDirHint === '' ? '' : ('Download/' + this.appName + '/games');
     hilog.info(DOMAIN, TAG, 'launcher: %{public}d jar(s), resolved=%{public}s (%{public}s)',
                this.games.length, this.resolution.path === '' ? '(none)' : this.resolution.path,
                this.resolution.source);
@@ -3353,7 +3354,11 @@ export struct LauncherHome {
             Column() {
               Text('版本与许可')
                 .fontSize(14).fontColor($r('sys.color.font_primary'))
-              Text(this.appVersion === '' ? 'Ark Launcher' : ('Ark Launcher  ' + this.appVersion))
+              /* ⭐ 走资源（`this.appName`），与游戏里那个 About 同一处规则。
+               * ⛔ 原来这里写死了名字 —— 它正是「改一次名、两个 About 显示两个名字」的另一半。 */
+              Text(this.appName === ''
+                   ? (this.appVersion === '' ? ' ' : this.appVersion)
+                   : (this.appVersion === '' ? this.appName : (this.appName + '  ' + this.appVersion)))
                 .fontSize(12).fontColor($r('sys.color.font_tertiary'))
                 .margin({ top: 4 })
             }
@@ -3458,7 +3463,8 @@ export struct LauncherHome {
         .height('100%')
       }
     }
-    .title('Ark Launcher')
+    /* ⭐ 走资源。拿不到时给空串 —— 标题栏宁可空着，也不要显示另一个应用的名字。 */
+    .title(this.appName)
     .titleMode(NavigationTitleMode.Mini)
     /* ⚠️ 必须显式写 Stack，**不能靠默认的 Auto** —— 这一行同时是两个缺陷的根因。
      * SDK 原文（`NavigationMode.Auto`）：In API version 10 and later versions: If the window width is
@@ -3740,7 +3746,7 @@ export struct LauncherHome {
           }
           .width('100%')
 
-          Text('Ark Launcher' + (this.appVersion === '' ? '' : ('  ' + this.appVersion)))
+          Text(this.appName + (this.appVersion === '' ? '' : ('  ' + this.appVersion)))
             .fontSize(14).fontColor($r('sys.color.font_secondary'))
             .margin({ top: 14 })
           Text('在 HarmonyOS / OpenHarmony 上运行 Mindustry')
