@@ -447,6 +447,37 @@ def _main():
         print("%d input(s) missing -- see payload-src/README.md" % missing)
     return 0
 
+# ---------------------------------------------------------------------------
+# 自检：`SHIPS_GAME` 只允许赋值一次
+# ---------------------------------------------------------------------------
+# ⚠️ 为什么这条检查必须存在
+#
+#   2026-10-03：把 master 合并进 lite 时，git 把 master 那段注释连同
+#   `SHIPS_GAME = True` 整块【追加】在 lite 的 `SHIPS_GAME = False` 后面。
+#   合并没有报冲突，Python 也没有报错 —— 它只是取最后一个赋值，
+#   于是 lite 分支静默地变回了 master：包里没有游戏，而开关说应该有。
+#
+#   拦住它的是 `verify_hap.py` 第 6 段，但那要等到构建之后。
+#   `config.py` 是每个脚本每次都会 import 的 —— 在这里拦，
+#   代价从「打出一个包、然后被闸门拒绝」变成「import 就停」。
+#
+#   ⛔ 这两个分支的这个开关是【相反】的，所以「重复赋值」在这里不是风格问题，
+#   是分支身份问题。它值得一条专门的检查，而不是一句注释。
+def _check_ships_game_once():
+    n = 0
+    with open(os.path.abspath(__file__), encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("SHIPS_GAME"):
+                n += 1
+    if n != 1:
+        raise SystemExit(
+            "FAIL SHIPS_GAME is assigned %d times in this file -- it must be exactly once.\n"
+            "     Python keeps the LAST assignment, so a duplicate silently picks one,\n"
+            "     and the two branches set it to opposite values.\n"
+            "     This is what a bad merge of master into lite looks like." % n)
+
+
+_check_ships_game_once()
 
 if __name__ == "__main__":
     sys.exit(_main())
