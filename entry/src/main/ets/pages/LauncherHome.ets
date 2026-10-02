@@ -512,6 +512,31 @@ export struct LauncherHome {
   @State isolationNote: string = '';
 
   /* [A]
+   * ⭐⭐ 询问窗里「这一档下每个版本会落到哪个目录」的预览行（一行一个版本）。
+   *
+   * 用户 2026-10-02 报的问题：「切换的大版本，构建号，小版本时，弹窗没说明是怎么分类的，
+   * **必须让人选完了才知道是啥情况**」。
+   * ⚠️ 原来那句说明（`granularityHint`）只在**设置页、选完之后**才显示 ——
+   *    而询问窗是唯一能反悔的地方，恰恰那时什么解释都没有。
+   * ⇒ 把说明与**具体目录名**搬进询问窗：⭐ 用玩家**真实的版本**算出来，
+   *    而不是举 `160.5` 这种编的例子。
+   *
+   * ⚠️ 在 `chooseGranularity()` 里算一次（点开询问窗的那一刻），⛔ 不在渲染里算 ——
+   *    算它要读每个 jar（见 `versionEntryOf` 的说明）。
+   */
+  @State pendingPreview: string = '';
+
+  /* [A]
+   * ⭐ 当前选中的是**内置游戏** —— 它在任何档位下都用固定的 `bundled` 目录。
+   *
+   * ⛔ 为什么必须专门说一句：玩家这时去切「大版本/构建号/小版本」，**目录名一个都不会变**
+   *    ⇒ 他会得出「这个功能坏了 / 没生效」的结论。而真实原因是一条**刻意的设计**：
+   *    内置那份永不移动，这样我们换内置 jar 版本时，玩家数据不会跟着搬走。
+   *    ⭐ 不说这句，界面就在把一个设计决定伪装成一个故障。
+   */
+  @State pendingUsesBundled: boolean = false;
+
+  /* [A]
    * ⭐ **隔离开着，但那一份数据目录根本不存在** —— 即「开关拨过去了、数据没过去」。
    *
    * ⛔ 为什么必须单独把它显出来：这种状态在界面上**完全看不出来**，而玩家进游戏看到的是
@@ -635,6 +660,10 @@ export struct LauncherHome {
       this.granularity = g;
       writeGranularity(this.filesDir, g);
       this.isolationNote = '';
+      /* [A] ⭐⭐ 关掉也要刷新 —— 关掉会让 `user.home` 换回公开那一份，
+       * 于是存档页要显示**另一批**存档、版本页要重算每个版本的目录。
+       * ⛔ 少了这一句，界面上还停在隔离开着时的样子，玩家会以为没关掉。 */
+      this.refresh();
       return;
     }
     /* [B] 打开：先把「当前数据怎么办」问清楚。⛔ 这里【不】先落盘 ——
@@ -643,7 +672,33 @@ export struct LauncherHome {
     /* ⭐ 读一次「现在有什么」，好在玩家**选之前**把两个结果都写成数字。
      * ⚠️ 在这里读、不常驻：玩家可能在两次打开之间删过存档或装过模组。 */
     this.isolationCounts = countsOf(liveGameDataDir());
+    /* [A] ⭐⭐ 选之前就把「这一档怎么分、会落到哪些目录」摆出来。
+     * 用户 2026-10-02：「弹窗没说明是怎么分类的，必须让人选完了才知道是啥情况」。 */
+    this.pendingPreview = this.buildGranularityPreview(g);
+    this.pendingUsesBundled = this.versions.some((v: VersionEntry) => v.source === 'bundled');
     this.showIsolationAsk = true;
+  }
+
+  /* [A]
+   * 「按这一档分，每个已装版本会落到哪个目录」—— 逐行列出。
+   *
+   * ⭐ 用玩家**真实的版本**算，不举 `160.5` 那种编的例子：玩家要回答的问题是
+   *    「我那两个 jar 会不会被分到一起」，而只有他自己的版本号能回答它。
+   *
+   * ⚠️ 它会读每个 jar（`resolveGameDirAndKey` → `computeKey` → `gameVersionParts`，
+   *    那个函数**没有缓存**）。⇒ 只从 `chooseGranularity()` 调，⛔ 绝不在渲染路径上。
+   *    一次点开 = 读 4 个 jar，与 `refresh()` 同一量级，可以接受。
+   */
+  private buildGranularityPreview(g: string): string {
+    if (this.versions.length === 0) {
+      return '（现在还没有可用的游戏版本）';
+    }
+    const lines: string[] = [];
+    for (const v of this.versions) {
+      const key: string = resolveGameDirAndKey(g, v.source, v.path).key;
+      lines.push(v.label + '   →   ' + (key === '' ? '（不隔离）' : key));
+    }
+    return lines.join('\n');
   }
 
   /* [A]
@@ -689,6 +744,7 @@ export struct LauncherHome {
       this.isolationNote = note + '。隔离没有打开，你的数据还在原来的位置。';
       this.showIsolationAsk = false;
       this.pendingGranularity = '';
+      this.refresh();
       return;
     }
 
@@ -697,6 +753,18 @@ export struct LauncherHome {
     this.isolationNote = '';
     this.showIsolationAsk = false;
     this.pendingGranularity = '';
+    /* [A] ⭐⭐ **刷新**，而这一句是用户 2026-10-02 报上来的缺口。
+     *
+     * ⛔⛔ 后果是这样的：复制**其实成功了**（设备日志：`copied 14 dir(s) / 188 file(s)`），
+     *    但界面没重算 ⇒ `savesDirShown`、存档列表、版本列表**全停在旧值**
+     *    ⇒ 屏幕上一切照旧 ⇒ 玩家得出结论「**复制不成功**」。
+     *    ⚠️ 他报的那两条症状（「没自动刷新」和「复制不成功」）**是同一件事**：
+     *    一条是机制，一条是他看到的现象。
+     *    ⇒ ⭐ 教训：**功能做完了但没刷新，与功能坏了在界面上长得一模一样。**
+     *    凡是会改变「界面依据什么来算」的动作，都必须显式重算一次 ——
+     *    ⛔ 不能指望 @State 自己发现文件系统变了（它不会）。
+     */
+    this.refresh();
   }
 
   /** [B] 询问里选了「从空开始」。原数据留在原处（关掉隔离还能看到），新目录是空的。 */
@@ -706,6 +774,10 @@ export struct LauncherHome {
     this.isolationNote = '';
     this.showIsolationAsk = false;
     this.pendingGranularity = '';
+    /* [B] 与「复制过去」同一条道理：这条路也换了数据目录，界面必须重算。
+     * ⚠️ 界面上会**看起来像空的** —— 那是真的（玩家选的就是「不复制」），
+     *    但必须让它是**新目录的空**，而不是停在旧目录的内容上。 */
+    this.refresh();
   }
 
   /* [A]
@@ -2410,15 +2482,66 @@ export struct LauncherHome {
         Column() {
           Text('打开数据隔离')
             .fontSize(18).fontColor($r('sys.color.font_primary'))
+          /* ⛔⛔ 这一行**是用户留给他自己改的**（2026-10-02 他点名要自己动措辞）。
+           * ⇒ 我**不动它**。刚才那一轮我顺手改过一次，已还原 —— 那是他的句子。
+           * ⚠️ 谁要改这句，先问他。 */
           Text('之后，当前选中的版本的数据与其他版本隔离。你想怎么处理存档？')
             .fontSize(13).fontColor($r('sys.color.font_secondary'))
+            .width('100%').textAlign(TextAlign.Center)
             .margin({ top: 12 })
+
+          /* ============================================================
+           * [A] ⭐⭐ 「这一档到底怎么分」—— 用户 2026-10-02 点名要的。
+           *
+           * 原话：「切换的大版本，构建号，小版本时，弹窗**没说明是怎么分类的**，
+           *       必须让人**选完了才知道是啥情况**」。
+           *
+           * ⛔ 为什么必须在这个窗里说：**这个窗是唯一能反悔的地方**。
+           *    那句说明原来只在设置页、**选完之后**才显示 —— 顺序正好是反的。
+           *    而且这里给的是**玩家自己的版本号算出来的目录名**，不是 `160.5` 这种编的例子：
+           *    他要回答的是「我那两个 jar 会不会被分到一起」，只有他的版本号能回答。
+           * ============================================================ */
+          Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
+
+          Text('这一档怎么分')
+            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+            .width('100%').textAlign(TextAlign.Center).margin({ top: 12 })
+          Text(this.granularityHint(this.pendingGranularity))
+            .fontSize(13).fontColor($r('sys.color.font_primary'))
+            .width('100%').textAlign(TextAlign.Center).margin({ top: 4 })
+
+          Text('你的版本会落到这些目录（在 instances/ 下面）')
+            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+            .width('100%').textAlign(TextAlign.Center).margin({ top: 12 })
+          /* ⚠️ 只有这一块**左对齐** —— 它是一份「版本 -> 目录名」的对照表，
+           * 居中的话 `→` 会参差不齐，反而读不出对应关系。
+           * 其余说明文字一律居中，与用户 2026-10-02 说的「文字居中显示」一致。 */
+          Text(this.pendingPreview)
+            .fontSize(12).fontColor($r('sys.color.font_secondary'))
+            .width('100%').textAlign(TextAlign.Start).margin({ top: 6 })
+            .copyOption(CopyOptions.LocalDevice)
+
+          /* [A] ⭐⭐ 这一句是**必须**的，而且它解释的正是最容易让人误判成故障的那个现象。
+           *
+           * ⛔ 当前玩的是内置游戏时，**任何档位算出来的键都是 `bundled`** ——
+           *    玩家切来切去，目录名一个都不变 ⇒ 他会得出「这功能没生效/坏了」。
+           *    而真实原因是**一条刻意的设计**：内置那份永不移动，
+           *    这样我们换内置 jar 版本时，玩家数据不会跟着搬走。
+           * ⭐ 不说这句，界面就在把一个设计决定**伪装成一个故障**。
+           */
+          if (this.pendingUsesBundled) {
+            Text('⚠️ 内置游戏永远用固定的目录 bundled，与这一档无关 —— '
+                 + '这样我们以后换内置的游戏版本时，你的数据不会跟着搬走。'
+                 + '要让档位真正起作用，得先在「首页」导入并选中一个自己的 jar。')
+              .fontSize(11).fontColor($r('sys.color.warning'))
+              .width('100%').textAlign(TextAlign.Center).margin({ top: 10 })
+          }
 
           /* [A] ⭐ 先摆出【现在有什么】，用真实数量 —— 让玩家在**选之前**就看到结果。 */
           Text('当前数据：' + describeCounts(this.isolationCounts))
             .fontSize(12).fontColor($r('sys.color.font_secondary'))
             .width('100%').textAlign(TextAlign.Center)
-            .margin({ top: 10 })
+            .margin({ top: 12 })
 
           /* [A] 每一块的顺序是【说明在上、按钮在下】（用户 2026-10-02 要的对调）。
            *
