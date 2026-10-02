@@ -2088,13 +2088,26 @@ export struct LauncherHome {
 
           /* [A] ⚠️ 窄屏时**不渲染右侧面板** —— 那时它是子页（见上面那个分支）。
            * ⛔ 别因为「窄屏也能挤一挤」就把它留下：手机上 100% 宽度里再切两栏，
-           * 每栏只剩一百多 vp，两栏都没法读。 */
+           * 每栏只剩一百多 vp，两栏都没法读。
+           *
+           * ⛔⛔ **这一层 `Column().layoutWeight(7)` 是必需的，而我第一版漏了它。**
+           *    面板自己的根节点写的是 `width('100%')` 而**没有权重** ⇒ 直接放进 Row 里，
+           *    它会要求**整行**的宽度，于是左边那个 `layoutWeight(3)` 的 `Scroll`
+           *    被挤成 0 宽 —— ⭐ **症状就是用户报的「从左边选的列表直接没了」**。
+           *    ⇒ 权重必须加在**调用点**，不能加在面板里：面板在手机子页是包在
+           *    `layoutWeight(1)` 里的，若它自己再带一个，两层权重叠在一起会算错比例。
+           *    ⚠️ 3 : 7 与注释里写的一致（左边只是存档名，右边要放下整张元数据表）。 */
           if (!this.isNarrow()) {
-            if (this.savesView === SAVES_VIEW_VERSION) {
-              this.VersionDataPanel()
-            } else {
-              this.SaveDataPanel()
+            Column() {
+              if (this.savesView === SAVES_VIEW_VERSION) {
+                this.VersionDataPanel()
+              } else {
+                this.SaveDataPanel()
+              }
             }
+            .width('100%')
+            .height('100%')
+            .layoutWeight(7)
           }
         }
         /* [A] ⚠️ 这里**只有** `layoutWeight(1)`，没有 `height('100%')` ——
@@ -2155,25 +2168,45 @@ export struct LauncherHome {
           Divider().strokeWidth(1).color($r('app.color.launcher_border'))
             .margin({ top: 14, bottom: 14 })
 
-          Text('本次启动将加载')
-            .fontSize(14).fontColor($r('sys.color.font_primary'))
-          Text(this.resolution.path === ''
-                 ? '（没有可加载的游戏）'
-                 : (this.resolution.source === 'user' ? '（玩家选择的）' : '（包内自带的）'))
-            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-            .margin({ top: 4 })
-          Text(this.resolution.path === '' ? '—' : this.resolution.path)
-            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-            .margin({ top: 4 })
-            .copyOption(CopyOptions.LocalDevice)
+          /* [A]
+           * 「本次启动将加载」与「重新扫描」**同一行** —— 用户 2026-10-02：
+           *   「设置那里的重新扫描太宽了，这个按钮最好和解释说明的字在同一行。」
+           *
+           * ⚠️ 原来是「三行说明 + 一个 `width('100%')` 的按钮」上下排：
+           *    按钮拉满整张卡片那么宽，而它只有四个字 —— 视觉重量远大于它做的事。
+           *    ⇒ 说明一栏 `layoutWeight(1)` 吃掉剩余宽度，按钮按**内容**自适应。
+           *
+           * ⚠️ 字号【要给】。不给的话按钮按标签长度自适应时会**缩放字号** ——
+           *    那正是当初「两个按钮字体大小不一样」的成因，换到别处同样成立。
+           *
+           * ⚠️ 对齐用 `VerticalAlign.Top`，不是 Center：说明有三行、按钮只有一行，
+           *    居中的话按钮会浮在三行文字的**中间**，读起来像是挂在第二行上的。
+           *    顶部对齐让它和标题那一行齐平 —— 那也是它作用的对象。
+           */
+          Row() {
+            Column() {
+              Text('本次启动将加载')
+                .fontSize(14).fontColor($r('sys.color.font_primary'))
+              Text(this.resolution.path === ''
+                     ? '（没有可加载的游戏）'
+                     : (this.resolution.source === 'user' ? '（玩家选择的）' : '（包内自带的）'))
+                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                .margin({ top: 4 })
+              Text(this.resolution.path === '' ? '—' : this.resolution.path)
+                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                .margin({ top: 4 })
+                .copyOption(CopyOptions.LocalDevice)
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
 
-          /* [A] 字号【要给】。不给的话按钮会按标签长度自适应，长标签会被缩小 ——
-           * 那正是当初「两个按钮字体大小不一样」的成因，换到别处同样成立。 */
-          Button('重新扫描')
-            .fontSize(BUTTON_FONT_VP)
-            .width('100%')
-            .margin({ top: 14 })
-            .onClick(() => { this.refresh(); })
+            Button('重新扫描')
+              .fontSize(BUTTON_FONT_VP)
+              .margin({ left: 12 })
+              .onClick(() => { this.refresh(); })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Top)
         }
         .width('100%').padding(16)
         .backgroundColor($r('app.color.launcher_card'))
