@@ -1700,15 +1700,62 @@ export struct LauncherHome {
         Text(this.saves.length === 0 ? '还没有存档' : '从左边选一个存档')
           .fontSize(13).fontColor($r('sys.color.font_tertiary'))
       } else {
-        Text(this.selectedSaveLabel())
-          .fontSize(16).fontColor($r('sys.color.font_primary'))
-          .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
-        Text(this.selectedSaveSummary())
-          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-          .margin({ top: 6 })
-        Text(this.selectedSaveUpdated())
-          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-          .margin({ top: 4 })
+        /* [A]
+         * 「这个存档对哪些版本可见」与**标题同一行、靠最右**。
+         *
+         * 用户 2026-10-02：「存档那里，'按存档'分类时，下面的'这个存档对哪些版本可见'
+         *   在最下面，我觉得这个和存档标题放在同一行的最右边比较合适。」
+         *
+         * ⭐ 那个判断是对的，而且不只是「好看」：它是这个存档的**属性**，
+         *    和标题、摘要、更新时间一样属于「这是什么」那一组；摆在整张元数据表**下面**
+         *    会让人以为它是表格的最后一行。
+         *
+         * ⚠️ 这一行内部按 **2 : 1** 分（左标题 2、右可见性 1），⛔ 不是按内容自适应：
+         *    自适应的话，存档名一长就会把右边挤掉或挤到换行，而那是**随名字浮动**的 ——
+         *    同一屏上换个存档，那行字就跳一次位。给比例 ⇒ 位置**由结构保证**。
+         *    ⚠️ 别把它与外层那两栏的 3 : 7 搞混：那是「列表 : 详情」，这是标题行内部。
+         *
+         * ⚠️ 顶部对齐：左边三行、右边两行，居中会让右边浮在中间。
+         * ⚠️ 右边整块 `alignItems(HorizontalAlign.End)` ⇒ 文字贴右边缘。
+         */
+        Row() {
+          Column() {
+            Text(this.selectedSaveLabel())
+              .fontSize(16).fontColor($r('sys.color.font_primary'))
+              .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
+            Text(this.selectedSaveSummary())
+              .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+              .margin({ top: 6 })
+            Text(this.selectedSaveUpdated())
+              .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+              .margin({ top: 4 })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(2)
+
+          /* [A] ⭐ 这一句是用户 2026-10-02 要的信息：「右侧可以看到存档生效于哪个版本
+           * （哪个版本可以用这个存档）」。
+           *
+           * ⭐ 答的是**目录**层面的问题（谁的 user.home 指向这里），那是能确切回答的那个；
+           * ⛔ 不是「这个存档能被哪些版本读」—— 那个还要看模组与版本迁移规则，
+           * 我们答不了，所以不在这儿答。存档自己的 `build` 就在下面，两件事分开摆着。 */
+          if (this.savesSeenByText() !== '') {
+            Column() {
+              Text('这个存档对哪些版本可见')
+                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                .textAlign(TextAlign.End)
+              Text(this.savesSeenByText())
+                .fontSize(12).fontColor($r('sys.color.font_secondary'))
+                .margin({ top: 2 })
+                .textAlign(TextAlign.End)
+            }
+            .alignItems(HorizontalAlign.End)
+            .layoutWeight(1)
+            .margin({ left: 12 })
+          }
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Top)
 
         Divider()
           .strokeWidth(1).color($r('app.color.launcher_border'))
@@ -1775,20 +1822,9 @@ export struct LauncherHome {
           .scrollBar(BarState.Off)
         }
 
-        /* [A] ⭐ 用户 2026-10-02 要的就是这一行：「右侧可以看到存档生效于哪个版本
-         * （哪个版本可以用这个存档）」。
-         *
-         * ⭐ 答的是**目录**层面的问题（谁的 user.home 指向这里），那是能确切回答的那个；
-         * ⛔ 不是「这个存档能被哪些版本读」—— 那个还要看模组与版本迁移规则，
-         * 我们答不了，所以不在这儿答。存档自己的 `build` 就在上面，两件事分开摆着。 */
-        if (this.savesSeenByText() !== '') {
-          Text('这个存档对哪些版本可见')
-            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-            .margin({ top: 12 })
-          Text(this.savesSeenByText())
-            .fontSize(12).fontColor($r('sys.color.font_secondary'))
-            .margin({ top: 2 })
-        }
+        /* ⛔ 「这个存档对哪些版本可见」原先在这里（元数据表**下面**）。
+         * 用户 2026-10-02 指出它该和标题同一行：摆在表格下面会让人以为它是表格的最后一行，
+         * 而它其实是这个存档的**属性**。已移到上面那行。 */
       }
     }
     .width('100%').height('100%')
