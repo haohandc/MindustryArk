@@ -9,6 +9,9 @@
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { SymbolGlyphModifier, uiMaterial } from '@kit.ArkUI';
+import { common } from '@kit.AbilityKit';
+/* 应用自己的显示名 —— 与游戏里那个 About 卡片同一处规则。 */
+import { appLabel } from '../utils/AppLabel';
 import { GameJar, GameResolution, listGameJars, readSelection, writeSelection,
          resolveGame, gameJarDir, ensureGameJarDir,
          bundledGameVersion, hasBundledGame, bundledGamePath } from '../games/GameLibrary';
@@ -505,9 +508,10 @@ export struct LauncherHome {
   /* 包内那份自带游戏**在不在**。⛔ 别从 `resolution.source` 反推 —— 那是「这次加载谁」。 */
   @State hasBundled: boolean = false;
 
-  /* 给**人**看的那个文件夹路径，例如 `Download/Mindustry Ark/games`。⚠️ `Download` 单数 —— 磁盘上的真名。
-   * ⚠️ 真实路径不够用：那个文件夹磁盘上叫 `com.haohandc.mindustryark`（ModImporter 用 bundle 名
-   * 创建），而文件管理器把它显示成应用名「Mindustry Ark」⇒ 玩家照着找**找不到**（卸载后才退化成包名）。
+  /* 给**人**看的那个文件夹路径，形如 `Download/<应用名>/games`。⚠️ `Download` 单数 —— 磁盘上的真名。
+   * ⚠️ 真实路径不够用：那个文件夹**磁盘上叫包名**（ModImporter 用 bundle 名创建），
+   * 而文件管理器把它**显示成应用名** ⇒ 玩家照着找**找不到**（卸载后才退化成包名）。
+   * ⛔ 所以这里既不能写死包名、也不能写死应用名 —— 两个名字都随应用而变，见 `appLabel`。
    * ⇒ 两行都给：这一行用来**找**，真实路径那一行用来**复制**。 */
   @State jarDirHuman: string = '';
 
@@ -781,18 +785,11 @@ export struct LauncherHome {
   }
 
   /* 应用自己的显示名 —— 也就是文件管理器给那个文件夹看的名。
-   * ⚠️ **从资源读，不硬编码**：两个仓库的应用名不同（Mindustry Ark / Ark Launcher），硬编码
-   * 意味着其中一边必然写错；走资源还顺带拿到当前语言下的名字。
-   * ⚠️ 读不到返回 ''，调用方只显示真实路径 —— 退化成改之前的行为，比显示一个错的路径好。 */
+   * ⭐ 实现搬去了 `utils/AppLabel.ets`：游戏里那个 About 卡片也要同一个名字，
+   * 而两处各写一份就会漂移（2026-10-03 实测到过：一处走资源、一处写死，
+   * 改名之后同一块屏幕上出现两个名字）。 */
   private resolveAppLabel(): string {
-    try {
-      const rm = getContext(this).resourceManager;
-      return rm.getStringSync($r('app.string.EntryAbility_label').id);
-    } catch (e) {
-      const err = e as BusinessError;
-      hilog.info(DOMAIN, TAG, 'launcher: cannot read the app label (%{public}s)', err.message);
-      return '';
-    }
+    return appLabel(getContext(this) as common.Context);
   }
 
   /* 弹窗宽度（vp）。两个弹窗都用它 —— 一处拥有这个规则，不然两处会各自漂移。
@@ -891,7 +888,7 @@ export struct LauncherHome {
     this.loadSelectedMeta();
     this.jarDirHint = gameJarDir(this.filesDir);
     /* ⚠️ 父文件夹叫 `Download`（单数）—— 这是**磁盘上的名字**，不是英文惯用的 "Downloads"。
-     * 判据：`user_dirs.txt` 里记的是 `/storage/Users/currentUser/Download/com.haohandc.mindustryark`，
+     * 判据：`user_dirs.txt` 里记的是 `/storage/Users/currentUser/Download/<包名>`，
      * 而 `Environment.getUserDownloadDir()` 也返回 `.../currentUser/Download` ⇒ 写复数会让玩家找错。 */
     this.jarDirHuman = this.jarDirHint === '' ? '' : ('Download/' + this.appLabel + '/games');
     hilog.info(DOMAIN, TAG, 'launcher: %{public}d jar(s), resolved=%{public}s (%{public}s)',

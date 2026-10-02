@@ -55,7 +55,7 @@ export interface GameResolution {
 }
 
 /* ⚠️⚠️ 那个公共文件夹在**磁盘上叫 `Download`（单数）**，不是英文惯用的 "Downloads"。两条实测判据：
- * `user_dirs.txt` 里记着 `/storage/Users/currentUser/Download/com.haohandc.mindustryark`，而
+ * `user_dirs.txt` 里记着 `/storage/Users/currentUser/Download/<包名>`，而
  * `Environment.getUserDownloadDir()` 返回 `/storage/Users/currentUser/Download`。
  * ⭐ 它是个会直接害到玩家的错：写复数就是叫他去找一个磁盘上不存在的文件夹 ⇒ 印给玩家看的路径一律用 `Download`。 */
 
