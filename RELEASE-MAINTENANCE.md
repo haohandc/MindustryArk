@@ -170,6 +170,12 @@ entries only after the release exists and both assets have been **downloaded bac
 — a local hash proves nothing about what somebody else downloads. Replace `⏳` with the release
 id and the verified hashes at that point.
 
+⚠️ **This table stops at 20002 on purpose, and the releases after it are not missing.** From
+`v1.0.0.1` onward each release has its own **`Verified as published`** block further down (search
+for the version), carrying the release id, the tag, the target commit and the API-read digests.
+⛔ Do not extend this table one row at a time: a table that lists four of eight versions is worse
+than one that says where the rest are, because a reader cannot tell a gap from an omission.
+
 ⚠️ **The HAP payload zip has no 20002 row yet**: it is unchanged in content but named after the
 version, so it is regenerated together with the GitHub release, not with the store build. The
 `0.2.0-beta.2` rows that used to sit here are gone rather than kept: those files were never
@@ -2063,6 +2069,8 @@ Doing only the first two ships a package named after the previous version.
 - [ ] `python scripts/test_version_gate.py` → 7/7 (re-run whenever a version field moves)
 - [ ] Signature-block check on the candidate **with the signed build as a control**
 - [ ] Payload zip rebuilt if `entry/libs` changed
+- [ ] `python scripts/stage_release.py` → assembles `dist/`, refuses the **signed** twin,
+      and refuses a payload zip older than anything under `entry/libs`
 - [ ] sha256 recorded for the file that will actually be uploaded
 - [ ] Repository has no local absolute paths. The leading boundary group is what keeps this
       from matching every `https://` in the docs:
@@ -2442,3 +2450,71 @@ touches a resource this file may not find.
 
 ⚠️ Ark Launcher's copy of this file is byte-identical, and it prints its own label without a
 second code path, because `EntryAbility_label` differs between the two repos.
+
+---
+
+### ✅ Verified as published — v1.3.0.1, 2026-10-03
+
+⭐ **Read back from the API, not assumed.** Both digests came from `release.assets[].digest` and
+both match the local artifact byte for byte, sizes included — so what a stranger downloads is
+what was built. ⚠️ The maintainer pasted two hashes before this block was written and they were
+**the same two numbers computed locally**, which is exactly the case the rule exists for: a hash
+that agrees with itself proves nothing about the upload until it is read back from the release.
+
+| | |
+|---|---|
+| Release id | **`402049600`** |
+| Tag | **`v1.3.0.1`** |
+| Target | **`2edde67fdc509e582545c19e434038f2199edab2`** — `docs: use GitHub's alert blocks, sparingly` |
+| Pre-release | ⚠️ **true** (and `draft` false) — the first one marked since v1.0.0.2 |
+| Published | **`2026-10-02T18:17:43Z`** = 2026-10-03 02:17:43 +08:00 |
+| Assets | two, and **neither is the signed HAP** ✅ |
+
+| Asset | bytes | sha256 (from the API) | matches local |
+|---|---|---|---|
+| `…-1.3.0.1-unsigned.hap` | 275,868,998 | `2dae4463b631a05114329f496e7d21d194a6d2852a60c595ca95e6d7224d603c` | ✅ |
+| `…-1.3.0.1-payload.zip` | 149,337,475 | `de7d153506a6de229e5e5d3a05995d56e5e5f72ee78d707b94bdfef7572eeb47` | ✅ |
+
+⭐ **The payload zip has now been unchanged through FIVE builds** — the four builds of 1.2.0.1 and
+this one. Not merely the same size: **the same digest, `de7d1535…`**, verified against the API for
+both releases. This round rewrote comments in 18 source files, added the staging script, and
+touched ArkTS and C — and moved nothing under `entry/libs/`, which is the only thing the payload
+carries. ⚠️ The converse reading is the wrong one: see the longer note in the 1.2.0.1 block —
+**a matching payload hash does not mean the source did not change.**
+
+⚠️ **The pre-release flag is set, and its measured effect is what the v1.1.0.1 block describes.**
+Checked at publication time rather than assumed:
+
+```
+GET /repos/haohandc/MindustryArk/releases/latest   ->   v1.2.0.1   (prerelease: false)
+```
+
+⇒ the repository's "Latest" still points at 1.2.0.1, so a visitor following that link does not
+land on this one. That is the intent — this build has been exercised on the tablet but the phone
+was not connected all session, and the payload zip has never been used as a build input. The flag
+can be turned off after that testing without re-uploading anything.
+
+⚠️ **The tag does NOT contain `scripts/stage_release.py`**, which was committed after `2edde67`.
+That is harmless and on purpose the tag was not moved: the script is release tooling, not shipped
+code, and the artifact's contents are decided by `entry/src` and `entry/libs`, both of which are
+in the tagged tree. Recorded so that a later reader comparing the tree against the file list does
+not read it as drift. **The version numbers inside the tagged tree were checked directly**, since
+every build gate reads the working tree and would not notice:
+
+```bash
+git show 2edde67:AppScope/app.json5            # versionName 1.3.0.1 / versionCode 1030001
+git show 2edde67:scripts/config.py             # APP_VERSION / VERSION_CODE, same pair
+git show 2edde67:entry/build-profile.json5     # artifactName MindustryArk-v1.3.0.1
+```
+
+**How this block was closed**
+
+```bash
+curl -s https://api.github.com/repos/haohandc/MindustryArk/releases/tags/v1.3.0.1   | grep -E '"id"|"tag_name"|"prerelease"|"digest"|"size"'
+```
+
+⚠️ **What is NOT verified: nobody has run it.** The release notes were published on purpose
+without a "what this build was tested on" line, and the maintainer will turn the flag off after
+testing during the day. So the state at publication is: built, gated (`verify_hap.py` PASS,
+version gate PASS), and exercised on the tablet by hand — **and not** exercised on a phone, and
+not exercised from the payload zip.
