@@ -1483,24 +1483,15 @@ export struct LauncherHome {
   @Builder
   SavesTab() {
     Column() {
-      Row() {
-        Column() {
-          Text('存档')
-            .fontSize(18).fontColor($r('sys.color.font_primary'))
-          /* [B] 明确写出**在数哪个目录**。隔离一开一关，这个路径就换了 ——
-           * 而不写出来的话，玩家会以为存档丢了。
-           * ⚠️ 「按版本」视图下这一行改成版本个数：那时左边根本不是某一份存档目录，
-           *    继续写当前版本的 saves 路径会与屏幕上的内容对不上。 */
-          Text(this.savesHeaderLine())
-            .fontSize(11).fontColor($r('sys.color.font_tertiary'))
-            .margin({ top: 4 })
-            .copyOption(CopyOptions.LocalDevice)
-        }
-        .alignItems(HorizontalAlign.Start)
-        .layoutWeight(1)
-
+      Column() {
         /* [A]
-         * 视图切换：按存档 / 按版本。
+         * 视图切换：按存档 / 按版本。⭐ **它就是这一屏的标题**（用户 2026-10-02 定的）。
+         *
+         * ⚠️ 原来这里写着一行 `Text('存档')`，分段控件摆在**右边**。用户指出两个问题：
+         *    ① 分段控件应当在**左边**；② `存档` 与 `按存档` **语义重复**。
+         *    ⇒ 于是标题整个撤掉，由分段控件顶上 —— 屏幕上少一个词，信息一个不少。
+         *    ⚠️ 这不是「少了个标题」（页面底部的页签仍然写着「存档」），
+         *    而是**把标题与控制合成一个东西**：玩家看到「按存档/按版本」就知道这是哪一屏。
          *
          * ⚠️ 形状**照抄设置页那组粒度选择**（一排 `Text` ＋ 切底色），⛔ 不新造组件。
          *    理由有两条：一是项目里已经有一处这样写的，两处长得一样读起来才顺；
@@ -1510,6 +1501,13 @@ export struct LauncherHome {
          *
          * ⚠️ 选中态用 `launcher_border` 做底（那是灰），文字换成 `font_primary`。
          *    与设置页一致：**不给它一个手搓的强调色** —— 那两处迟早会分叉。
+         *    ⭐ 同理**字号也保持 13**、不因为「它现在是标题」就单独放大：一旦这里放大，
+         *    设置页那组就会与它不一致，而那种不一致没人会想起是为什么。
+         *    真觉得太小，就**两处一起**改大小（那是一次有理由的改动，而不是一次分叉）。
+         *
+         * ⚠️ 结构从「Row{ Column{标题+路径} ＋ 分段 }」塌成**一个 Column**：
+         *    标题没了之后，那层 Row 只剩一个孩子，位置靠左也就自然成立，
+         *    ⛔ 不再需要 `layoutWeight` / `margin({left})` 这些东西去推它。
          */
         Row() {
           Text('按存档')
@@ -1533,10 +1531,19 @@ export struct LauncherHome {
             .onClick(() => { this.savesView = SAVES_VIEW_VERSION; })
         }
         .alignItems(VerticalAlign.Center)
-        .margin({ left: 12 })
+
+        /* [B] 明确写出**在数哪个目录**。隔离一开一关，这个路径就换了 ——
+         * 而不写出来的话，玩家会以为存档丢了。
+         * ⚠️ 「按版本」视图下这一行改成版本个数：那时左边根本不是某一份存档目录，
+         *    继续写当前版本的 saves 路径会与屏幕上的内容对不上。 */
+        Text(this.savesHeaderLine())
+          .fontSize(11).fontColor($r('sys.color.font_tertiary'))
+          .margin({ top: 8 })
+          .copyOption(CopyOptions.LocalDevice)
       }
       .width(this.contentWidthVp())
       .padding({ left: 16, right: 16, top: 20 })
+      .alignItems(HorizontalAlign.Start)
 
       /* [A]
        * 左列表 + 右详情。用户 2026-10-02 的布局：「左侧列表选择存档/版本，
