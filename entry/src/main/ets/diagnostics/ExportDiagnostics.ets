@@ -167,7 +167,6 @@ export function exportNow(appName: string, modFolder: string, filesDir: string):
 
     const report: string =
       banner(appName, 'diagnostics bundle') +
-      '========================================\n' +
       envLines().join('\n') + '\n' +
       'collected at : ' + new Date(now).toString() + '\n' +
       '========================================\n' +
@@ -248,7 +247,6 @@ export function publish(modFolder: string, filesDir: string, appName: string): v
 
     const report: string =
       banner(appName, 'crash report') +
-      '========================================\n' +
       envLines().join('\n') + '\n' +
       'crashed at   : ' + new Date(crashedAt).toString() + '\n' +
       'reported at  : ' + new Date().toString() + '\n' +
