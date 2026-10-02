@@ -1,4 +1,4 @@
-# 常见问题 · MindustryArk
+# 常见问题 · Ark Launcher
 
 [← 返回 README](../README.md) · [← Back to README](../README.en.md)
 

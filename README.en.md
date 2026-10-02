@@ -1,6 +1,16 @@
-# MindustryArk
+# Ark Launcher
 
 **English** | [简体中文](README.md)
+
+> [!IMPORTANT]
+> **This branch is the `lite` branch of
+> [`MindustryArk`](https://github.com/haohandc/MindustryArk).** Its **only**
+> difference from `master` is that **the package carries no game** — the player
+> supplies the `.jar`. So **the first launch stops at the launcher screen** (there
+> is no jar yet): drop Mindustry's `.jar` into the folder the screen prints,
+> pull to refresh, pick it, then press "Launch game". Everything else —
+> device requirements, known limitations, how to build, licence — is
+> **identical to `master`**.
 
 Run **Mindustry** on HarmonyOS / OpenHarmony, using a self-built launcher instead
 of an existing emulation layer.
@@ -8,7 +18,8 @@ of an existing emulation layer.
 The launcher embeds a JDK, creates a JVM from native code, and hands the game a
 real SDL3 window. This repository is the launcher.
 
-**The game itself is the upstream release — byte for byte, modified in no way.**
+⛔ **The game is not in the package** (the one difference from `master`) — you supply a `.jar`
+and **it is not modified; the launcher only reads its version number.**
 What gets patched is the framework underneath it: ten of the twelve sources under
 `arc/backend/sdl/` are ours (seven modified, three that exist only in this build:
 `GLBootstrap`, `GLDiag`, `GLDispatchFix`), plus `arc/graphics/gl/`. They are
@@ -44,7 +55,7 @@ in the store**: a store (release) signature never gets it. ⚠️ **HarmonyOS 5 
 | Keyboard | Works (physical keyboard; WASD and ESC). Typing into game text fields uses an on-screen field with full input-method support — see [limitations](docs/LIMITATIONS.md) |
 | Gamepad / mouse | Mouse works. Gamepad untested |
 | Save import/export | Via the app's folder in Download, using the picker — **measured working on both devices, and it needs no permission at all**. ⚠️ **Still unverified**: whether the game's own browser can read that path — it uses a path through libc, while the app's grant is held per URI — see [limitations](docs/LIMITATIONS.md) |
-| Mods | Work. Import them with the **game's own "import mod" button** — that is the only way in, and it needs no restart. The app deliberately does **not** take files from Downloads by itself; drop one in `Download/com.haohandc.mindustryark/` and pick it in that browser. See [limitations](docs/LIMITATIONS.md) |
+| Mods | Work. Import them with the **game's own "import mod" button** — that is the only way in, and it needs no restart. The app deliberately does **not** take files from Downloads by itself; drop one in `Download/Ark Launcher/` and pick it in that browser. See [limitations](docs/LIMITATIONS.md) |
 | Desktop/mobile mode switch | Switches, but needs an app restart — see the [FAQ](docs/FAQ.md) |
 | Networking / multiplayer | **The platform side works** — `socket`, `epoll`, DNS, TCP, TLS and HTTP all measured working here. **LAN, public-server search and hosting on the device have each been tested, and a match has actually been played** (2026-09-23) |
 
@@ -55,15 +66,14 @@ independent of the game and **usable without starting it**.
 
 | What you can do | How it works |
 |---|---|
-| Pick a game version | One is bundled; drop any number of jars into `Download/Mindustry Ark/games/` and choose between them. The version is read out of the jar, not guessed from the file name |
+| Pick a game version | Drop any number of jars into **the folder the screen prints** (the launcher shows it above the list) and choose between them. The version is read out of the jar, not guessed from the file name |
 | **Version isolation** | Each game version gets its own set of game data. Four tiers: off (the factory setting) / major version / build / patch |
 | **Save management** | Lists the saves of **every** version (grouped by which versions share the same data), shows the metadata (version / map / playtime / mods), and copies, moves or carries them across versions |
 | Delete = vault | A delete is not an erase: the save moves to a vault for 3 / 7 / 30 days, or is **archived** (never auto-removed). It can be put back at any time |
 | Launch mode | Show the launcher first each time, or go straight into the game |
 
-⭐ One guarantee about isolation: **the bundled copy's data never moves**, and **a jar
-at the same version shares that copy** — so swapping the bundled jar cannot make a
-player's data "disappear" on upgrade.
+⭐ One guarantee about isolation: **the first copy of the data is never moved** — no
+change of jar, tier or version can make it disappear.
 
 > [!NOTE]
 > Isolation is something the player **turns on** — the factory setting is off. Turning
@@ -128,7 +138,7 @@ Per-component obligations are in [THIRD-PARTY.md](THIRD-PARTY.md).
 
 ## Credits
 
-- [**Mindustry**](https://github.com/Anuken/Mindustry) — by Anuken, the game, **loaded unmodified**
+- [**Mindustry**](https://github.com/Anuken/Mindustry) — by Anuken, the game (**not bundled in this branch — you supply it**), **loaded unmodified**
 - [**Arc**](https://github.com/Anuken/Arc) — by Anuken, the game framework; this platform's patches live in it
 - [**SDL3**](https://github.com/libsdl-org/SDL) — the windowing / input / audio layer
 - [**LWJGL**](https://github.com/LWJGL/lwjgl3) — the JNI bindings for OpenGL and SDL

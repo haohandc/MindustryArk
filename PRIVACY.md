@@ -1,4 +1,4 @@
-# 隐私政策 · Mindustry Ark
+# 隐私政策 · Ark Launcher
 
 [← 返回 README](README.md) · [← Back to README](README.en.md)
 
@@ -7,7 +7,7 @@
 
 **生效日期：2026-09-22**
 
-本政策适用于 **Mindustry Ark**（包名 `com.haohandc.mindustryark`，以下简称「本应用」）。
+本政策适用于 **Ark Launcher**（包名 `com.haohandc.arklauncher`，以下简称「本应用」）。
 
 ## 一、我们收集哪些个人信息
 
@@ -41,9 +41,10 @@
 ⇒ **本应用只读取下列两类文件**：① 你在系统文件选择器里**主动选中**的模组文件；
 ② 本应用自己沙箱内的游戏数据。**不会在后台扫描或传输任何目录的内容。**
 
-## 四、⚠️ 关于游戏内置的联网功能
+## 四、⚠️ 关于游戏的联网功能
 
-本应用内置的 Mindustry 包含多人联机、模组浏览与服务器列表等功能的**代码**，这些代码**会尝试**访问上游维护的公开服务器，包括但不限于：
+⛔ **本应用【不】内置 Mindustry 本体** —— 游戏由你自己提供（见 README）。但一旦你把它放进来运行，
+**那份游戏的代码**包含多人联机、模组浏览与服务器列表等功能，它们**会尝试**访问上游维护的公开服务器，包括但不限于：
 
 - `api.github.com`（版本信息与封禁列表查询）
 - `cdn.jsdelivr.net`（服务器列表、模组索引）
@@ -66,7 +67,9 @@
 
 本应用是**非官方**的第三方移植版，与 Mindustry 项目及其作者 Anuken **无隶属关系，未获其认可或支持**。
 
-内置的第三方组件及其许可：Mindustry 与 Arc（Anuken，GPL-3.0 / Apache-2.0）、SDL3（Zlib）、LWJGL（BSD-3-Clause）、OpenJDK 21（GPL-2.0 with Classpath Exception）。详见 [`THIRD-PARTY.md`](THIRD-PARTY.md)。
+本应用内含的第三方组件及其许可：Arc（Anuken，Apache-2.0）、SDL3（Zlib）、LWJGL（BSD-3-Clause）、OpenJDK 21（GPL-2.0 with Classpath Exception）。
+⚠️ **Mindustry 本体不在本分支的包里**（GPL-3.0）—— 它由你自己提供，因此本仓库不分发它。
+详见 [`THIRD-PARTY.md`](THIRD-PARTY.md)。
 
 ## 六、儿童
 
@@ -90,7 +93,7 @@
 
 **Effective date: 2026-09-22**
 
-This policy applies to **Mindustry Ark** (bundle name `com.haohandc.mindustryark`, "the app").
+This policy applies to **Ark Launcher** (bundle name `com.haohandc.arklauncher`, "the app").
 
 ## 1. What we collect
 
@@ -126,9 +129,11 @@ neither needs a permission.
 system picker, and (2) its own game data in its sandbox. **It never scans or
 transmits any directory's contents in the background.**
 
-## 4. ⚠️ The game's built-in network features
+## 4. ⚠️ The game's network features
 
-The Mindustry build inside the app contains the **code** for multiplayer, a mod browser and a server list, and that code **attempts to reach** public servers run upstream, including:
+⛔ **This app does NOT bundle Mindustry** — you supply the game yourself (see the README).
+Once you put one in and run it, **that game's code** contains multiplayer, a mod browser and
+a server list, and it **attempts to reach** public servers run upstream, including:
 
 - `api.github.com` (version and ban-list lookups)
 - `cdn.jsdelivr.net` (server list, mod index)
@@ -155,7 +160,9 @@ network**, and turning the permission off does not affect saves, mods or the gam
 
 This is an **unofficial** third-party port. It is not affiliated with, endorsed by or supported by the Mindustry project or Anuken.
 
-Bundled components and their licences: Mindustry and Arc (Anuken, GPL-3.0 / Apache-2.0), SDL3 (Zlib), LWJGL (BSD-3-Clause), OpenJDK 21 (GPL-2.0 with Classpath Exception). See [`THIRD-PARTY.md`](THIRD-PARTY.md).
+Components contained in this app and their licences: Arc (Anuken, Apache-2.0), SDL3 (Zlib), LWJGL (BSD-3-Clause), OpenJDK 21 (GPL-2.0 with Classpath Exception).
+⚠️ **Mindustry itself is not in this branch's package** (GPL-3.0) — you supply it, so this repository does not distribute it.
+See [`THIRD-PARTY.md`](THIRD-PARTY.md).
 
 ## 6. Children
 

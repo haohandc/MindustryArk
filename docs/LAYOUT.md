@@ -1,4 +1,4 @@
-# 仓库结构 · MindustryArk
+# 仓库结构 · Ark Launcher
 
 [← 返回 README](../README.md) · [← Back to README](../README.en.md)
 

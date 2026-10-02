@@ -11,9 +11,9 @@ to download or install the app, which is why it does not live in the release not
 
 | Artifact | Publish? | Why |
 |---|---|---|
-| `MindustryArk-v<version>-unsigned.hap` | **yes** | Anyone can sign it with their own certificate and install it. This is the app. |
-| `MindustryArk-v<version>-payload.zip` | yes | Build inputs. Not needed to play. |
-| `MindustryArk-v<version>.hap` (signed) | **NO** | Device-locked, and it discloses personal data. |
+| `ArkLauncher-v<version>-unsigned.hap` | **yes** | Anyone can sign it with their own certificate and install it. This is the app. |
+| `ArkLauncher-v<version>-payload.zip` | yes | Build inputs. Not needed to play. |
+| `ArkLauncher-v<version>.hap` (signed) | **NO** | Device-locked, and it discloses personal data. |
 
 ### Why the signed HAP is never a release artifact
 
@@ -2408,8 +2408,10 @@ self-checked at import), `AppScope/app.json5` (`versionName` / `versionCode`), a
 `verify_hap.py` §0 cross-checks all three and reported `OK` for 1.2.0.1 before this artifact
 was built.
 
-⚠️ **Ark Launcher carries the same version number, `1.2.0.1`, and publishes nothing.**
-It is a store-only fork; its `${versionName}` is deliberately not a separate track.
+⚠️ **The `lite` branch carries the same version number as `master` and publishes nothing of
+its own.** It is a subtraction, not a fork with a life of its own; its `${versionName}` is
+deliberately not a separate track. The only code difference between the two branches is
+`config.SHIPS_GAME` in `scripts/config.py` — see the note there.
 
 ---
 

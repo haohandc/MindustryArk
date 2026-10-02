@@ -58,7 +58,7 @@
 #define GAME_JAR    BUNDLE_LIBS "/game/mindustry.so"
 
 /* 我们的 Arc 修改，独立 jar，排在 classpath 的【最前】。JVM 按 classpath 顺序解析类、先命中
- * 者赢：这个条目在 GAME_JAR 前，里面的 26 个类因此压过游戏 jar 里的同名类。⚠️ 顺序【承重】——
+ * 者赢：这个条目排在游戏 jar 前面，里面的 26 个类因此压过游戏 jar 里的同名类。⚠️ 顺序【承重】——
  * 挪到后面补丁就完全不起作用，且不报任何错。2026-09-28 起游戏 jar 是上游原版、一字节不改。
  * 实测：设备上 Log 替身生效（NoSuchFieldError）、音频正常、同一 jar 驱动 160.4 与 160.5。 */
 #define PATCH_JAR   BUNDLE_LIBS "/patchjar/arcpatch.so"
@@ -270,7 +270,7 @@ static int read_user_dir(const char *key, char *out, size_t outlen)
     return read_kv(USER_DIRS_FILE, key, out, outlen);
 }
 
-/* 加载【哪一个】游戏 jar —— 启动器形态的核心。自带那份固定在 bundle 里（GAME_JAR），换版本就得
+/* 加载【哪一个】游戏 jar —— 启动器形态的核心。`GAME_JAR` 是一个编译期常量，换版本就得
  * 重构建重签名再装 171 MB，所以「用哪个 jar」从编译期常量变成每次启动都要问一次的问题。复用
  * user_dirs.txt（已有解析，已处理键不存在与 "<threw>"；存路径而非索引 —— 来源只能是 ArkTS 一处）。
  * ⚠️ 两个分支都必须能【打开】才算数；规则与 Index.ets 的 gameAvailable() 是【同一条】，两处都要改。 */
@@ -1797,7 +1797,7 @@ static int start_jvm(void)
      * XComponent 就没有 libmain.so、没有 main()），这是纵深防御：`aa start` 之类绕过界面的路径
      * 宁可在这里明确失败、留下能查的日志，也不要起一个没有游戏可跑、却白占内存和表面的 VM。 */
     if (!resolve_game_jar()) {
-        SDL_Log(" !! no game jar: nothing is bundled, and none was chosen in the launcher");
+        SDL_Log(" !! no game jar: none was chosen in the launcher, and the package has no copy");
         SDL_Log("    bundle slot: %s", GAME_JAR);
         SDL_Log("    refusing to create the JVM -- there would be nothing to run");
         return 5;

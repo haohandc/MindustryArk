@@ -1,4 +1,4 @@
-# 构建 · MindustryArk
+# 构建 · Ark Launcher
 
 [← 返回 README](../README.md) · [← Back to README](../README.en.md)
 

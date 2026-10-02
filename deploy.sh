@@ -70,7 +70,7 @@ cd "$(dirname "$0")" || exit 1
 export MSYS_NO_PATHCONV=1
 
 # Bundle 名也在 scripts/config.py 里；两处要保持一致。
-BUNDLE="com.haohandc.mindustryark"
+BUNDLE="com.haohandc.arklauncher"
 ABILITY="EntryAbility"
 
 STUDIO="${ARK_DEVECO_STUDIO:-E:/Program Files/DevEco Studio}"

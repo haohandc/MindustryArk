@@ -1,4 +1,4 @@
-# 已知限制 · MindustryArk
+# 已知限制 · Ark Launcher
 
 [← 返回 README](../README.md) · [← Back to README](../README.en.md)
 
@@ -40,9 +40,9 @@
 
   | 组件 | 结论（带归属信息） |
   |---|---|
-  | `AppMS` | `Kill Reason: app exit`，`pid=… processName=com.haohandc.mindustryark` |
-  | `sceneboard` | `onProcessDied, uid: …, bundleName: com.haohandc.mindustryark, pid: …` |
-  | `aidataservice` | `process died, bundleName: com.haohandc.mindustryark` |
+  | `AppMS` | `Kill Reason: app exit`，`pid=… processName=com.haohandc.arklauncher` |
+  | `sceneboard` | `onProcessDied, uid: …, bundleName: com.haohandc.arklauncher, pid: …` |
+  | `aidataservice` | `process died, bundleName: com.haohandc.arklauncher` |
   | `hiview` | `uid: 0`、`bundleName:` **空**、`reason: CppCrash` |
 
   **唯一没有归属的那个在喊崩溃，而它被另外三个反驳。** 而且没有任何产物：
@@ -175,13 +175,13 @@ HotSpot 要先建**启动用的桩代码**（`SharedRuntime` / `StubRoutines`）
 | 要不要权限 | 要 `READ_WRITE_DOWNLOAD_DIRECTORY` | **不要任何权限** |
 
 ⇒ **手机上用的是第二条。** 应用在「下载」里创建一个**以包名命名的文件夹**
-（`Download/com.haohandc.mindustryark`），玩家用任何文件管理器把模组丢进去即可。
+（`Download/com.haohandc.arklauncher`），玩家用任何文件管理器把模组丢进去即可。
 
 **怎么用**：**不需要你做什么** —— 应用**每次启动都会检查并在缺失时重建**它。
 ⚠️ **没有对应的菜单项**（早先有过一个，已删除：建文件夹不该让玩家去点）。
 
 **依据（设备实测）**：toast 出现、「文件管理」里能看到那个包名文件夹；
-`user_dirs.txt` 里 `mods=/storage/Users/currentUser/Download/com.haohandc.mindustryark`，
+`user_dirs.txt` 里 `mods=/storage/Users/currentUser/Download/com.haohandc.arklauncher`，
 启动器日志 `file browser will open at (mod folder): ...`。
 
 ⚠️ **仍未验证**：游戏的**文件浏览器**（走 libc，不是走 URI）能否读那个路径 ——
@@ -270,7 +270,7 @@ file://docs/storage/Users/currentUser/Download/...  No such file or directory
 | 已删除的入口 | 它当时怎么工作 |
 | --- | --- |
 | 悬浮球菜单的「导入模组」 | 系统选择器选文件 → 拷进 `mods/` |
-| `Download/com.haohandc.mindustryark/` 文件夹 | **每次启动**把里面的 `.jar`/`.zip` 扫进 `mods/` |
+| `Download/com.haohandc.arklauncher/` 文件夹 | **每次启动**把里面的 `.jar`/`.zip` 扫进 `mods/` |
 | （以及一个开发用的探针模组） | 每次启动**无条件覆盖** `probe-mod.jar` |
 
 **为什么删**：它们让**应用**决定「某个模组存在」，而玩家**在游戏内无法推翻这个决定**。
@@ -283,7 +283,7 @@ file://docs/storage/Users/currentUser/Download/...  No such file or directory
   **存档被当成模组扫进了 `mods/`**。
 
 ⇒ ⭐ **「丢进文件夹就自动装好」这个便利，代价是玩家失去了「删掉它」这个能力。** 现在没有自动了：
-`Download/com.haohandc.mindustryark/` **仍然存在、仍然由应用创建**（因为游戏的文件浏览器要开在那里，
+`Download/com.haohandc.arklauncher/` **仍然存在、仍然由应用创建**（因为游戏的文件浏览器要开在那里，
 见上一节），把模组放进去**照样能用** —— 只是需要你在游戏里**选一下**，而不是被自动收走。
 **删掉的模组从此保持被删除。**
 
@@ -388,9 +388,9 @@ settings.put("mod-" + 名字 + "-failed",  <旧enabled>); // 记一笔，给界�
 
   | Component | Verdict, with attribution |
   |---|---|
-  | `AppMS` | `Kill Reason: app exit`, `pid=… processName=com.haohandc.mindustryark` |
-  | `sceneboard` | `onProcessDied, uid: …, bundleName: com.haohandc.mindustryark, pid: …` |
-  | `aidataservice` | `process died, bundleName: com.haohandc.mindustryark` |
+  | `AppMS` | `Kill Reason: app exit`, `pid=… processName=com.haohandc.arklauncher` |
+  | `sceneboard` | `onProcessDied, uid: …, bundleName: com.haohandc.arklauncher, pid: …` |
+  | `aidataservice` | `process died, bundleName: com.haohandc.arklauncher` |
   | `hiview` | `uid: 0, bundleName: ` **empty**, `reason: CppCrash` |
 
   The one component with no attribution is the one calling it a crash, and it is
@@ -598,7 +598,7 @@ decision was the user's.
 | Permission needed | `READ_WRITE_DOWNLOAD_DIRECTORY` | **none at all** |
 
 ⇒ **Phones use the second one.** The app creates a folder named after the bundle
-inside Downloads (`Download/com.haohandc.mindustryark`) and the player drops mod
+inside Download (`Download/com.haohandc.arklauncher`) and the player drops mod
 files into it with any file manager.
 
 **How to use it**: floating ball menu -> **"模组文件夹"**. ⚠️ **No picker appears** --
@@ -606,7 +606,7 @@ DOWNLOAD mode skips its UI entirely.
 
 **Evidence (measured on the device)**: the toast appeared and the bundle-name
 folder is visible in the file manager; `user_dirs.txt` carries
-`mods=/storage/Users/currentUser/Download/com.haohandc.mindustryark`, and the
+`mods=/storage/Users/currentUser/Download/com.haohandc.arklauncher`, and the
 launcher logs `file browser will open at (mod folder): ...`.
 
 ⚠️ **Still unverified**: whether the game's own **file browser** (which goes
@@ -707,7 +707,7 @@ There used to be **three** ways in. The other two were:
 | Removed | What it did |
 | --- | --- |
 | the floating ball's "导入模组" | system picker → copy into `mods/` |
-| `Download/com.haohandc.mindustryark/` | **every launch**, sweep its `.jar` / `.zip` into `mods/` |
+| `Download/com.haohandc.arklauncher/` | **every launch**, sweep its `.jar` / `.zip` into `mods/` |
 | (plus a development probe mod) | **every launch**, overwrite `probe-mod.jar` unconditionally |
 
 **Why they were removed**: they let the *app* decide that a mod exists, and the player
@@ -721,7 +721,7 @@ There used to be **three** ways in. The other two were:
   mod -- so **a save was swept into `mods/` as though it were a mod**.
 
 ⇒ ⭐ **"Drop a file in and it installs itself" cost the player the ability to delete it.**
-Nothing is automatic now. `Download/com.haohandc.mindustryark/` **still exists and is still
+Nothing is automatic now. `Download/com.haohandc.arklauncher/` **still exists and is still
 created by the app** (the game's file browser has to open there -- see the section above), and
 a mod dropped in it **still works** -- it just has to be **picked** rather than taken.
 **A deleted mod now stays deleted.**

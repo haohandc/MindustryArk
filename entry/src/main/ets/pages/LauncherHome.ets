@@ -1956,28 +1956,34 @@ export struct LauncherHome {
            * ⇒ `this.selected` 变化不会让它重新执行 ⇒ 点击其实成功了（日志里 source=user 是对的）
            * 但 ✓ 不动，看起来就是「点了没反应」。 */
           List({ space: 8 }) {
-            ListItem() {
-              Row() {
-                Column() {
-                  Text('内置游戏')
-                    .fontSize(16).fontColor($r('sys.color.font_primary'))
-                  /* 第二行 = **版本号**。⚠️ 它【曾经】随选中状态切换（「正在使用」/「包里的那一份」），
-                   * 那是多余的：选没选中已由右边的 ✓ 表达，再写一遍只是把唯一能放版本号的位置占掉了。 */
-                  Text(this.bundledVer === '' ? '未知版本' : this.bundledVer)
-                    .fontSize(12).fontColor($r('sys.color.font_secondary')).margin({ top: 2 })
+            /* ⚠️ 这一行【必须】有守卫。lite 分支（`config.SHIPS_GAME = False`）的包里没有
+             * 那份游戏，而一条指向不存在文件的条目照样会渲染、照样可点 —— 点下去只会得到
+             * 「没有找到游戏」。判据用 `hasBundled`（直接问文件在不在），与上面版本列表
+             * 和空态那几处是【同一条】。master 上它恒为真，渲染与从前一致。 */
+            if (this.hasBundled) {
+              ListItem() {
+                Row() {
+                  Column() {
+                    Text('内置游戏')
+                      .fontSize(16).fontColor($r('sys.color.font_primary'))
+                    /* 第二行 = **版本号**。⚠️ 它【曾经】随选中状态切换（「正在使用」/「包里的那一份」），
+                     * 那是多余的：选没选中已由右边的 ✓ 表达，再写一遍只是把唯一能放版本号的位置占掉了。 */
+                    Text(this.bundledVer === '' ? '未知版本' : this.bundledVer)
+                      .fontSize(12).fontColor($r('sys.color.font_secondary')).margin({ top: 2 })
+                  }
+                  .alignItems(HorizontalAlign.Start)
+                  .layoutWeight(1)
+                  if (this.selected === '') {
+                    Text('✓').fontSize(18).fontColor($r('sys.color.brand'))
+                  }
                 }
-                .alignItems(HorizontalAlign.Start)
-                .layoutWeight(1)
-                if (this.selected === '') {
-                  Text('✓').fontSize(18).fontColor($r('sys.color.brand'))
-                }
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 14, bottom: 14 })
               }
-              .width('100%')
-              .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+              .backgroundColor($r('app.color.launcher_card'))
+              .borderRadius(CARD_RADIUS_VP)
+              .onClick(() => { this.pickBundled(); })
             }
-            .backgroundColor($r('app.color.launcher_card'))
-            .borderRadius(CARD_RADIUS_VP)
-            .onClick(() => { this.pickBundled(); })
 
             ForEach(this.games, (g: GameJar) => {
               ListItem() {

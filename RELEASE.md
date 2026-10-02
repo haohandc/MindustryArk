@@ -1,4 +1,4 @@
-# Mindustry Ark · 发布说明
+# Ark Launcher · 发布说明
 
 > 维护者记录（为什么要这样做、版本对照表、事故记录、发布前检查）在
 > **[`RELEASE-MAINTENANCE.md`](RELEASE-MAINTENANCE.md)**。本文件只讲用户要的东西。
@@ -13,16 +13,18 @@
 ⚠️ **非官方项目。** 与 Mindustry 及 Anuken 无隶属关系。以 **GPL-3.0** 分发
 （构建产物再分发了 GPL-3.0 的 Mindustry）。
 
-内嵌的游戏版本：**Mindustry `v8 Build 160.5`**（游戏内显示 `release build 160.5`）。
-⚠️ 这是 **Mindustry 自己的**版本号，与本项目的版本号是**两套体系**，各走各的。
-⭐ 随包发布的这份游戏本体是**未经修改的上游原版** —— 与官方发布的那份文件**逐字节相同**。
+⛔ **本分支的包里没有游戏本体** —— 游戏由你自己提供（见 [README](README.md) 最上面那段）。
+本项目的版本号与 **Mindustry 自己的**版本号是**两套体系**，各走各的。
+⭐ 需要游戏本体时，请用**上游原版**：Anuken 在
+[Anuken/Mindustry 的 Releases](https://github.com/Anuken/Mindustry/releases) 发布的那份 `.jar`
+（桌面版，`v8 Build 160.5` 或更新）。启动器只读它的版本号，不改它。
 
 ## 下载哪个文件
 
 | 文件 | 说明 |
 |---|---|
-| `MindustryArk-<版本>-unsigned.hap` | **应用本体。** 未签名，需自签一次（见下）|
-| `MindustryArk-<版本>-payload.zip` | 载荷包。**只有要从源码构建才需要**，玩游戏不必下 |
+| `ArkLauncher-<版本>-unsigned.hap` | **应用本体。** 未签名，需自签一次（见下）|
+| `ArkLauncher-<版本>-payload.zip` | 载荷包。**只有要从源码构建才需要**，玩游戏不必下 |
 
 ## 怎么安装
 
@@ -134,13 +136,19 @@ HarmonyOS 7 / API 26 真机验证：**HUAWEI MatePad Pro 12.2" 2025** 平板、
 ## 从源码构建
 
 ```bash
-unzip -o MindustryArk-<版本>-payload.zip
+unzip -o ArkLauncher-<版本>-payload.zip
 bash deploy.sh          # 构建 + 校验 + 安装 + 启动 + 收日志
 ```
 
 （签名按上面「怎么安装」配置）
 
 ## 版本历史
+
+> [!NOTE]
+> **下面这些条目是 `master` 的历史记录，原文照抄，未改。**
+> 其中提到「包内自带的那一份」「随包的那一份」的地方，**在本分支（`lite`）上不成立** ——
+> 本分支的包里没有游戏本体，游戏始终由你提供。除此之外的每一条都适用于本分支。
+
 
 ### 1.3.0.1 — 2026-10-03 · 版本隔离与存档管理
 
@@ -245,7 +253,7 @@ bash deploy.sh          # 构建 + 校验 + 安装 + 启动 + 收日志
 
 | 项目 | 说明 |
 |---|---|
-| **悬浮球 · 导出诊断** | 悬浮球菜单新增「导出诊断」，一键把运行日志导出到 `Download/com.haohandc.mindustryark/diagnostics/`，方便反馈问题 |
+| **悬浮球 · 导出诊断** | 悬浮球菜单新增「导出诊断」，一键把运行日志导出到 `Download/Ark Launcher/diagnostics/`，方便反馈问题 |
 | **崩溃报告自动导出** | 应用崩溃后，下次启动会自动把崩溃报告写到同一个 `diagnostics/` 文件夹 |
 
 **变动**
@@ -270,7 +278,7 @@ bash deploy.sh          # 构建 + 校验 + 安装 + 启动 + 收日志
 | 项目 | 说明 |
 |---|---|
 | **多人联机** | 局域网联机、搜索公网服务器、在本机开服 |
-| **模组加载** | 支持 `.jar` / `.zip` 格式的模组。放进 `Download/Mindustry Ark/`（真实路径 `Download/com.haohandc.mindustryark/`）|
+| **模组加载** | 支持 `.jar` / `.zip` 格式的模组。放进 `Download/Ark Launcher/`（真实路径 `Download/com.haohandc.arklauncher/`）|
 | **悬浮球 · 关于** | 悬浮球菜单新增「关于」，可查看版本号与仓库地址 |
 
 **变动**
@@ -336,17 +344,19 @@ emulation layer involved.
 ⚠️ **Unofficial.** Not affiliated with, endorsed by, or supported by the Mindustry project
 or Anuken. Distributed under **GPL-3.0** (the build redistributes GPL-3.0 Mindustry).
 
-Embedded game version: **Mindustry `v8 Build 160.5`** (in-game: `release build 160.5`).
-⚠️ That is the *game's* version, not this project's — the two move independently.
-⭐ The game binary shipped here is the **unmodified upstream release** — **byte for byte** the
-file Anuken publishes.
+⛔ **This branch's package carries no game** — you supply it (see the top of the
+[README](README.en.md)). This project's version number and the *game's* version number are
+two independent things.
+⭐ When you need the game itself, use the **upstream release**: the `.jar` Anuken publishes on
+[Anuken/Mindustry's Releases](https://github.com/Anuken/Mindustry/releases) (desktop build,
+`v8 Build 160.5` or newer). The launcher only reads its version number; it does not modify it.
 
 ## Which file to download
 
 | File | What it is |
 |---|---|
-| `MindustryArk-<version>-unsigned.hap` | **The app.** Unsigned — sign it once yourself (below) |
-| `MindustryArk-<version>-payload.zip` | Build inputs. **Only needed to build from source** |
+| `ArkLauncher-<version>-unsigned.hap` | **The app.** Unsigned — sign it once yourself (below) |
+| `ArkLauncher-<version>-payload.zip` | Build inputs. **Only needed to build from source** |
 
 ## Installing
 
@@ -469,13 +479,20 @@ same thing, so only the two most-asked ones stay:
 ## Building from source
 
 ```bash
-unzip -o MindustryArk-<version>-payload.zip
+unzip -o ArkLauncher-<version>-payload.zip
 bash deploy.sh          # build + verify + install + launch + collect log
 ```
 
 (configure signing as under "Installing")
 
 ## Changelog
+
+> [!NOTE]
+> **These entries are `master`'s history, copied verbatim.** Where they mention a
+> copy of the game being inside the package, **that does not hold on this branch
+> (`lite`)** — this branch ships no game, and you always supply it. Every other
+> entry applies here too.
+
 
 ### 1.1.0.1 — 2026-09-29 · architecture
 
@@ -516,7 +533,7 @@ Full support for all of Mindustry's native features.
 
 | Item | Notes |
 |---|---|
-| **Floating ball · Export diagnostics** | A new row in the floating ball's menu writes the run logs to `Download/com.haohandc.mindustryark/diagnostics/`, to make reporting a problem easier |
+| **Floating ball · Export diagnostics** | A new row in the floating ball's menu writes the run logs to `Download/Ark Launcher/diagnostics/`, to make reporting a problem easier |
 | **Crash reports export themselves** | After a crash, the next launch writes the crash report to the same `diagnostics/` folder automatically |
 
 **Changed**
@@ -541,7 +558,7 @@ Features are frozen; only blocking fixes from here.
 | Item | Notes |
 |---|---|
 | **Multiplayer** | LAN games, the public server list, and hosting on the device |
-| **Mod loading** | `.jar` and `.zip` mods. Put them in `Download/Mindustry Ark/` (real path `Download/com.haohandc.mindustryark/`) |
+| **Mod loading** | `.jar` and `.zip` mods. Put them in `Download/Ark Launcher/` (real path `Download/com.haohandc.arklauncher/`) |
 | **Floating ball · About** | A new "About" entry in the floating ball's menu, showing the version and the repository address |
 
 **Changed**

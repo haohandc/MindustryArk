@@ -154,7 +154,7 @@ OUT_DIR = os.path.join(PROJECT_ROOT, "entry", "build", PRODUCT, "outputs", "defa
 # 构建出的包里读回 artifact 名并比对，所以只对三者之一
 # 而不是全部做版本提升，会让构建失败，而不是产出一个
 # 名字与内容不符的文件。
-APP_NAME = "MindustryArk"
+APP_NAME = "ArkLauncher"
 
 # ---------------------------------------------------------------------------
 # 版本
@@ -325,7 +325,34 @@ if version_code_for(APP_VERSION) != VERSION_CODE:
            APP_VERSION, version_code_for(APP_VERSION)))
 
 ARTIFACT_NAME = "%s-v%s" % (APP_NAME, APP_VERSION)
-BUNDLE_NAME = "com.haohandc.mindustryark"
+BUNDLE_NAME = "com.haohandc.arklauncher"
+
+
+# ---------------------------------------------------------------------------
+# 这个构建发不发游戏本体
+# ---------------------------------------------------------------------------
+# ⭐ 它是 `master` 与 `lite` 分支之间**唯一**的一个代码开关。
+#
+#    master（默认，True）—— 包里带一份 Mindustry，开箱即玩。
+#    lite（False）        —— 包里没有游戏，玩家自己提供 jar。
+#
+# 为什么是一个值，而不是让 lite 分支各自修改三个脚本
+#
+#     三个脚本里有三处【方向相反】的断言，而它们说的是同一件事：
+#
+#         scripts/prep_game.py        把游戏放进 entry/libs/  ←→ 保证那里没有
+#         scripts/verify_hap.py §6    产物里【必须】有这个条目 ←→ 【必须没有】
+#         scripts/make_payload_zip.py 载荷包里要求它            ←→ 不要求
+#
+#     硬删的话，这三处会在两个分支上各自演化，而它们必须一直相反 ——
+#     这正是「同一份知识存在两处、其中一处先跑偏」的形态（本项目栽过多次）。
+#     读同一个值，三个脚本就在两个分支上【逐字节相同】，
+#     唯一的差异是这个常量本身。
+#
+# ⛔ 别把它做成环境变量。分支身份必须是【可提交的】：
+#     环境变量在不同机器上、不同 shell 里可以不同，而
+#     `python scripts/verify_hap.py` 的结论必须只由仓库内容决定。
+SHIPS_GAME = False   # ⛔ lite 分支：这一行就是本分支与 master 之间【唯一】的代码差异
 
 
 # ---------------------------------------------------------------------------

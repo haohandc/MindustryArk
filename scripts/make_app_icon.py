@@ -41,6 +41,22 @@ THE BACKGROUND HAS NO ROUNDED CORNERS, ON PURPOSE
     Drawing our own rounding would leave the plate's own corners showing inside the
     system's mask whenever the two shapes differ.
 
+⚠️ 在 Ark Launcher 里跑这个脚本要【额外指一下图集在哪】。
+    它从 config.GAME_JAR 读 sprites/sprites.png，而那个名字现在指向
+    payload-src/ 里的补丁 jar —— 本仓库不分发游戏，payload-src/ 是空的，
+    所以直接跑会得到 "FAIL no game jar"。
+
+    ⇒ 指一个真含图集的 Mindustry jar 给它就行（环境变量是现成的）：
+
+        ARK_NATIVES_JAR=<某个 mindustry jar> \
+          uv run --with pillow python scripts/make_app_icon.py
+
+    脚本自己会用 sha1 校验图集，所以指错文件会当场报错，不会静默画出别的东西。
+
+    ⚠️ 这是本仓库为「不分发游戏」付的一笔小账：图标的源头在游戏里，
+    而游戏不在仓库里。留在这里没有改成内嵌一张 34x34 的图，是因为那样
+    会把「画的东西来自图集」这条痕迹抹掉 —— 而上游正是靠它发现自己过期了。
+
 Usage:  uv run --with pillow python scripts/make_app_icon.py [--check]
 """
 
@@ -72,12 +88,26 @@ TURRET_RECT = (1847, 3060, 1847 + 34, 3060 + 34)
 TURRET_FRAME = "arc"
 
 CANVAS = 1024
-# 帧尺寸 34px 的整数倍：20 -> 680px，约占画布 66%。
+# 帧尺寸 34px 的整数倍：19 -> 外框 646px。
+#
+# ⭐ 19 是让炮塔与【主应用】逐像素同尺寸的那个值，2026-10-01 实测得出，不是估的。
+#   主应用的 make_handmade_icon.py 把手绘原画裁成 52x52、再乘 19，其中炮塔
+#   占中心 32x32 ⇒ 炮塔深色轮廓 = 32 x 19 = 608px。
+#   本脚本在 SCALE=20 时是 640px，即大 20/19 ≈ 5.3% —— 用户说的
+#   「炮塔有点大了，最好炮塔大小和我们主应用的一致」就是这 5.3%。
+#
+#   两个判据互相独立，都给出同一个 20/19：
+#     炮塔深色轮廓宽    640 (SCALE 20)  vs  608 (主应用)
+#     炮塔白主体宽      160             vs  152
+#   ⇒ 改成 19 后两边都是 608px。
+#
+#   ⚠️ 量的时候注意：两边的炮塔【不是同一张画】—— 主应用是手绘平滑版，
+#   本脚本是图集像素版。所以比的是【视觉尺寸】，不是像素内容；上面两个判据
+#   都只依赖「炮塔在哪、多大」，与画法无关。
 #
 # 16 时被否决（在真实桌面上太小），22 时也被否决（太贴边，
-# 最圆的那种圆角方形遮罩会切到肩部）。20 是
-# 仍能让轮廓避开所有遮罩形状的最大档。
-SCALE = 20
+# 最圆的那种圆角方形遮罩会切到肩部）。
+SCALE = 19
 
 # 蓝色背景，轻微竖向渐变。通版铺满：无透明通道，不做圆角。
 #

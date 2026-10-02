@@ -33,7 +33,7 @@ set -o pipefail
 cd "$(dirname "$0")/.." || exit 1
 export MSYS_NO_PATHCONV=1
 
-BUNDLE="com.haohandc.mindustryark"
+BUNDLE="com.haohandc.arklauncher"
 ABILITY="EntryAbility"
 STUDIO="${ARK_DEVECO_STUDIO:-E:/Program Files/DevEco Studio}"
 SDK_HOME="${DEVECO_SDK_HOME:-$STUDIO/sdk}"

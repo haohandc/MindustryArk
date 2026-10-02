@@ -157,7 +157,7 @@ export function exportNow(modFolder: string, filesDir: string): string {
     const hasStash: boolean = fs.accessSync(stashPath);
 
     const report: string =
-      'Mindustry Ark -- diagnostics bundle\n' +
+      'Ark Launcher -- diagnostics bundle\n' +
       '========================================\n' +
       envLines().join('\n') + '\n' +
       'collected at : ' + new Date(now).toString() + '\n' +
@@ -238,7 +238,7 @@ export function publish(modFolder: string, filesDir: string): void {
     }
 
     const report: string =
-      'Mindustry Ark -- crash report\n' +
+      'Ark Launcher -- crash report\n' +
       '========================================\n' +
       envLines().join('\n') + '\n' +
       'crashed at   : ' + new Date(crashedAt).toString() + '\n' +

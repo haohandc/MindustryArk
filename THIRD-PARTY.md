@@ -67,33 +67,23 @@ they are.
 
 ### Mindustry — GPL-3.0
 
-A build redistributes an upstream release jar as
-`entry/libs/arm64-v8a/game/mindustry.so` — the `.so` name is a packaging
-requirement, not a modification (see README).
+⛔ **This branch does not distribute Mindustry.** The package carries no game; the
+player supplies the `.jar` (see README). So the GPL-3.0 §6 source obligation has
+**no object here** — there is no binary of ours to hand Mindustry's source to.
 
-**Which parts of that jar are modified, precisely**, because the source
-obligation depends on it:
+⚠️ That is a statement about **this branch only**. The upstream branch
+([`master`](https://github.com/haohandc/MindustryArk)) *does* ship an upstream
+release jar as `entry/libs/arm64-v8a/game/mindustry.so`, and the per-file account
+of what is and is not modified in it lives there. Read that one before making a
+licensing claim about a build that ships the game.
 
-| Part of the jar | State |
-|---|---|
-| `mindustry/**` (the game itself) | **Unmodified.** `scripts/patch_mindustry.py` does not rewrite these; it only *asserts* that `mindustry/desktop/DesktopLauncher.class` and `mindustry/Vars.class` are still present, so that a jar that is not what it claims to be fails loudly |
-| `arc/backend/sdl/**` and `arc/graphics/gl/**` (the framework) | **Replaced** with builds from patched sources — see the Arc section |
-| `arc/backend/sdl/jni/**` | Preserved deliberately: Mindustry's own classes still reference them |
+⚠️ **The licence itself still applies to this branch**, because this is a
+derivative work of Mindustry regardless of what the package contains — hence
+GPL-3.0 on the whole repository. What is absent is only the *distribution* half.
 
-So the jar as a whole is **not** byte-identical to upstream; it is an upstream
-jar with the framework's backend classes swapped. The pinned SHA-1 in
-`prep_game.py` (checked in `verify_hap.py`) identifies exactly which build is
-shipped.
-
-**Source obligation.** GPL-3.0 requires the corresponding source to be available
-to anyone who receives the binary. That now covers two things:
-
-- **This project's own source**, which is why this repository exists and is
-  published under GPL-3.0. The build scripts are part of it — they are what
-  produce the artifact.
-- **Mindustry's source**, for the unmodified game code — upstream, at
-  <https://github.com/Anuken/Mindustry>. Because those classes are unmodified,
-  pointing at upstream is sufficient and no fork is needed.
+**Source obligation of this branch.** One item, and it is ours: **this project's
+own source**, which is why this repository exists and is published under GPL-3.0.
+The build scripts are part of it — they are what produce the artifact.
 
 Keep the licence text with any redistribution.
 

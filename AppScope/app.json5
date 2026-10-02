@@ -1,6 +1,6 @@
 {
   "app": {
-    "bundleName": "com.haohandc.mindustryark",
+    "bundleName": "com.haohandc.arklauncher",
     "vendor": "example",
     "versionCode": 1030001,
     // Digits and dots only, and that is a constraint rather than a preference:
