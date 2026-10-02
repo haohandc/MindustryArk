@@ -66,7 +66,7 @@ independent of the game and **usable without starting it**.
 
 | What you can do | How it works |
 |---|---|
-| Pick a game version | Drop any number of jars into **the folder the screen prints** (the launcher shows it above the list) and choose between them. The version is read out of the jar, not guessed from the file name |
+| Pick a game version | Drop any number of jars into `Download/Ark Launcher/games/` and choose between them. The version is read out of the jar, not guessed from the file name |
 | **Version isolation** | Each game version gets its own set of game data. Four tiers: off (the factory setting) / major version / build / patch |
 | **Save management** | Lists the saves of **every** version (grouped by which versions share the same data), shows the metadata (version / map / playtime / mods), and copies, moves or carries them across versions |
 | Delete = vault | A delete is not an erase: the save moves to a vault for 3 / 7 / 30 days, or is **archived** (never auto-removed). It can be put back at any time |
