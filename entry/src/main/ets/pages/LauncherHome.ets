@@ -586,7 +586,11 @@ export struct LauncherHome {
    * ⛔ 返回 `false` 表示「我这里没东西可关了」，交给宿主页（在游戏里那会转成 ESC）。
    */
   handleBack(): boolean {
-    /* [B] 多选态排在最前：它是一个**模式**，而模式必须能一键退出 ——
+    /* [B] 确认框比多选态**更靠外**一层：它盖在多选列表上，所以要先关它。
+     * ⛔ 反过来（先退多选）会把窗留在屏幕上、而它下面那张列表已经没了 ——
+     *    那时按「放进垃圾站」删的就是一批已经不属于任何东西的键。 */
+    if (this.showMultiAsk) { this.showMultiAsk = false; return true; }
+    /* [B] 多选态排在其后：它是一个**模式**，而模式必须能一键退出 ——
      * ⛔ 排在后面的话，返回键会先把别的东西关掉，而玩家看到的还是那张多选列表。 */
     if (this.multiMode) { this.exitMulti(); return true; }
     if (this.showDeleteAsk) { this.showDeleteAsk = false; return true; }
@@ -717,6 +721,17 @@ export struct LauncherHome {
    */
   @State multiMode: boolean = false;
   @State multiPicked: string[] = [];
+  /* [A] ⭐⭐ 多选删除的**确认框**（用户 2026-10-02：「我最后点删除的时候没有提示框」）。
+   *
+   * ⛔⛔ 我第一版是**故意不问**的，理由写在提交信息里：「逐条问就把一键毁掉了」。
+   *    ⭐ 而那句话把两件事混成了一件：他不要的是**逐条**问，
+   *      而他要的是**删之前问一次** —— 一批删掉是不可逆的（虽然进的是垃圾站），
+   *      按下之前该有一次「你确定是这些吗」。
+   *    ⇒ 教训：**「不要 N 次」不等于「不要那一次」。** 我把「减少摩擦」推到了「取消确认」。
+   */
+  @State showMultiAsk: boolean = false;
+  /** [B] 确认框里那张名单展开了吗。⚠️ 默认收起 —— 一次选二十个会把窗撑爆。 */
+  @State multiListOpen: boolean = false;
   /** [B] 多选删除之后的一句话（成功/失败都写这儿）。⚠️ 与 `vaultNote` 分开：
    * 那个渲染在**垃圾站**里，而这里是**存档页**。 */
   @State savesNote: string = '';
@@ -2008,8 +2023,20 @@ export struct LauncherHome {
     return this.multiMode ? (this.multiPicked.indexOf(key) >= 0) : (this.selectedSave === key);
   }
 
-  /** [B] 长按：不在多选态就**带着这一行**进去，已经在就当成一次点击（切换）。 */
+  /* [A] ⛔⛔ **长按与点击都要把 `selectedSave` 挪到刚碰的那一行** —— 用户 2026-10-02：
+   *    「我先选中了一个，再长按其他的选其他的，**长按选中时页面信息要刷新成我刚刚长按选中的**。
+   *      进入多选后再单点选中也是一样。」
+   *
+   * ⛔ 不改的后果就是他报的那个 bug：右边详情**还停在最开头选的那个**，
+   *    于是屏幕上同时有**两个「删除」**（多选那条是一个，详情下面那个单条的又是一个），
+   *    而玩家分不出哪个是哪个。
+   *
+   * ⭐ 两处都改（进入时 + 已经在多选态时）不是重复：它们是**两条入口**，
+   *    而「详情显示哪一条」这件事必须与「我刚碰了哪一条」一致 —— 这条不变量
+   *    只要有一个入口漏了，症状就是同一个。
+   */
   private enterMulti(key: string): void {
+    this.selectedSave = key;
     if (!this.multiMode) {
       this.multiMode = true;
       this.multiPicked = [key];
@@ -2020,6 +2047,9 @@ export struct LauncherHome {
 
   /** [B] 勾/取消。⚠️ 必须**赋新数组**（ArkUI 只认赋值），理由同 toggleTransferPick。 */
   private toggleMultiPick(key: string): void {
+    /* [B] 先挪详情 —— 取消勾选时**也要**挪：详情答的是「我刚碰的是哪一个」，
+     * 而不是「它还选着吗」。⚠️ 否则取消一个之后右边会跳回很久以前选的那条。 */
+    this.selectedSave = key;
     const i: number = this.multiPicked.indexOf(key);
     if (i >= 0) {
       const out: string[] = this.multiPicked.slice();
@@ -2030,13 +2060,26 @@ export struct LauncherHome {
     }
     /* [B] 一个都不剩 ⇒ 自动退出多选。⛔ 留着一个「已选 0 项」的条只会让人以为卡住了。 */
     if (this.multiPicked.length === 0) {
-      this.multiMode = false;
+      this.exitMulti();
     }
   }
 
+  /* [B] 退出多选。⚠️ 顺带把那两个只属于多选的开关也清掉 ——
+   * 不清的话下次进来会**直接弹着上一次的确认框**，而玩家根本没按删除。 */
   private exitMulti(): void {
     this.multiMode = false;
     this.multiPicked = [];
+    this.showMultiAsk = false;
+    this.multiListOpen = false;
+  }
+
+  /** [B] 勾上的那些存档的名字，顿号相连 —— 确认框的标题行与展开窗都用它。 */
+  private pickedNamesText(): string {
+    const names: string[] = [];
+    for (const r of this.pickedRows()) {
+      names.push(r.entry.label);
+    }
+    return names.join('、');
   }
 
   /** [B] 勾上的那些行（按 `saveGroups` 的顺序）。找不到的键**跳过** ——
@@ -2078,6 +2121,9 @@ export struct LauncherHome {
       ? ('把 ' + String(done) + ' 个存档放进了垃圾站，可以在那儿找回。')
       : ('放进了垃圾站 ' + String(done) + ' 个；有 ' + String(fails.length) + ' 个没成功：'
          + NL + fails.join(NL));
+    /* [B] 先关窗再退出 —— `exitMulti()` 自己也会清 `showMultiAsk`，
+     * 这里显式写一次是为了让「删完窗一定没了」读得出来（顺序不依赖另一个函数）。 */
+    this.showMultiAsk = false;
     this.exitMulti();
     this.selectedSave = '';
     this.refresh();
@@ -2857,11 +2903,21 @@ export struct LauncherHome {
          * ⚠️ 只有**当前版本**的存档能操作（上面的 `saves` 列表本来就只列当前版本的）。
          *    别的版本的存档要动，得先在「首页」把版本切过去 —— 那条提示在「按版本」那边。
          */
-        Divider()
-          .strokeWidth(1).color($r('app.color.launcher_border'))
-          .margin({ top: 14, bottom: 12 })
+        /* [A] ⭐⭐ **多选态下把这一条整根藏掉**（用户 2026-10-02 同意）。
+         *
+         * ⛔ 不藏的话屏幕上会同时出现**两个「删除」**：多选那条是「删勾上的这一批」，
+         *    这条是「删详情里那一个」。而它们长得一样、位置又近 ⇒
+         *    玩家按下哪一个都是赌。⭐ 两个意思不同的同名按钮并存，比少一个按钮糟得多。
+         *
+         * ⚠️ 复制/移动也一起藏 —— 它们**只作用于一个存档**，而多选态里
+         *    「一个」这个概念本身已经不确定了（详情跟着手走，一直在变）。 */
+        if (!this.multiMode) {
+          Divider()
+            .strokeWidth(1).color($r('app.color.launcher_border'))
+            .margin({ top: 14, bottom: 12 })
 
-        this.SaveActionRow()
+          this.SaveActionRow()
+        }
       }
     }
     .width('100%').height('100%')
@@ -2893,7 +2949,10 @@ export struct LauncherHome {
         .fontColor($r('sys.color.warning'))
         .backgroundColor($r('app.color.launcher_bg'))
         .enabled(this.multiPicked.length > 0)
-        .onClick(() => { this.deleteMultiToVault(); })
+        /* [B] ⭐ 只**开窗**，不直接删 —— 见 `showMultiAsk` 的说明。
+         * ⚠️ 名单每次重新**收起**：上一次展开过的话，这一次一进来就是展开的，
+         * 而那是上一个批次的状态。 */
+        .onClick(() => { this.showMultiAsk = true; this.multiListOpen = false; })
       Button('取消')
         .fontSize(BUTTON_FONT_VP)
         .backgroundColor($r('app.color.launcher_bg'))
@@ -3066,8 +3125,11 @@ export struct LauncherHome {
         .align(Alignment.TopStart)
         .scrollBar(BarState.Off)
 
-        /* [B] 选中了某一项才给动作 —— 没选时按下去无事可做，给出来只会让人点空。 */
-        if (this.selectedSave !== '' && this.selectedSaveDir() === this.versionSavesDir()) {
+        /* [B] 选中了某一项才给动作 —— 没选时按下去无事可做，给出来只会让人点空。
+         * ⛔ 多选态下一律不给：那会与上面那条多选条上的「删除」撞成一模一样的两个按钮
+         *    （理由详见 SaveDataPanel 里那一段）。 */
+        if (!this.multiMode && this.selectedSave !== ''
+            && this.selectedSaveDir() === this.versionSavesDir()) {
           Divider()
             .strokeWidth(1).color($r('app.color.launcher_border'))
             .margin({ top: 14, bottom: 12 })
@@ -3445,6 +3507,120 @@ export struct LauncherHome {
    *    那个窗的理由在这里同样成立 —— 一个手滑点空白就消失的确认框比没有更糟。
    *    ⛔ 别照「关于 / 查看数据」那两个窗去加「点外面也关」，它们是**只读**的。
    */
+  /* [A] ⭐⭐ 多选删除的确认框（用户 2026-10-02）。
+   *
+   * ⭐ 形状是他指定的：
+   *    「标题应该是显示多个，字符超过一定数量改成 ...，**用户可以点击**，
+   *      出现一个小的提示窗展示**所有选中的存档（包括来源于哪里）**。」
+   *
+   * ⇒ 三件事，各有各的理由：
+   *    ① 标题写出**有几个**（单删那个窗写的是一个名字，这里写一批）
+   *    ② 名字那条**超长就截成 `...`** —— 一次选二十个，标题不可能全塞下
+   *    ③ 它**可点**，点开一张小名单，每条带**来源**（`ownerOfDir` 那套）
+   *
+   * ⚠️ 名单**默认收起**、并且**放在这个窗里面**而不是再弹一层：
+   *    两层弹窗叠在一起时，返回键该关哪一层会变成一个问题（本项目为此栽过）。
+   *
+   * ⛔ 没有「逐条选择保留方式」那一套 —— 一批就是一次决定，保留期用全局那个
+   *    （理由与单删那个窗一致：区别写进按钮标签，一处说清）。
+   *    归档仍然可以在垃圾站里逐条补。
+   *
+   * ⚠️ 结构照抄 `DeleteAskDialog`（同屏遮罩 + 卡片 + 点卡片不冒泡 + **点空白不关**）：
+   *    一个手滑点空白就消失的确认框比没有更糟。
+   */
+  @Builder
+  MultiDeleteAskDialog() {
+    Column() {
+      Column() {
+        Text('删除这 ' + String(this.multiPicked.length) + ' 个存档')
+          .fontSize(17).fontColor($r('sys.color.font_primary'))
+          .width('100%').textAlign(TextAlign.Center)
+
+        /* [A] 名字那条。⭐ `▾` / `▴` 是**它的可点性**唯一的视觉线索 ——
+         * ⛔ 别只靠「看起来像一行字」暗示它能点：本项目在别处栽过「给了控件但没给出口」，
+         * 而这里是反过来的（有出口，但没人知道它在）。
+         * ⚠️ 箭头**不放进那个 Text 里**：它会被 `Ellipsis` 一起截掉，
+         * 于是名字越长越看不见入口 —— 恰好把最需要展开的那种情形挡掉。 */
+        Row() {
+          Text(this.pickedNamesText())
+            .fontSize(13).fontColor($r('sys.color.font_secondary'))
+            .layoutWeight(1)
+            .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+          Text(this.multiListOpen ? '▴' : '▾')
+            .fontSize(13).fontColor($r('sys.color.brand'))
+            .margin({ left: 8 })
+        }
+        .width('100%')
+        .margin({ top: 12 })
+        .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+        .borderRadius(9)
+        .backgroundColor($r('app.color.launcher_bg'))
+        .alignItems(VerticalAlign.Center)
+        .onClick(() => { this.multiListOpen = !this.multiListOpen; })
+
+        if (this.multiListOpen) {
+          Scroll() {
+            Column() {
+              ForEach(this.pickedRows(), (r: SaveRow) => {
+                Column() {
+                  Text(r.entry.label)
+                    .fontSize(13).fontColor($r('sys.color.font_primary'))
+                    .width('100%')
+                    .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                  /* [B] 来源 —— 与垃圾站那行用**同一个** `ownerOfDir`，
+                   * 所以两处对同一条存档的说法不会分叉。 */
+                  Text('原来属于 ' + this.ownerOfDir(r.dir))
+                    .fontSize(11).fontColor($r('sys.color.font_tertiary'))
+                    .width('100%').margin({ top: 2 })
+                    .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                }
+                .width('100%')
+                .alignItems(HorizontalAlign.Start)
+                .margin({ bottom: 10 })
+              }, (r: SaveRow) => this.saveKey(r.dir, r.entry.id))
+            }
+            .width('100%')
+          }
+          .width('100%')
+          /* [B] 给个上限，让名单自己滚 —— ⛔ 不给的话一次选二十个会把按钮顶出屏幕，
+           * 而按钮正是这个窗存在的理由。与启动失败那个窗同一条道理。 */
+          .constraintSize({ maxHeight: 220 })
+          .align(Alignment.TopStart)
+          .margin({ top: 10 })
+        }
+
+        Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
+
+        /* [B] 与单删那个窗**同一套措辞**（`放 进垃圾站（保留到 X）`）：
+         * 玩家在两个地方看到的应当是同一句话，否则他会以为是两种不同的去向。 */
+        Button('放进垃圾站（保留到 ' + this.deleteExpiryDate() + '）')
+          .fontSize(15)
+          .width('72%').alignSelf(ItemAlign.Center)
+          .margin({ top: 16 })
+          .onClick(() => { this.deleteMultiToVault(); })
+
+        Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
+        Button('取消')
+          .fontSize(14)
+          .width('25%').alignSelf(ItemAlign.Center)
+          .margin({ top: 12 })
+          .onClick(() => { this.showMultiAsk = false; })
+      }
+      .width('100%')
+      .constraintSize({ maxWidth: this.dialogWidthVp() })
+      .padding(20)
+      .backgroundColor($r('app.color.launcher_card'))
+      .borderRadius(CARD_RADIUS_VP)
+      .alignItems(HorizontalAlign.Start)
+      /* [B] 吞掉落在卡片上的点击 —— 与隔离窗同一处理由。 */
+      .onClick(() => {})
+    }
+    .width('100%').height('100%')
+    .backgroundColor('#80000000')
+    .justifyContent(FlexAlign.Center)
+    .padding({ left: 32, right: 32 })
+  }
+
   @Builder
   DeleteAskDialog() {
     Column() {
@@ -4667,6 +4843,12 @@ export struct LauncherHome {
      * 而启动失败是必须处理的，不能被一个可选的确认框盖住。 */
     if (this.showDeleteAsk) {
       this.DeleteAskDialog()
+    }
+
+    /* [A] 多选删除的确认框。⭐ 排在单删那个**后面**（同层的话后声明的在上）——
+     * 两者不可能同时出现（多选态下单条动作行整个藏了），所以顺序只是防御性的。 */
+    if (this.showMultiAsk) {
+      this.MultiDeleteAskDialog()
     }
 
     if (this.launchFault !== '' && !this.faultAck) {
