@@ -69,6 +69,10 @@ import { readLaunchMode, writeLaunchMode,
 /* [A] 存档：一个存档 = 一个星球的一组 msav（或一个手动存档）。见那个文件的开头。 */
 import { SaveEntry, listSaves, formatSaveSize, formatSaveDate,
          SaveMeta, readSaveMeta, newestFileOf } from '../games/SaveLibrary';
+/* [A] 存档垃圾站：删除不是抹掉，是搬到游戏看不见的地方。见那个文件的开头。 */
+import { VaultEntry, vaultDelete, listVault, vaultRestore, vaultPurge,
+         vaultSetArchived, purgeExpired, describeExpiry, formatMs,
+         readVaultDays, writeVaultDays, VAULT_DAYS_CHOICES } from '../games/SaveVault';
 import { GRANULARITY_OFF, GRANULARITY_NUMBER, GRANULARITY_BUILD, GRANULARITY_PATCH,
          readGranularity, writeGranularity,
          copyLiveDataInto, gameDataExists, liveGameDataDir,
@@ -486,6 +490,21 @@ export struct LauncherHome {
 
   /** [B] 选中的那个版本的数据目录里有哪些存档。切版本时读一次。 */
   @State versionSaves: SaveEntry[] = [];
+
+  /* ============ 垃圾站 ============ */
+
+  /** [B] 垃圾站视图开着吗。⛔ 它不是第三种「视图」—— 它是**另一个地方**，进出靠一个返回。 */
+  @State showVault: boolean = false;
+  /** [B] 垃圾站里现在有什么。`refresh()` 里读一次，渲染只用它。 */
+  @State vaultEntries: VaultEntry[] = [];
+  /** [B] 保留期（天）。⭐ 全局设置，见 SaveVault 的说明。 */
+  @State vaultDays: number = 7;
+  /** [B] 垃圾站里上一次操作的结果（''=没有）。⛔ 只是一句话，不是门。 */
+  @State vaultNote: string = '';
+  /** [B] 「删除」的确认框开着吗 —— 玩家要在这里选**放垃圾站**还是**归档**。 */
+  @State showDeleteAsk: boolean = false;
+  /** [B] 上一次清掉几个到期条目，用来告诉玩家一句。0 表示没有。 */
+  @State vaultPurgedLast: number = 0;
 
   /* [A]
    * 选中那个存档的元数据。
@@ -975,6 +994,12 @@ export struct LauncherHome {
       this.selectedVersion = cur === undefined ? '' : cur.path;
     }
     this.loadVersionSaves();
+    /* [A] 垃圾站：**清掉到期的**，再读一遍名单。
+     * ⚠️ 放在 `refresh()` 里（而不是渲染里）—— 它要扫目录、还要真删文件，
+     *    ⛔ 每帧跑一次是不可接受的。`refresh()` 只在切页签/切版本/改设置/操作完之后跑。 */
+    this.vaultPurgedLast = purgeExpired(Date.now());
+    this.vaultEntries = listVault();
+    this.vaultDays = readVaultDays(this.filesDir);
     /* [A] ⚠️ 必须显式再读一次。`@Watch` 只在 id **真的变了**时才触发，而这里的
      * 常见情形恰恰是「id 没变、那份存档换了」—— 例如改了隔离粒度再回来：列表整份换掉，
      * 但选中的那个如果两边同名，id 就一模一样。那时右侧栏会**显示上一个目录的元数据**，
@@ -1354,6 +1379,109 @@ export struct LauncherHome {
     if (this.isNarrow()) {
       this.panelOpen = true;
     }
+  }
+
+  /* ==================================================================
+   * 垃圾站
+   * ================================================================== */
+
+  private openVault(): void {
+    this.showVault = true;
+    this.vaultNote = '';
+    this.refresh();
+  }
+
+  private closeVault(): void {
+    this.showVault = false;
+    this.vaultNote = '';
+    this.refresh();
+  }
+
+  /* [A]
+   * 玩家点了「删除」。⛔ **不直接删** —— 先弹一个确认框，让他在
+   * 「放进垃圾站（到期清理）」与「归档（不自动清理）」之间选一个。
+   *
+   * ⭐ 那两个就是垃圾站里条目的两种状态，所以这个确认框同时承担了
+   *    「确认」与「选保留方式」两件事，不需要第二个窗。
+   * ⚠️ 确认框里要写出**具体保留到哪一天** —— 「7 天」是抽象的，
+   *    「保留到 2026-10-09 18:40」是玩家能判断的。
+   */
+  private askDelete(): void {
+    if (this.selectedSave === '') {
+      return;
+    }
+    this.showDeleteAsk = true;
+  }
+
+  /* [A]
+   * 真删。`archived = true` ⇒ 归档（不自动清理）。
+   *
+   * ⚠️ 走的是**搬进垃圾站**，不是抹掉 —— 见 SaveVault 开头。
+   */
+  private doVaultDelete(archived: boolean): void {
+    const sv: SaveEntry | undefined = this.selectedSaveEntry();
+    this.showDeleteAsk = false;
+    if (sv === undefined) {
+      return;
+    }
+    const now: number = Date.now();
+    const err: string = vaultDelete(sv, this.savesDirShown, this.vaultDays, now);
+    if (err !== '') {
+      this.vaultNote = err;
+      this.refresh();
+      return;
+    }
+    if (archived) {
+      /* [B] 刚搬进去的那个 = 最新那一个（`listVault` 新的在前）。
+       * ⚠️ 用「最新」而不是自己拼 id：id 的拼法只有 SaveVault 知道，
+       *    在这里再拼一遍就是同一件事两份实现。 */
+      const fresh: VaultEntry[] = listVault();
+      if (fresh.length > 0) {
+        const e2: string = vaultSetArchived(fresh[0].id, true, this.vaultDays, now);
+        if (e2 !== '') {
+          /* ⚠️ 搬成功了、归档没设上 ⇒ 说出来。它现在是**普通垃圾站条目**，
+           * 到期会被清掉 —— 而那正是玩家选了归档想避免的事。 */
+          this.vaultNote = '已经搬进垃圾站了，但归档没设上（它到期仍会被清理）：' + e2;
+        }
+      }
+    }
+    this.selectedSave = '';
+    this.refresh();
+  }
+
+  /** [B] 放回。刷新后存档列表当场出现它。 */
+  private doVaultRestore(e: VaultEntry): void {
+    this.vaultNote = vaultRestore(e, this.savesDirShown);
+    this.refresh();
+  }
+
+  /** [B] 彻底删掉（不可撤销）。 */
+  private doVaultPurge(e: VaultEntry): void {
+    this.vaultNote = vaultPurge(e.id);
+    this.refresh();
+  }
+
+  /** [B] 归档 / 取消归档。取消时**重新起算**保留期，见 SaveVault.vaultSetArchived。 */
+  private doVaultToggleArchive(e: VaultEntry): void {
+    this.vaultNote = vaultSetArchived(e.id, !e.archived, this.vaultDays, Date.now());
+    this.refresh();
+  }
+
+  /** [B] 改全局保留期。写盘后刷新，让每一行显示的剩余天数跟着变。 */
+  private setVaultDays(d: number): void {
+    this.vaultDays = d;
+    writeVaultDays(this.filesDir, d);
+    this.refresh();
+  }
+
+  /** [B] 「保留到 YYYY-MM-DD HH:MM」—— 确认框里给玩家看的**具体时刻**。 */
+  private deleteExpiryText(): string {
+    return formatMs(Date.now() + this.vaultDays * 24 * 60 * 60 * 1000);
+  }
+
+  /** [B] 保留期那一档的按钮文案。 */
+  private vaultDaysLabel(d: number): string {
+    return d >= 30 ? '1 个月' : (String(d) + ' 天');
   }
 
   /* [A] ⭐⭐ 窄屏（手机）的判定，以及「详情子页」是否开着。
@@ -1825,6 +1953,32 @@ export struct LauncherHome {
         /* ⛔ 「这个存档对哪些版本可见」原先在这里（元数据表**下面**）。
          * 用户 2026-10-02 指出它该和标题同一行：摆在表格下面会让人以为它是表格的最后一行，
          * 而它其实是这个存档的**属性**。已移到上面那行。 */
+
+        /* [A]
+         * 对这个存档可做的事。
+         *
+         * ⭐ 用户 2026-10-02 点的四个动作是「删除，复制，移动，查看存档数据」：
+         *    · **查看存档数据**已经不需要在这里了 —— 它的内容就铺在上面（不再弹窗）
+         *    · **删除**在这里，⛔ 但它不真删，而是搬进垃圾站（见 SaveVault 开头）
+         *    · **复制 / 移动**是 ③f，还没做，所以这里**没有它们** ——
+         *      ⛔ 不放一个点了没用的按钮：那比没有更糟。
+         *
+         * ⚠️ 只有**当前版本**的存档能操作（上面的 `saves` 列表本来就只列当前版本的）。
+         *    别的版本的存档要动，得先在「首页」把版本切过去 —— 那条提示在「按版本」那边。
+         */
+        Divider()
+          .strokeWidth(1).color($r('app.color.launcher_border'))
+          .margin({ top: 14, bottom: 12 })
+
+        Row() {
+          Button('删除')
+            .fontSize(BUTTON_FONT_VP)
+            .fontColor($r('sys.color.warning'))
+            .backgroundColor($r('app.color.launcher_bg'))
+            .onClick(() => { this.askDelete(); })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
       }
     }
     .width('100%').height('100%')
@@ -1934,10 +2088,232 @@ export struct LauncherHome {
    *    右边要放下整张元数据表。⭐ 用 `layoutWeight` 而不是写死 vp，是为了让它在
    *    任何窗口宽度下都自成比例（手机走子页，这条根本不参与）。
    */
+  /* [A]
+   * 垃圾站。
+   *
+   * ⭐ 它**不是第三种「视图」**（那种要挤进「按存档 / 按版本」那一排），
+   *    而是**另一个地方** —— 进出靠一个返回，与手机的详情子页同一套做法。
+   *    理由：分段控件那两档回答的是「我怎么看这批存档」，而垃圾站回答的是
+   *    「我删掉的东西去哪了」，不是同一个问题。
+   *
+   * ⚠️ 每一行自带三个动作（放回 / 归档 / 彻底删），**没有右侧详情栏**：
+   *    一个条目的字段就那么几个，再切一栏只会让「点哪一行」多一层含义。
+   */
+  @Builder
+  VaultView() {
+    Column() {
+      Row() {
+        SymbolGlyph($r('sys.symbol.chevron_left'))
+          .fontSize(18).fontColor([$r('sys.color.brand')])
+          .padding({ right: 8 })
+          .onClick(() => { this.closeVault(); })
+        Text('垃圾站')
+          .fontSize(18).fontColor($r('sys.color.font_primary'))
+          .layoutWeight(1)
+        Text(this.vaultEntries.length === 0 ? '空' : (String(this.vaultEntries.length) + ' 项'))
+          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+      }
+      .width('100%')
+      .padding({ left: 12, right: 16, top: 16, bottom: 8 })
+      .alignItems(VerticalAlign.Center)
+
+      /* [A]
+       * 保留期。⭐ 用户 2026-10-02 定的是**全局**（「一次性设成全局」）——
+       * 每次删都问一遍会把同一个问题的答案反复要一遍。
+       * ⚠️ 放在这一屏而不是设置页：玩家是在**看垃圾站**的时候才会想「留多久」，
+       *    而他一旦离开这一屏，那个念头就没了。
+       */
+      Row() {
+        Text('保留')
+          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+        ForEach(VAULT_DAYS_CHOICES, (d: number) => {
+          Text(this.vaultDaysLabel(d))
+            .fontSize(13)
+            .fontColor(this.vaultDays === d
+                       ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
+            .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+            .borderRadius(9)
+            .backgroundColor(this.vaultDays === d
+                             ? $r('app.color.launcher_border') : $r('app.color.launcher_bg'))
+            .margin({ left: 8 })
+            .onClick(() => { this.setVaultDays(d); })
+        }, (d: number) => String(d))
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16 })
+      .alignItems(VerticalAlign.Center)
+
+      /* [B] 上一次操作的结果。⛔ 只是一句话，不是门 —— 失败也照旧能继续用。 */
+      if (this.vaultNote !== '') {
+        Text(this.vaultNote)
+          .fontSize(12).fontColor($r('sys.color.warning'))
+          .width('100%').margin({ top: 10 }).padding({ left: 16, right: 16 })
+      }
+      /* [B] 清掉到期条目时**说一声** —— 默默地少掉几项会让玩家以为是自己记错了。 */
+      if (this.vaultPurgedLast > 0) {
+        Text('上次清理删掉了 ' + String(this.vaultPurgedLast) + ' 个到期的存档。')
+          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+          .width('100%').margin({ top: 10 }).padding({ left: 16, right: 16 })
+      }
+
+      Scroll() {
+        Row() {
+          Column() {
+            if (this.vaultEntries.length === 0) {
+              Text('垃圾站是空的')
+                .fontSize(15).fontColor($r('sys.color.font_secondary'))
+                .margin({ top: 20 })
+              Text('删掉的存档会先放到这里，到期才真正清理')
+                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                .margin({ top: 8 })
+            }
+            ForEach(this.vaultEntries, (e: VaultEntry) => {
+              Column() {
+                Row() {
+                  Column() {
+                    Text(e.label === '' ? e.id : e.label)
+                      .fontSize(15).fontColor($r('sys.color.font_primary'))
+                      .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                    Text('删除于 ' + formatMs(e.deletedMs) + '  ·  '
+                         + String(e.count) + ' 个文件  ·  ' + formatSaveSize(e.bytes))
+                      .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                      .margin({ top: 4 })
+                    Text(describeExpiry(e, Date.now()))
+                      .fontSize(12)
+                      .fontColor(e.archived
+                                 ? $r('sys.color.font_secondary') : $r('sys.color.warning'))
+                      .margin({ top: 2 })
+                  }
+                  .alignItems(HorizontalAlign.Start)
+                  .layoutWeight(1)
+                }
+                .width('100%')
+
+                Row() {
+                  Button('放回')
+                    .fontSize(13)
+                    .onClick(() => { this.doVaultRestore(e); })
+                  Button(e.archived ? '取消归档' : '归档')
+                    .fontSize(13)
+                    .margin({ left: 8 })
+                    .onClick(() => { this.doVaultToggleArchive(e); })
+                  Button('彻底删除')
+                    .fontSize(13)
+                    .fontColor($r('sys.color.warning'))
+                    .backgroundColor($r('app.color.launcher_bg'))
+                    .margin({ left: 8 })
+                    .onClick(() => { this.doVaultPurge(e); })
+                }
+                .width('100%')
+                .margin({ top: 10 })
+              }
+              .width('100%')
+              .padding(14)
+              .borderRadius(CARD_RADIUS_VP)
+              .backgroundColor($r('app.color.launcher_card'))
+              .margin({ bottom: 8 })
+              .alignItems(HorizontalAlign.Start)
+            }, (e: VaultEntry) => e.id)
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 12 })
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Start)
+        .alignItems(VerticalAlign.Top)
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .scrollBar(BarState.Off)
+
+      /* [B] 与悬浮底栏之间的留白。见 BAR_CLEARANCE_VP。 */
+      Blank().height(BAR_CLEARANCE_VP)
+    }
+    .width('100%').height('100%')
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  /* [A]
+   * 删除的确认框。
+   *
+   * ⭐ **它同时承担两件事**：「确认删除」与「选保留方式」。那两个选项就是垃圾站里条目的
+   *    两种状态（到期清理 / 归档不清理），所以不需要第二个窗。
+   *
+   * ⚠️ 结构照抄「打开数据隔离」那个窗（同屏遮罩 + 卡片 + 点卡片不冒泡 + **点空白不关**）：
+   *    那个窗的理由在这里同样成立 —— 一个手滑点空白就消失的确认框比没有更糟。
+   *    ⛔ 别照「关于 / 查看数据」那两个窗去加「点外面也关」，它们是**只读**的。
+   */
+  @Builder
+  DeleteAskDialog() {
+    Column() {
+      Column() {
+        Text('删除「' + this.selectedSaveLabel() + '」')
+          .fontSize(17).fontColor($r('sys.color.font_primary'))
+          .width('100%').textAlign(TextAlign.Center)
+        Text('它不会被抹掉，而是搬到垃圾站 —— 之后可以放回来。')
+          .fontSize(13).fontColor($r('sys.color.font_secondary'))
+          .width('100%').textAlign(TextAlign.Center)
+          .margin({ top: 12 })
+
+        Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
+
+        /* ---- 选项一：普通垃圾站（到期清理） ---- */
+        Text('保留到 ' + this.deleteExpiryText() + '，然后自动清理')
+          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+          .width('100%').textAlign(TextAlign.Center)
+          .margin({ top: 12 })
+        Button('放进垃圾站')
+          .fontSize(15)
+          .width('50%').alignSelf(ItemAlign.Center)
+          .margin({ top: 8 })
+          .onClick(() => { this.doVaultDelete(false); })
+
+        Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
+
+        /* ---- 选项二：归档 ---- */
+        Text('归档：不会自动清理，只能你手动放回或彻底删除')
+          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+          .width('100%').textAlign(TextAlign.Center)
+          .margin({ top: 12 })
+        Button('归档')
+          .fontSize(15)
+          .width('50%').alignSelf(ItemAlign.Center)
+          .margin({ top: 8 })
+          .onClick(() => { this.doVaultDelete(true); })
+
+        Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
+        Button('取消')
+          .fontSize(14)
+          .width('25%').alignSelf(ItemAlign.Center)
+          .margin({ top: 12 })
+          .onClick(() => { this.showDeleteAsk = false; })
+      }
+      .width('100%')
+      .constraintSize({ maxWidth: this.dialogWidthVp() })
+      .padding(20)
+      .backgroundColor($r('app.color.launcher_card'))
+      .borderRadius(CARD_RADIUS_VP)
+      .alignItems(HorizontalAlign.Start)
+      /* [B] 吞掉落在卡片上的点击 —— 与隔离窗同一处理由。 */
+      .onClick(() => {})
+    }
+    .width('100%').height('100%')
+    .backgroundColor('#80000000')
+    .justifyContent(FlexAlign.Center)
+    .padding({ left: 32, right: 32 })
+  }
+
   @Builder
   SavesTab() {
     Column() {
-      if (this.isNarrow() && this.panelOpen) {
+      /* [A] ⭐ 垃圾站是**另一个地方**，所以它在最外层就分开了 ——
+       * 进去之后看不到分段控件、也看不到存档列表，只有一个返回。
+       * ⚠️ 与「手机详情子页」同一个形状（那个也在最外层分），理由也一样：
+       *    它们是「去了别处」，不是「换了个视图」。 */
+      if (this.showVault) {
+        this.VaultView()
+      } else if (this.isNarrow() && this.panelOpen) {
         /* ===================== 窄屏：子页 ===================== */
         Row() {
           SymbolGlyph($r('sys.symbol.chevron_left'))
@@ -2009,7 +2385,19 @@ export struct LauncherHome {
                 this.savesView = SAVES_VIEW_VERSION;
                 this.panelOpen = false;
               })
+            /* [A] ⭐ 垃圾站入口。⚠️ 用一个 `Blank()` 把它推到**最右**，而不是给它
+             * `layoutWeight` —— 那会让它按剩余宽度撑开，点到的区域比看起来大得多。
+             * ⚠️ 空的时候也显示（写「垃圾站」而不写「(0)」）—— 一个数字 0 挂在那里
+             * 只会让人以为坏了；而**空垃圾站本身有说明作用**（删掉的东西会去哪）。 */
+            Blank()
+            Text(this.vaultEntries.length === 0
+                 ? '垃圾站'
+                 : ('垃圾站 ' + String(this.vaultEntries.length)))
+              .fontSize(13).fontColor($r('sys.color.brand'))
+              .padding({ left: 12, right: 4, top: 7, bottom: 7 })
+              .onClick(() => { this.openVault(); })
           }
+          .width('100%')
           .alignItems(VerticalAlign.Center)
 
           /* [B] 明确写出**在数哪个目录**。隔离一开一关，这个路径就换了 ——
@@ -2925,6 +3313,12 @@ export struct LauncherHome {
       /* [B] 点卡片【外面】的空白处也关。与右上角那个 ✕ 并存 —— 两个都是出口，
        * 而出口多一点，比少一点安全。 */
       .onClick(() => { this.showAbout = false; })
+    }
+
+    /* [A] 删除确认。⚠️ 排在「上次没能启动成功」**前面** —— Stack 里后声明的在上层，
+     * 而启动失败是必须处理的，不能被一个可选的确认框盖住。 */
+    if (this.showDeleteAsk) {
+      this.DeleteAskDialog()
     }
 
     if (this.launchFault !== '' && !this.faultAck) {

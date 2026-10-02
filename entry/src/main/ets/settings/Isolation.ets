@@ -27,6 +27,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { GameVersionParts, gameVersionParts } from '../games/GameLibrary';
+import { copyTreeInto, newTreeStat, TreeStat } from '../utils/FsTree';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
@@ -401,114 +402,14 @@ export function describeCounts(c: GameDataCounts): string {
 }
 
 /* [A]
- * 把**当前正在用的**游戏数据复制到某个粒度键下面。
+/* [A] 递归复制**不再在这里实现** —— 已抽到 `utils/FsTree.ets`，
+ * 因为存档垃圾站也要用它（搬家/放回/彻底删除），而本项目对「同一件事两份实现」
+ * 付过好几次代价。
  *
- * ⭐ **它是复制，不是移动** —— 源目录一个字都不动（用户 2026-10-02 定的「留一个当备份」）。
- * ⇒ 因此它是**可逆**的：玩家把隔离关掉，看到的还是原来那一份。
- *
- * ⚠️ 为什么值得单独一个函数而不是就地写几行：它要建目录、要吞异常、要能在界面上报出
- *    失败原因，而这三件事散在 UI 代码里会长成一团。
- *
- * 返回：'' 表示成功；否则是给玩家看的一句话。
- */
-/** [B] 递归复制的记账。`firstError` 只留第一条，够定位就行。 */
-interface CopyStat {
-  dirs: number;
-  files: number;
-  failed: number;
-  firstError: string;
-}
+ * ⛔⛔ 那份实现里记着**为什么不能用 `fs.copyDirSync`** —— 2026-10-02 的四用例实测
+ * 证明它在我们的沙箱里**连一个空目录都复制不了**（`Invalid argument`）。
+ * ⭐ 那段记录连同证据一起搬到了 `FsTree.ets`，别在这里重抄一遍（会分叉）。 */
 
-/* [A]
- * 递归复制一棵目录树 —— **不用 `fs.copyDirSync`**。
- *
- * ⛔⛔ 为什么不用那个 API：2026-10-02 在平板上**实测**过，它在我们的沙箱里**根本不可用**。
- *   一次四用例的二分（全部在同一台设备、同一次启动里跑）：
- *
- *     `copyDirSync(空目录, 新路径)`        -> ❌ Invalid argument (13900020)
- *     `copyFileSync(单个文件, 新路径)`     -> ✅ OK
- *     `copyDirSync(saves/, 新路径)`        -> ❌ Invalid argument
- *     `copyDirSync(整棵数据树, 新路径)`    -> ❌ Invalid argument
- *
- *   ⭐ **「连复制一个空目录都失败」这一条把「源的问题」和「路径的问题」一起排除了** ——
- *      所以不是内容里有怪东西、不是父目录没建、不是路径太长。
- *      （⚠️ 我先前正是猜「父目录没建」，还照着改了代码 —— **猜错了**。
- *      真正把假设打死的就是那个空目录用例。）
- *   ⇒ 我们**不需要**知道它为什么坏。**判据是：一个连空目录都复制不了的 API，不能用。**
- *
- * ⭐ 三个替代积木**都实测可用**：`mkdirSync`、`listFileSync`（存档列表一直在用）、
- *    `copyFileSync`（上面那个用例 2）。它们拼起来就是一棵树的复制。
- *
- * ⚠️ `depth` 是**环的保护**：`statSync` 会跟随符号链接，而指向上级的链接会让递归不终止。
- *    沙箱里实测没有符号链接，但防御要留着 —— 一个不终止的递归会把主线程钉死。
- * ⚠️ 这是**同步**递归：几百次 IO 会把主线程占住（实测见日志里的文件数）。
- *    它只在玩家点「复制过去」时跑一次，且那时已经过了二次确认 —— 可接受。
- *    ⛔ 但**别把它挪进渲染路径**。
- */
-function copyTreeInto(src: string, dst: string, depth: number, acc: CopyStat): void {
-  if (depth > 32) {
-    acc.failed += 1;
-    if (acc.firstError === '') {
-      acc.firstError = '目录层级超过 32 层（可能有环）';
-    }
-    return;
-  }
-  try {
-    if (!fs.accessSync(dst)) {
-      fs.mkdirSync(dst, true);
-    }
-  } catch (e) {
-    const err = e as BusinessError;
-    acc.failed += 1;
-    if (acc.firstError === '') {
-      acc.firstError = '建目录失败 ' + dst + '：' + err.message;
-    }
-    return;
-  }
-  acc.dirs += 1;
-
-  let names: string[] = [];
-  try {
-    names = fs.listFileSync(src);
-  } catch (e) {
-    const err = e as BusinessError;
-    acc.failed += 1;
-    if (acc.firstError === '') {
-      acc.firstError = '列目录失败 ' + src + '：' + err.message;
-    }
-    return;
-  }
-
-  for (const n of names) {
-    const s: string = src + '/' + n;
-    const d: string = dst + '/' + n;
-    let isDir: boolean = false;
-    try {
-      isDir = fs.statSync(s).isDirectory();
-    } catch (e) {
-      const err = e as BusinessError;
-      acc.failed += 1;
-      if (acc.firstError === '') {
-        acc.firstError = '读状态失败 ' + s + '：' + err.message;
-      }
-      continue;
-    }
-    if (isDir) {
-      copyTreeInto(s, d, depth + 1, acc);
-    } else {
-      try {
-        fs.copyFileSync(s, d);
-        acc.files += 1;
-      } catch (e) {
-        const err = e as BusinessError;
-        acc.failed += 1;
-        if (acc.firstError === '') {
-          acc.firstError = '复制失败 ' + s + '：' + err.message;
-        }
-      }
-    }
-  }
-}
 
 export function copyLiveDataInto(key: string): string {
   const src: string = liveGameDataDir();
@@ -535,7 +436,7 @@ export function copyLiveDataInto(key: string): string {
    * ⚠️ 那段「父目录」的解释已作废，别再从历史里捡回来。
    *    ⭐ 现在的实现**不需要**预先建任何父目录 —— `copyTreeInto` 每进一层自己 mkdir。
    */
-  const acc: CopyStat = { dirs: 0, files: 0, failed: 0, firstError: '' };
+  const acc: TreeStat = newTreeStat();
   copyTreeInto(src, dst, 0, acc);
   if (acc.failed > 0) {
     /* ⚠️⚠️ 把 src / dst 与**第一个**错误都打进日志。
