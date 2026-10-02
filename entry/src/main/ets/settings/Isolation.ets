@@ -260,6 +260,22 @@ export function liveGameDataDir(): string {
   return NATIVE_FILES + GAME_DATA_SUFFIX;
 }
 
+/* [A]
+ * 按【这一次的粒度与选中项】解出游戏数据目录 —— 与 native 在启动时算 `user.home` 用的是
+ * 同一套输入（`ISOLATION_FILE` 里那三个字段就来自这台机器上同一份状态）。
+ *
+ * ⭐ 为什么要有这个函数：存档管理器必须**看同一个目录**，否则它会列出另一份存档，
+ *    而那是最坏的一类不一致 —— 界面上看起来完全正常。
+ *
+ * ⚠️ 两者仍然可能分叉的地方：native 是在**启动那一刻**读的桥，而这里是**页面读到的时候**算的。
+ *    玩家在启动器里改了粒度、还没重启的话，这里算出来的就是**新的**、而游戏那边还是**旧的**。
+ *    ⇒ 调用方（存档页）要把这件事说清楚，或者在切换粒度后提示需要重启。
+ */
+export function resolveGameDataDir(granularity: string, source: string, jarPath: string): string {
+  const key: string = computeKey(granularity, source, jarPath);
+  return key === '' ? liveGameDataDir() : isolatedGameDataDir(key);
+}
+
 /** [B] 两个目录都存在吗。界面用它决定「复制」那一条要不要给。 */
 export function gameDataExists(dir: string): boolean {
   try {

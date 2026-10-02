@@ -49,13 +49,82 @@ import { readWidthPct, writeWidthPct, WIDTH_PCT_MIN, WIDTH_PCT_MAX,
          LAUNCH_MODE_HOME, LAUNCH_MODE_GAME } from '../settings/LauncherPrefs';
 /* [A] 版本隔离：四档粒度、键的计算、以及打开时的那次复制。
  * ⛔ 实际的 `-Duser.home=` 在 native 侧 —— 这里只负责【决定】并把结论写进桥。 */
+/* [A] 存档：一个存档 = 一个星球的一组 msav（或一个手动存档）。见那个文件的开头。 */
+import { SaveEntry, listSaves, formatSaveSize, formatSaveDate,
+         SaveMeta, readSaveMeta, newestFileOf } from '../games/SaveLibrary';
 import { GRANULARITY_OFF, GRANULARITY_NUMBER, GRANULARITY_BUILD, GRANULARITY_PATCH,
          computeKey, readGranularity, writeGranularity,
          copyLiveDataInto, gameDataExists, liveGameDataDir,
-         GameDataCounts, countsOf, describeCounts } from '../settings/Isolation';
+         GameDataCounts, countsOf, describeCounts,
+         resolveGameDataDir } from '../settings/Isolation';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
+
+/* [A] 「查看存档数据」弹窗里的一行：左标签、右值。
+ * ⚠️ 做成 `label + value` 两段而不是一整条字符串：值里会长成 `[a, b, c]` 那样带逗号的
+ *    东西，拼成一条就分不清哪儿是标签哪儿是值了。 */
+interface MetaRow {
+  label: string;
+  value: string;
+}
+
+/** [B] Unix 毫秒 -> `YYYY-MM-DD HH:MM`。存档里的 `saved` 是毫秒，而列表用的 `mtime` 是秒。 */
+function formatMsDateTime(ms: number): string {
+  const d: Date = new Date(ms);
+  const p = (n: number): string => n < 10 ? '0' + String(n) : String(n);
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+       + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+/* [A]
+ * 把 native 读出来的元数据排成给玩家看的几行。
+ *
+ * ⭐ 三条口径，都是有意的：
+ *
+ *   1. **空值不显示。** 手动存档没有 `sectorPreset`，硬塞一行「区块预置：（空）」只是噪音。
+ *   2. **「读取自」排在第一位。** 一个 Serpulo 战役有 14 个 `.msav`（每区块一个），
+ *      而这里只读了最新的那一个 ⇒ 「其他区块可能不同」这件事必须**看得见**，
+ *      不能藏起来让玩家以为这就是整个存档的属性。
+ *   3. ⚠️ **构建号那一行要说清它是什么。** `build` 是「**写**这个存档时的游戏构建号」，
+ *      ⛔ 不是「哪些版本能读它」—— 后者要拿模组清单和版本规则去算，是另一件事。
+ *      玩家的存档列表里已经显示版本，而这一行如果被读成「兼容范围」，就会误导人。
+ */
+function rowValue(rows: MetaRow[], label: string): string {
+  const hit: MetaRow | undefined = rows.find((r: MetaRow) => r.label === label);
+  return hit === undefined ? '' : hit.value;
+}
+
+function metaRowsOf(m: SaveMeta, sv: SaveEntry): MetaRow[] {
+  const rows: MetaRow[] = [];
+  const add = (label: string, value: string): void => {
+    if (value !== '') {
+      rows.push({ label: label, value: value });
+    }
+  };
+
+  const others: number = sv.sectors - 1;
+  add('读取自', m.fromFile + (others > 0 ? ('（另有 ' + String(others) + ' 个区块文件未读）') : ''));
+  add('写入时的构建号', m.build);
+  add('地图', m.mapname);
+  add('区块预置', m.sectorPreset);
+  add('波次', m.wave);
+  if (m.width !== '' && m.height !== '') {
+    add('地图尺寸', m.width + ' × ' + m.height);
+  }
+  add('玩家队伍', m.playerteam);
+  if (m.saved !== '') {
+    add('保存时间', formatMsDateTime(Number(m.saved)));
+  }
+  if (m.playtime !== '') {
+    const ticks: number = Number(m.playtime);
+    /* [B] 60 tick/秒（Mindustry 的固定步长）。给到分钟够用，再细就是假精度。 */
+    const mins: number = Math.floor(ticks / 60 / 60);
+    add('游戏内时长', String(ticks) + ' tick（约 ' + String(mins) + ' 分钟）');
+  }
+  add('模组', m.mods);
+  return rows;
+}
 
 /** [A]
  * 内容占窗口宽度的**百分比下限**（按 vp 算）。
@@ -270,6 +339,37 @@ export struct LauncherHome {
 
   /** [B] 玩家选的隔离粒度。改它要走 chooseGranularity()，别直接赋值。 */
   @State granularity: string = GRANULARITY_OFF;
+
+  /** [B] 存档列表。只含文件名/大小/时间，不含元数据 —— 元数据点开才读。 */
+  @State saves: SaveEntry[] = [];
+
+  /* [A] 当前选中的存档 id；'' 表示没选。
+   * ⭐ 带 `@Watch` —— 一选中就去读它的元数据（右侧栏要显示「哪个版本写的」）。
+   * ⚠️ `@Watch` **只在值真的变化时触发**，所以 `refresh()` 里还要显式调一次
+   *    `loadSelectedMeta()`：换目录/换页签后 id 常常没变，但那份存档已经换了。 */
+  @State @Watch('onSaveSelected') selectedSave: string = '';
+
+  /** [B] 这一屏读的是哪个 saves 目录 —— 显示出来，因为隔离会换目录。 */
+  @State savesDirShown: string = '';
+
+  /* [A]
+   * 选中那个存档的元数据。
+   *
+   * ⭐ **在【选中】时读一次，存下来**，而不是点开弹窗时才读 —— 因为右侧栏要显示
+   *    「这个存档是哪个版本写的」，那是**选中就该看到**的信息。一份数据两处用，
+   *    读一次就够（也避免弹窗打开时卡一下）。
+   *
+   * ⚠️ 存的是**排好的行**，不是 `SaveMeta` 原样：读这一步是**解压**（saveMetaText 走 zlib），
+   *    而把原始字段常驻 @State、每次重绘再翻译一遍，等于让每次界面刷新都依赖一堆
+   *    「这个字段可能是空串」的判断。⭐ 这样界面里也没有 native 类型，将来 native
+   *    多返回一个字段，只需改 `metaRowsOf()`，碰不到界面代码。
+   *
+   * ⚠️ `selMetaNote` 非空 ⇒ 读失败了，`selMetaRows` 里只有能确定的那一两行。
+   *    ⛔ **不允许「读失败但界面上看起来正常」** —— 那会让玩家以为存档是空的。
+   */
+  @State metaShown: boolean = false;
+  @State selMetaRows: MetaRow[] = [];
+  @State selMetaNote: string = '';
 
   /* [A]
    * ⭐ 打开隔离时的**询问窗**是否开着。
@@ -543,6 +643,24 @@ export struct LauncherHome {
     this.resolution = resolveGame(this.filesDir, this.bundleCodeDir);
     this.bundledVer = bundledGameVersion(this.bundleCodeDir);
     this.hasBundled = hasBundledGame(this.bundleCodeDir);
+
+    /* [A] 存档。⚠️ 目录**取决于隔离状态** —— 用与 native 算 `user.home` 同一套输入，
+     * 否则这里会列出另一份存档，而那是最坏的一类不一致：界面上看起来完全正常。
+     * ⚠️ 但两者仍可能分叉：玩家改了粒度但还没重启时，游戏那边还是旧目录。 */
+    const dataDir: string = resolveGameDataDir(this.granularity, this.resolution.source,
+                                              this.resolution.path);
+    const dir: string = dataDir + '/saves';
+    this.savesDirShown = dir;
+    this.saves = listSaves(dir);
+    /* [B] 选中的那个已经不在了（被删了/换了目录）⇒ 清掉选择，别指着一个不存在的东西。 */
+    if (this.selectedSave !== '' && !this.saves.some((x: SaveEntry) => x.id === this.selectedSave)) {
+      this.selectedSave = '';
+    }
+    /* [A] ⚠️ 必须显式再读一次。`@Watch` 只在 id **真的变了**时才触发，而这里的
+     * 常见情形恰恰是「id 没变、那份存档换了」—— 例如改了隔离粒度再回来：列表整份换掉，
+     * 但选中的那个如果两边同名，id 就一模一样。那时右侧栏会**显示上一个目录的元数据**，
+     * 而界面上完全看不出不对。 */
+    this.loadSelectedMeta();
     this.jarDirHint = gameJarDir(this.filesDir);
     /* ⚠️ 父文件夹叫 `Download`（单数）—— 这是**磁盘上的名字**，不是英文惯用的
      * "Downloads"。判据：`user_dirs.txt` 里记的是
@@ -553,6 +671,117 @@ export struct LauncherHome {
     hilog.info(DOMAIN, TAG, 'launcher: %{public}d jar(s), resolved=%{public}s (%{public}s)',
                this.games.length, this.resolution.path === '' ? '(none)' : this.resolution.path,
                this.resolution.source);
+  }
+
+  /** [B] 当前选中的那个存档项；没选（或它已经不在了）时 `undefined`。 */
+  private selectedSaveEntry(): SaveEntry | undefined {
+    if (this.selectedSave === '') {
+      return undefined;
+    }
+    return this.saves.find((x: SaveEntry) => x.id === this.selectedSave);
+  }
+
+  /* [A] 下面三个是给右侧栏用的取值函数。
+   * ⚠️ 为什么做成方法而**不是**在 `build()` 里声明局部变量：ArkUI 的 `build()` / `@Builder`
+   *    里**不允许声明本地变量** —— 那些语句会被当成 UI 描述解析，编译报的是语法错。
+   *    ⇒ 需要在界面上用的每一个值，都得是一个能直接写进表达式的方法。 */
+
+  /** [B] 选中存档的显示名；没选时空串。 */
+  private selectedSaveLabel(): string {
+    const sv: SaveEntry | undefined = this.selectedSaveEntry();
+    return sv === undefined ? '' : sv.label;
+  }
+
+  /** [B] 一行摘要：几个区块、几个文件、多大。 */
+  private selectedSaveSummary(): string {
+    const sv: SaveEntry | undefined = this.selectedSaveEntry();
+    if (sv === undefined) {
+      return '';
+    }
+    const parts: string[] = [];
+    if (sv.kind === 'sector') {
+      parts.push(String(sv.sectors) + ' 个区块');
+    }
+    parts.push(String(sv.files.length) + ' 个文件');
+    parts.push(formatSaveSize(sv.bytes));
+    return parts.join(' · ');
+  }
+
+  /** [B] 「最后更新 YYYY-MM-DD」。 */
+  private selectedSaveUpdated(): string {
+    const sv: SaveEntry | undefined = this.selectedSaveEntry();
+    return sv === undefined ? '' : ('最后更新 ' + formatSaveDate(sv.mtime));
+  }
+
+  /* [A] `loadSelectedMeta()` 上次读的是哪一个（`id@目录`）。
+   * ⚠️ 刻意**不是** `@State` —— 它不参与渲染，只是去重用的账本。做成 @State 会让
+   *    每次读完之后再多一次无意义的界面刷新。 */
+  private metaLoadedKey: string = '';
+
+  /** [A] `@Watch` 的落点。选中变了 ⇒ 去读那个存档的元数据。 */
+  private onSaveSelected(): void {
+    this.loadSelectedMeta();
+  }
+
+  /* [A]
+   * 读当前选中存档的元数据，存进 `selMetaRows`。
+   *
+   * ⚠️ 这里会**解压一个 .msav**（走 native 的 `saveMetaText`），有真实成本 ——
+   *    但一次只读**一个**文件，而且只在选中变化时做。列表那一步刻意不读内容就是这个原因
+   *    （见 SaveLibrary 开头）。
+   *
+   * ⭐ **读的是组里最新的那个文件，并把它的名字放进第一行**（见 `metaRowsOf`）。
+   *    一个 Serpulo 战役有 14 个区块文件，全部解压是几 MB 的 CPU，而玩家问「这是哪个版本
+   *    写的」通常指**最近在玩的那一个**。⇒ 读一个，同时让「其他区块可能不同」看得见。
+   *
+   * ⚠️ 三种情形都要各自有话说，⛔ **不允许「读失败但界面上看着正常」**：
+   *    a. 组里没有可用文件（只剩 `-backup`）；
+   *    b. native 读不出来（不是合法 msav、或被截断）；
+   *    c. 正常。
+   */
+  private loadSelectedMeta(): void {
+    const sv: SaveEntry | undefined = this.selectedSaveEntry();
+    /* [A] ⭐ 去重。读一次就是**解压一个 .msav**，而这件事会被两条路径同时触发：
+     *    `@Watch`（选中变了）和 `refresh()` 里那次显式调用（换目录后 id 可能没变）。
+     *    ⚠️ 实测：不加这一句，选中一个存档会**解压两遍**（日志里同一行出现两次）。
+     *
+     * ⭐ 键是 `id @ 目录`：id 相同但目录换了（改完隔离粒度再回来）**要**重读，
+     *    而两者都没变时重读没有任何意义。 */
+    const key: string = (sv === undefined ? '' : (sv.id + '@' + this.savesDirShown));
+    if (key === this.metaLoadedKey) {
+      return;
+    }
+    this.metaLoadedKey = key;
+
+    this.selMetaRows = [];
+    this.selMetaNote = '';
+    if (sv === undefined) {
+      return;
+    }
+    const file: string = newestFileOf(sv, this.savesDirShown);
+    if (file === '') {
+      this.selMetaNote = '这个存档里没有可读的文件（只剩备份）。';
+      hilog.info(DOMAIN, TAG, 'saves: %{public}s has no readable file', sv.id);
+      return;
+    }
+
+    const m: SaveMeta = readSaveMeta(this.savesDirShown + '/' + file);
+    if (!m.ok) {
+      this.selMetaRows = [{ label: '读取自', value: file }];
+      this.selMetaNote = '这个文件读不出来，可能不是有效的存档，或者已损坏。';
+    } else {
+      this.selMetaRows = metaRowsOf(m, sv);
+    }
+    hilog.info(DOMAIN, TAG, 'saves: meta of %{public}s ok=%{public}s build=%{public}s',
+               file, String(m.ok), m.build);
+  }
+
+  /** [A] 打开「查看存档数据」弹窗。数据已经读好了（见 loadSelectedMeta）。 */
+  private openSaveMeta(): void {
+    if (this.selectedSaveEntry() === undefined) {
+      return;
+    }
+    this.metaShown = true;
   }
 
   /** [A] 玩家点了某个 jar。只是【记下来】，不在这里启动 —— 启动要重建整棵树。 */
@@ -851,6 +1080,198 @@ export struct LauncherHome {
     .alignItems(HorizontalAlign.Start)
     /* [A] 给悬浮栏让位，见 BAR_CLEARANCE_VP。 */
     .padding({ bottom: BAR_CLEARANCE_VP })
+  }
+
+  /* [A]
+   * 存档页。
+   *
+   * 用户 2026-10-02 的规格：「打开可以看到所有存档（按照粒度分，是整个星球的 msav 在一起算
+   * 一个存档）」。⭐ 左右两侧**对称**（这一条我提了建议、用户同意）：不管左边选的是什么，
+   * 右边永远是同一套「详情 + 对它可做的事」。
+   *
+   * ⚠️ 这一版只做**列表 + 选中**。详情与那四个操作（删除/复制/移动/查看数据）是后面几步 ——
+   *    先让列表能看、能选，再看效果往上堆。
+   *
+   * ⛔⛔ **`@Builder` 必须紧挨着方法声明，中间不能夹注释。**
+   *    第一版我把这段说明写在 `@Builder` 与 `SavesTab()` 之间，编译报的是一串
+   *    「';' expected」，位置指向**后面**那个方法 —— 完全看不出病因在注释上。
+   *    ⇒ 装饰器与它修饰的声明之间不插任何东西。
+   */
+  @Builder
+  SavesTab() {
+    Column() {
+      Row() {
+        Column() {
+          Text('存档')
+            .fontSize(18).fontColor($r('sys.color.font_primary'))
+          /* [B] 明确写出**在数哪个目录**。隔离一开一关，这个路径就换了 ——
+           * 而不写出来的话，玩家会以为存档丢了。 */
+          Text(this.savesDirShown === '' ? '（还没读到目录）' : this.savesDirShown)
+            .fontSize(11).fontColor($r('sys.color.font_tertiary'))
+            .margin({ top: 4 })
+            .copyOption(CopyOptions.LocalDevice)
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+      }
+      .width(this.contentWidthVp())
+      .padding({ left: 16, right: 16, top: 20 })
+
+      if (this.saves.length === 0) {
+        Column() {
+          Text('没有存档')
+            .fontSize(15).fontColor($r('sys.color.font_secondary'))
+          Text('进游戏玩一局，存档会出现在这里')
+            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+            .margin({ top: 8 })
+        }
+        .width(this.contentWidthVp())
+        .padding({ left: 16, right: 16, top: 40 })
+        .alignItems(HorizontalAlign.Start)
+      } else {
+        /* [A]
+         * 左列表 + 右详情。用户 2026-10-02 的布局：「左侧列表选择存档/版本，
+         * 右侧可以看到存档生效于哪个版本」，并要求左右**对称** —— 不管左边选的是什么，
+         * 右边永远是同一套「详情 + 对它可做的事」。
+         *
+         * ⚠️ 这一版右边只有一个动作「查看存档数据」。复制/移动/删除是后面几步，
+         *    它们加进同一处，⛔ **不需要动这里的左右分栏**。
+         *
+         * ⚠️ 两栏**等宽**（各 `layoutWeight(1)`），不按内容分：左边是存档名（短），
+         *    右边是版本/地图（也短），按内容分会让两栏随选中项不停挪位置。
+         *    等宽由**结构**保证，不需要给某个拍出来的数。
+         */
+        Row() {
+          Scroll() {
+            Row() {
+              Column() {
+                /* ⚠️ 列表项**内联**写，不抽 @Builder —— 那个坑见文件开头（@Builder 按值传递，
+                 *    `selected` 变了不会重跑，于是点上去看着像「没反应」）。 */
+                ForEach(this.saves, (sv: SaveEntry) => {
+                  Row() {
+                    Column() {
+                      Text(sv.label)
+                        .fontSize(15)
+                        .fontColor(this.selectedSave === sv.id
+                                   ? $r('sys.color.brand') : $r('sys.color.font_primary'))
+                        .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                      Text((sv.kind === 'sector' ? (sv.sectors + ' 个区块 · ') : '')
+                           + formatSaveSize(sv.bytes) + ' · ' + formatSaveDate(sv.mtime))
+                        .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                        .margin({ top: 4 })
+                    }
+                    .alignItems(HorizontalAlign.Start)
+                    .layoutWeight(1)
+
+                    if (this.selectedSave === sv.id) {
+                      Text('✓')
+                        .fontSize(16).fontColor($r('sys.color.brand'))
+                    }
+                  }
+                  .width('100%')
+                  .padding(14)
+                  .borderRadius(CARD_RADIUS_VP)
+                  .backgroundColor($r('app.color.launcher_card'))
+                  .margin({ bottom: 8 })
+                  .onClick(() => { this.selectedSave = sv.id; })
+                }, (sv: SaveEntry) => sv.id)
+              }
+              .width('100%')
+              .padding({ left: 16, right: 8, top: 12 })
+            }
+            /* [A] ⭐⭐ 这两行是「列表贴着顶部」的全部原因，而它们是从 GamesTab
+             * **抄过来的** —— 我第一版漏了，于是列表在竖直方向**居中**。
+             *
+             * ⚠️ 关键的是 `alignItems(VerticalAlign.Top)`：Row 的交叉轴默认是
+             *    `VerticalAlign.Center`，而 `height('100%')` 让它有整个视口那么高
+             *    ⇒ 内容就被摆在**中间**了。
+             * ⛔ 少了 height 则 Row 只是内容高，`VerticalAlign` 看不出差别 ——
+             *    **两行缺一不可**，而症状只在有 height 时才出现。 */
+            .width('100%')
+            .height('100%')
+            .justifyContent(FlexAlign.Start)
+            .alignItems(VerticalAlign.Top)
+          }
+          .layoutWeight(1)
+          .height('100%')
+          .scrollBar(BarState.Off)
+
+          /* [A]
+           * 右侧：这个存档的详情，以及**对它可做的事**。
+           *
+           * ⭐ 这里只放**选完就该看见**的几项（版本、地图、时间）；
+           *    完整的字段在「查看存档数据」弹窗里。两处**刻意不重复** ——
+           *    重复的话，将来加一个字段要改两个地方，而它们迟早会分叉。
+           *
+           * ⚠️ 读失败时（`selMetaNote` 非空）**只显示那句话**，不显示半截数据 ——
+           *    ⛔ 一个「读不出来」的存档如果看起来和正常存档一样（只是字段空着），
+           *    玩家会以为存档本身是空的。
+           */
+          Column() {
+            if (this.selectedSave === '') {
+              Text('从左边选一个存档')
+                .fontSize(13).fontColor($r('sys.color.font_tertiary'))
+            } else {
+              Text(this.selectedSaveLabel())
+                .fontSize(16).fontColor($r('sys.color.font_primary'))
+                .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
+              Text(this.selectedSaveSummary())
+                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                .margin({ top: 6 })
+              Text(this.selectedSaveUpdated())
+                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                .margin({ top: 4 })
+
+              Divider()
+                .strokeWidth(1).color($r('app.color.launcher_border'))
+                .margin({ top: 14, bottom: 14 })
+
+              if (this.selMetaNote !== '') {
+                Text(this.selMetaNote)
+                  .fontSize(12).fontColor($r('sys.color.font_secondary'))
+              } else {
+                Text('写入时的游戏构建号')
+                  .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                Text(rowValue(this.selMetaRows, '写入时的构建号') === ''
+                     ? '—' : rowValue(this.selMetaRows, '写入时的构建号'))
+                  .fontSize(22).fontColor($r('sys.color.font_primary'))
+                  .margin({ top: 2 })
+
+                if (rowValue(this.selMetaRows, '地图') !== '') {
+                  Text('地图  ' + rowValue(this.selMetaRows, '地图'))
+                    .fontSize(12).fontColor($r('sys.color.font_secondary'))
+                    .margin({ top: 10 })
+                }
+                if (rowValue(this.selMetaRows, '保存时间') !== '') {
+                  Text('保存于  ' + rowValue(this.selMetaRows, '保存时间'))
+                    .fontSize(12).fontColor($r('sys.color.font_secondary'))
+                    .margin({ top: 4 })
+                }
+              }
+
+              Button('查看存档数据')
+                .fontSize(14)
+                .width('60%').alignSelf(ItemAlign.Start)
+                .margin({ top: 18 })
+                .onClick(() => { this.openSaveMeta(); })
+            }
+          }
+          .layoutWeight(1)
+          .height('100%')
+          .padding({ left: 8, right: 16, top: 12 })
+          .alignItems(HorizontalAlign.Start)
+        }
+        .width(this.contentWidthVp())
+        .height('100%')
+        .layoutWeight(1)
+        .alignItems(VerticalAlign.Top)
+      }
+
+      /* [B] 与悬浮底栏之间的留白。见 BAR_CLEARANCE_VP。 */
+      Blank().height(BAR_CLEARANCE_VP)
+    }
+    .width('100%').height('100%')
+    .alignItems(HorizontalAlign.Start)
   }
 
   @Builder
@@ -1203,6 +1624,7 @@ export struct LauncherHome {
       if (this.canFloat) {
         Tabs({ barPosition: BarPosition.End }) {
           TabContent() { this.GamesTab() }.tabBar(this.tabItem($r('sys.symbol.house_fill'), '首页'))
+          TabContent() { this.SavesTab() }.tabBar(this.tabItem($r('sys.symbol.doc_text'), '存档'))
           TabContent() { this.SettingsTab() }.tabBar(this.tabItem($r('sys.symbol.gearshape_fill'), '设置'))
         }
         .barFloatingStyle({
@@ -1273,6 +1695,7 @@ export struct LauncherHome {
          */
         Tabs({ barPosition: BarPosition.End }) {
           TabContent() { this.GamesTab() }.tabBar(this.tabItem($r('sys.symbol.house_fill'), '首页'))
+          TabContent() { this.SavesTab() }.tabBar(this.tabItem($r('sys.symbol.doc_text'), '存档'))
           TabContent() { this.SettingsTab() }.tabBar(this.tabItem($r('sys.symbol.gearshape_fill'), '设置'))
         }
         .barOverlap(true)
@@ -1575,6 +1998,101 @@ export struct LauncherHome {
       /* [B] 点卡片【外面】的空白处也关。与右上角那个 ✕ 并存 —— 两个都是出口，
        * 而出口多一点，比少一点安全。 */
       .onClick(() => { this.showAbout = false; })
+    }
+
+    /* [A]
+     * 「查看存档数据」。
+     *
+     * ⭐ 结构照抄「关于」那个窗口（同屏遮罩 + 卡片 + 点卡片不冒泡 + 点空白也关）——
+     *    理由也相同：里面的文字**要能选中/复制**，所以点卡片不能等于点遮罩。
+     *    与「打开数据隔离」那个窗不同：那个会改数据位置，所以只留「取消」一个出口；
+     *    这个是**只读**的，多一个出口只会更顺手。
+     *
+     * ⚠️ 它排在「上次没能启动成功」那个弹窗**前面** —— Stack 里后声明的在上层，
+     *    而启动失败是必须处理的，不能被一个可选的读数窗盖住。
+     *
+     * ⚠️ 行内容在**可滚动**的一块里：`模组` 那条会长成 `[a, b, c]`，行数也跟着变，
+     *    裸 Column 会把卡片撑高、把 ✕ 顶出屏幕。
+     */
+    if (this.metaShown) {
+      Column() {
+        Column() {
+          Row() {
+            Text(this.selectedSaveLabel())
+              .fontSize(18).fontColor($r('sys.color.font_primary'))
+              .layoutWeight(1)
+              .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+            Text('✕')
+              .fontSize(18).fontColor($r('sys.color.font_secondary'))
+              .padding({ left: 14, right: 4, top: 2, bottom: 2 })
+              .onClick(() => { this.metaShown = false; })
+          }
+          .width('100%')
+
+          Text('存档数据')
+            .fontSize(13).fontColor($r('sys.color.font_tertiary'))
+            .margin({ top: 4 })
+          /* [B] 明确写出**是从哪个目录读的** —— 隔离一开一关，来源就换了。 */
+          Text(this.savesDirShown)
+            .fontSize(11).fontColor($r('sys.color.font_tertiary'))
+            .margin({ top: 4 })
+            .copyOption(CopyOptions.LocalDevice)
+
+          Scroll() {
+            Column() {
+              ForEach(this.selMetaRows, (r: MetaRow) => {
+                Row() {
+                  Text(r.label)
+                    .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                    .width(96)
+                  Text(r.value)
+                    .fontSize(12).fontColor($r('sys.color.font_primary'))
+                    .layoutWeight(1)
+                    .copyOption(CopyOptions.LocalDevice)
+                }
+                .width('100%')
+                .margin({ bottom: 8 })
+                /* ⚠️ 值可能很长（`模组` 是一整串、`保存时间` 也比标签长），
+                 * 两行之后省略 —— 要全的就点上面的「读取自」那一行去复制，或者
+                 * 用命令行的 `hdc`。这里不做「展开」，那会把卡片变成一屏文件浏览器。 */
+                .alignItems(VerticalAlign.Top)
+              }, (r: MetaRow) => r.label)
+
+              if (this.selMetaNote !== '') {
+                Text(this.selMetaNote)
+                  .fontSize(12).fontColor($r('sys.color.font_secondary'))
+                  .width('100%').margin({ top: 4 })
+              }
+            }
+            .width('100%')
+          }
+          .width('100%')
+          .constraintSize({ maxHeight: FAULT_BOX_VP })
+          .align(Alignment.TopStart)
+          .margin({ top: 14 })
+
+          /* [A] ⚠️ 这一句**必须留着**。
+           *    `build` 是「**写**这个存档时的游戏构建号」，而玩家很容易把它读成
+           *    「这个存档能在哪些版本上用」—— 后者还要看模组清单和版本规则，是另一件事。
+           *    ⛔ 不写这句，界面就在**主动误导**，而界面上看不出来。 */
+          Text('这里的构建号是写这个存档时的游戏版本，不是兼容范围 —— 能不能读还取决于模组。')
+            .fontSize(11).fontColor($r('sys.color.font_tertiary'))
+            .margin({ top: 10 })
+        }
+        .width('100%')
+        .constraintSize({ maxWidth: this.dialogWidthVp() })
+        .padding(20)
+        .backgroundColor($r('app.color.launcher_card'))
+        .borderRadius(CARD_RADIUS_VP)
+        .alignItems(HorizontalAlign.Start)
+        /* [B] 吞掉落在卡片上的点击，别冒泡到遮罩把窗口关掉。与「关于」同一处理由。 */
+        .onClick(() => {})
+      }
+      .width('100%').height('100%')
+      .backgroundColor('#80000000')
+      .justifyContent(FlexAlign.Center)
+      .padding({ left: 32, right: 32 })
+      .onClick(() => { this.metaShown = false; })
     }
 
     if (this.launchFault !== '' && !this.faultAck) {
