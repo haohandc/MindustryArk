@@ -2079,10 +2079,19 @@ export struct LauncherHome {
     } else {
       this.multiPicked = this.multiPicked.concat([key]);
     }
-    /* [B] 一个都不剩 ⇒ 自动退出多选。⛔ 留着一个「已选 0 项」的条只会让人以为卡住了。 */
-    if (this.multiPicked.length === 0) {
-      this.exitMulti();
-    }
+    /* [A] ⛔⛔ **一个都不剩也【不】退出多选**（用户 2026-10-03：
+     *    「进入多选后，再点击选中的唯一一项不应该退出多选。要退出只能点取消」）。
+     *
+     * ⛔ 我原来在这里自动退出，理由写的是「留着一个『已选 0 项』的条会让人以为卡住了」。
+     *    ⭐ 那句话把一个**正常状态**当成了异常：一次点击做了两件事
+     *      （取消勾选 **＋** 退出模式），而玩家只要求了第一件。
+     *    ⇒ 后果是**取消按钮形同虚设**：只要把最后一项点掉，模式自己就走了 ——
+     *      于是那个按钮永远等不到被按，玩家也就学不会「退出是它管的」。
+     *
+     * ⚠️ 0 项时那个「删除」是 `enabled(false)` 的（见 `MultiBar`），
+     *    所以这个状态本身没有危险动作可做 —— 它只是「还没选」。
+     *    ⛔ 别再拿「怕玩家误以为卡住」当理由加回去：那是**替玩家决定**他已经选完了。
+     */
   }
 
   /* [B] 退出多选。⚠️ 顺带把那两个只属于多选的开关也清掉 ——
@@ -2123,7 +2132,8 @@ export struct LauncherHome {
   private deleteMultiToVault(): void {
     const rows: SaveRow[] = this.pickedRows();
     if (rows.length === 0) {
-      this.exitMulti();
+      /* [B] 一个都没勾 ⇒ 什么都不做。⛔ 也不退出 —— 与 toggleMultiPick 同一条规则：
+       * 退出只归「取消」管。（按钮本来就是禁用的，这里只是防御。） */
       return;
     }
     const now: number = Date.now();
