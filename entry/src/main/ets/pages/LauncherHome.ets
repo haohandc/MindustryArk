@@ -1247,6 +1247,12 @@ export struct LauncherHome {
     if (this.isolationStale) {
       hilog.error(DOMAIN, TAG, 'isolation: STALE -- on, but %{public}s does not exist '
                 + '(the un-isolated copy does)', dataDir);
+    } else {
+      /* [B] 状态解除了 ⇒ 上一次那句「没复制成功」不再关于任何东西 —— 清掉。
+       * ⚠️ 不清的话它会一直挂在 `StaleCopyOffer` 里，等**下一次**出现空的档位时
+       *    重新露出来，而那时它说的是另一个键的事。⛔ 一条关于旧状态的错误消息
+       *    比没有消息更坏：它指向一个已经不存在的问题。 */
+      this.staleCopyNote = '';
     }
     /* [A] ⚠️ 版本列表要在 `resolution` / `hasBundled` / `games` **都算好之后**才能建 ——
      * 它三样都用（判定谁是「当前版本」、内置那份在不在、有哪些玩家 jar）。
