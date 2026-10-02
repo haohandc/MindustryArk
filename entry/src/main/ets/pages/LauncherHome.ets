@@ -1896,8 +1896,29 @@ export struct LauncherHome {
    * 所以「选中」与「进去看」是同一个动作（用户 2026-10-02：「如果手机上点，
    * 就是进去那个子页面，可以返回退出」）。
    * ⚠️ 宽屏时不设 `panelOpen` —— 那时详情一直就在右边。 */
+  /* [A] ⭐⭐ 点**已经选中的那一行** = 取消选中（用户 2026-10-02）：
+   *    「点击我选中过的，取消选中，右边界面变空（单选时）」。
+   *
+   * ⭐ 为什么需要它：`selectedSave` 之前**只增不减** —— 一旦点过任何一行，
+   *    右边就永远挂着一份详情，而“我不想看任何东西”这个状态**无法到达**。
+   *    ⚠️ 那不只是少一个功能：右边那块占据屏幕的三分之一（3:7 的两栏），
+   *      而它显示什么完全由一次很久以前的点击决定。
+   *
+   * ⚠️ **只在单选态生效**：多选态的点击是「勾/取消勾」，走 `toggleMultiPick`
+   *    （调用点已经分开，见两张列表的 onClick）—— 两件事都叫“取消选中”，
+   *    但取消的东西不同：这里取消的是**详情**，那里取消的是**勾选**。
+   *
+   * ⚠️ 窄屏（手机）**不在这里退子页**：手机上一个存档本来就是“进去看”，
+   *    再点一下应当还是“看”，⛔ 不是把自己弹出去 —— 那会让人以为点坏了。
+   *    出口是左上角那个返回箭头（它本来就在）。
+   */
   private openSaveRow(dir: string, id: string): void {
-    this.selectedSave = this.saveKey(dir, id);
+    const key: string = this.saveKey(dir, id);
+    if (this.selectedSave === key) {
+      this.selectedSave = '';
+      return;
+    }
+    this.selectedSave = key;
     if (this.isNarrow()) {
       this.panelOpen = true;
     }
@@ -3114,7 +3135,10 @@ export struct LauncherHome {
                   this.toggleMultiPick(this.saveKey(this.versionSavesDir(), sv.id));
                   return;
                 }
-                this.selectedSave = this.saveKey(this.versionSavesDir(), sv.id);
+                /* [B] 与「按存档」那边同一套：点已选中的那一条 = 取消选中。
+                 * ⚠️ 别在这里直接赋值 —— 两处行为不一致时，同一个动作在不同视图下
+                 * 结果不同，而那不是“两个视图”，是“两个东西”。 */
+                this.openSaveRow(this.versionSavesDir(), sv.id);
               })
             }, (sv: SaveEntry) => sv.id)
           }
