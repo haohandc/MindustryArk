@@ -73,6 +73,8 @@ import { SaveEntry, listSaves, formatSaveSize, formatSaveDate,
 import { VaultEntry, vaultDelete, listVault, vaultRestore, vaultPurge,
          vaultSetArchived, purgeExpired, describeExpiry, formatMs,
          readVaultDays, writeVaultDays, VAULT_DAYS_CHOICES } from '../games/SaveVault';
+/* [A] 复制 / 移动。⚠️ 同版本复制只对手动存档开放 —— 理由见那个文件的开头。 */
+import { copySaveTo, moveSaveTo, duplicateSave, countSavesIn } from '../games/SaveTransfer';
 import { GRANULARITY_OFF, GRANULARITY_NUMBER, GRANULARITY_BUILD, GRANULARITY_PATCH,
          readGranularity, writeGranularity,
          copyLiveDataInto, gameDataExists, liveGameDataDir,
@@ -505,6 +507,11 @@ export struct LauncherHome {
   @State showDeleteAsk: boolean = false;
   /** [B] 上一次清掉几个到期条目，用来告诉玩家一句。0 表示没有。 */
   @State vaultPurgedLast: number = 0;
+
+  /** [B] 复制/移动的目标选择开着吗，以及是哪一种。`''` = 关着。 */
+  @State transferOp: string = '';
+  /** [B] 目标选择框里的提示（''=没有）。⛔ 只是一句话，不是门。 */
+  @State transferNote: string = '';
 
   /* [A]
    * 选中那个存档的元数据。
@@ -1484,6 +1491,69 @@ export struct LauncherHome {
     return d >= 30 ? '1 个月' : (String(d) + ' 天');
   }
 
+  /* ---- 复制 / 移动 ---- */
+
+  private askTransfer(op: string): void {
+    if (this.selectedSave === '') {
+      return;
+    }
+    this.transferOp = op;
+    this.transferNote = '';
+  }
+
+  /* [A]
+   * 能当目标的版本 —— **排除当前版本自己**。
+   * ⚠️ 判据是**数据目录**相同，不是 path 不同：隔离关着时所有版本的目录是同一个，
+   *    那时「复制到别的版本」等于复制到同一个目录 ⇒ 必须也排除掉，
+   *    否则会出现一个看起来能选、点下去报「源和目标在同一个目录」的选项。
+   */
+  private transferTargets(): VersionEntry[] {
+    const here: string = this.savesDirShown;
+    return this.versions.filter((v: VersionEntry) => (v.dataDir + '/saves') !== here);
+  }
+
+  /** [B] 目标那一行的后果说明。⭐ 用户要的就是「移动前讲清后果」。 */
+  private transferTargetNote(v: VersionEntry): string {
+    const n: number = countSavesIn(v.dataDir + '/saves');
+    const head: string = n === 0
+      ? '它还没有存档'
+      : ('它现在有 ' + String(n) + ' 个存档');
+    if (this.transferOp === 'move') {
+      return head + '；移过去之后，这个存档只在「' + v.label + '」下有。';
+    }
+    return head + '；复制一份过去，两边都有。';
+  }
+
+  /** [B] 复制/移动到某个 `saves/` 目录。 */
+  private doTransferTo(toDir: string): void {
+    const sv: SaveEntry | undefined = this.selectedSaveEntry();
+    if (sv === undefined) {
+      return;
+    }
+    const err: string = this.transferOp === 'move'
+      ? moveSaveTo(sv, this.savesDirShown, toDir)
+      : copySaveTo(sv, this.savesDirShown, toDir);
+    this.transferNote = err;
+    if (err === '') {
+      this.transferOp = '';
+    }
+    this.refresh();
+  }
+
+  /** [B] 同版本再存一份（改名复制）。 */
+  private doDuplicate(): void {
+    const sv: SaveEntry | undefined = this.selectedSaveEntry();
+    if (sv === undefined) {
+      return;
+    }
+    const err: string = duplicateSave(sv, this.savesDirShown);
+    this.transferNote = err;
+    if (err === '') {
+      this.transferOp = '';
+    }
+    this.refresh();
+  }
+
   /* [A] ⭐⭐ 窄屏（手机）的判定，以及「详情子页」是否开着。
    *
    * ⚠️ 阈值 600 vp 与参考项目 AMCL 一致（他们 `viewportWidth >= 600` 才走双栏）。
@@ -1971,10 +2041,18 @@ export struct LauncherHome {
           .margin({ top: 14, bottom: 12 })
 
         Row() {
+          Button('复制')
+            .fontSize(BUTTON_FONT_VP)
+            .onClick(() => { this.askTransfer('copy'); })
+          Button('移动')
+            .fontSize(BUTTON_FONT_VP)
+            .margin({ left: 8 })
+            .onClick(() => { this.askTransfer('move'); })
           Button('删除')
             .fontSize(BUTTON_FONT_VP)
             .fontColor($r('sys.color.warning'))
             .backgroundColor($r('app.color.launcher_bg'))
+            .margin({ left: 8 })
             .onClick(() => { this.askDelete(); })
         }
         .width('100%')
@@ -2099,6 +2177,126 @@ export struct LauncherHome {
    * ⚠️ 每一行自带三个动作（放回 / 归档 / 彻底删），**没有右侧详情栏**：
    *    一个条目的字段就那么几个，再切一栏只会让「点哪一行」多一层含义。
    */
+  /* [A]
+   * 复制 / 移动的目标选择。
+   *
+   * ⭐ 用户 2026-10-02 的硬要求：「如果要提供移动的选项，**需要在移动前告诉用户
+   *    移动后的效果是什么**」。⇒ 所以这里每一行都是**「动作 + 后果」**的形状，
+   *    而不是一排光秃秃的版本名。
+   *
+   * ⚠️ 目标列表**只列别的版本**（当前版本不在里面）：
+   *    · 「移动到当前版本」什么都不会发生 —— 放一行没意义的选项比不放更糟
+   *    · 「复制到当前版本」= 同版本再存一份，那是**另一个动作**（改名复制），
+   *      它有自己的一行，而且只对**手动存档**开放（理由见 SaveTransfer 开头）。
+   */
+  @Builder
+  TransferDialog() {
+    Column() {
+      Column() {
+        Text((this.transferOp === 'move' ? '移动「' : '复制「') + this.selectedSaveLabel() + '」')
+          .fontSize(17).fontColor($r('sys.color.font_primary'))
+          .width('100%').textAlign(TextAlign.Center)
+
+        Text(this.transferOp === 'move'
+             ? '原版本会看不到它了 —— 等于把它交给另一个版本。'
+             : '原来那一份不动，目标版本会多出一份。')
+          .fontSize(13).fontColor($r('sys.color.font_secondary'))
+          .width('100%').textAlign(TextAlign.Center)
+          .margin({ top: 10 })
+
+        Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
+
+        Scroll() {
+          Column() {
+            /* ---- 同版本再存一份（只有复制 + 只有手动存档）---- */
+            if (this.transferOp === 'copy' && this.selectedSaveEntry() !== undefined
+                && this.selectedSaveEntry()!.kind === 'manual') {
+              Column() {
+                Text('在这个版本里再复制一份')
+                  .fontSize(15).fontColor($r('sys.color.font_primary'))
+                  .width('100%')
+                Text('会多出一个 `-copy` 的存档。⚠️ 游戏里它会显示成「untitled」——'
+                     + '存档名字存在游戏的设置里，改名要在游戏内做。')
+                  .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                  .width('100%').margin({ top: 4 })
+              }
+              .width('100%').padding(14)
+              .borderRadius(CARD_RADIUS_VP)
+              .backgroundColor($r('app.color.launcher_bg'))
+              .margin({ bottom: 8 })
+              .alignItems(HorizontalAlign.Start)
+              .onClick(() => { this.doDuplicate(); })
+            }
+
+            /* ---- 战役存档说明为什么没有上面那一项 ---- */
+            if (this.transferOp === 'copy' && this.selectedSaveEntry() !== undefined
+                && this.selectedSaveEntry()!.kind === 'sector') {
+              Text('⚠️ 战役存档不能在同一个版本里复制 —— 一个区块出现两份存档，游戏会认不出来。'
+                   + '要备份它，请复制到别的版本。')
+                .fontSize(12).fontColor($r('sys.color.warning'))
+                .width('100%').margin({ bottom: 10 })
+            }
+
+            /* ---- 别的版本 ---- */
+            ForEach(this.transferTargets(), (v: VersionEntry) => {
+              Column() {
+                Text(v.label)
+                  .fontSize(15).fontColor($r('sys.color.font_primary'))
+                  .width('100%')
+                  .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                Text(this.transferTargetNote(v))
+                  .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                  .width('100%').margin({ top: 4 })
+              }
+              .width('100%').padding(14)
+              .borderRadius(CARD_RADIUS_VP)
+              .backgroundColor($r('app.color.launcher_bg'))
+              .margin({ bottom: 8 })
+              .alignItems(HorizontalAlign.Start)
+              .onClick(() => { this.doTransferTo(v.dataDir + '/saves'); })
+            }, (v: VersionEntry) => v.path)
+
+            if (this.transferTargets().length === 0) {
+              Text('没有别的版本可以选 —— 先在「首页」导入另一个游戏版本。')
+                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                .width('100%').margin({ top: 8 })
+            }
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .constraintSize({ maxHeight: 320 })
+        .align(Alignment.TopStart)
+        .margin({ top: 12 })
+
+        if (this.transferNote !== '') {
+          Text(this.transferNote)
+            .fontSize(12).fontColor($r('sys.color.warning'))
+            .width('100%').margin({ top: 10 })
+        }
+
+        Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 8 })
+        Button('取消')
+          .fontSize(14)
+          .width('25%').alignSelf(ItemAlign.Center)
+          .margin({ top: 12 })
+          .onClick(() => { this.transferOp = ''; this.transferNote = ''; })
+      }
+      .width('100%')
+      .constraintSize({ maxWidth: this.dialogWidthVp() })
+      .padding(20)
+      .backgroundColor($r('app.color.launcher_card'))
+      .borderRadius(CARD_RADIUS_VP)
+      .alignItems(HorizontalAlign.Start)
+      /* [B] 吞掉落在卡片上的点击 —— 与隔离窗同一处理由。 */
+      .onClick(() => {})
+    }
+    .width('100%').height('100%')
+    .backgroundColor('#80000000')
+    .justifyContent(FlexAlign.Center)
+    .padding({ left: 32, right: 32 })
+  }
+
   @Builder
   VaultView() {
     Column() {
@@ -3313,6 +3511,11 @@ export struct LauncherHome {
       /* [B] 点卡片【外面】的空白处也关。与右上角那个 ✕ 并存 —— 两个都是出口，
        * 而出口多一点，比少一点安全。 */
       .onClick(() => { this.showAbout = false; })
+    }
+
+    /* [A] 复制/移动的目标选择。同上：只读的窗可以盖在别的东西上，启动失败不能。 */
+    if (this.transferOp !== '') {
+      this.TransferDialog()
     }
 
     /* [A] 删除确认。⚠️ 排在「上次没能启动成功」**前面** —— Stack 里后声明的在上层，

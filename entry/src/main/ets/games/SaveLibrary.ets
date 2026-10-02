@@ -89,6 +89,12 @@ function isBackup(n: string): boolean {
  * ⭐ 两次都是把这段逻辑用脚本在**真实文件列表**上跑一遍才发现的 —— 光读代码看不出来，
  *    而且两种错法的症状都是「条数看起来还算合理」。
  */
+/* [A] ⚠️ 导出它，是因为**转移**（SaveTransfer）要按基名改名复制。
+ * ⛔ 别在那边再写一份 —— 那两次搞错的就是这个函数（见上面那段记录）。 */
+export function saveBaseName(n: string): string {
+  return baseName(n);
+}
+
 function baseName(n: string): string {
   let s: string = n;
   if (s.endsWith('-backup.msav')) {
