@@ -97,6 +97,41 @@ interface MetaRow {
  * 拼一个绝不会与真实路径相撞的串（真实路径都是绝对路径，以 `/` 开头）。 */
 const DUP_KEY: string = '#dup-same-version';
 
+/* [A]
+ * 「按存档」列表里的一行 —— ⭐ **必须带上它在哪个目录**。
+ *
+ * ⛔⛔ 这是用户 2026-10-02 报的那个 bug 的核心：开启隔离之后，
+ *    **每个版本都有自己的 `saves/`**，而不同版本里的存档**可以是同名的**
+ *    （`0.msav`、`sector-serpulo-142.msav` 到处都是）。
+ *    ⇒ 只用 `SaveEntry.id` 当身份会**撞车**：两个版本的 `manual:0` 是同一个 id。
+ *    ⭐ 所以身份 = `目录 + id`，而每个动作（删除/复制/移动/看数据）都必须
+ *      **按它自己那个目录**去做，⛔ 不能再用「当前版本那个目录」代替。
+ */
+interface SaveRow {
+  /** [B] 这个存档所在的 `saves/` 目录。 */
+  dir: string;
+  entry: SaveEntry;
+}
+
+/* [A]
+ * 一组**共用同一份数据**的版本，以及那份数据里的存档。
+ *
+ * ⭐ 用户 2026-10-02 要的形状：「按存档那里应该列出**所有版本**的存档，
+ *    按照顺序"A版本"->"B版本"这样排下去，小字和详情标注这个存档属于哪（几个）版本」。
+ *
+ * ⚠️ 按**目录**分组，不是按版本 —— 只有按目录才不会重复：
+ *    隔离**关着**时所有版本共用一份数据，按版本分会让同一批存档出现 N 遍。
+ *    按目录分恰好得到一组，而组头的版本名单正好回答了「属于哪几个版本」。
+ */
+interface SaveGroup {
+  /** [B] 数据目录（`…/<版本>/sets/default/.local/share/Mindustry/saves`）。 */
+  dir: string;
+  /** [B] 读这个目录的版本，顺序与 `versions` 一致。空数组 = 没有版本读它。 */
+  versions: VersionEntry[];
+  /** [B] 这个目录里的存档。 */
+  saves: SaveEntry[];
+}
+
 /** [B] 存档页的两种视图。 */
 const SAVES_VIEW_SAVE: string = 'save';
 const SAVES_VIEW_VERSION: string = 'version';
@@ -469,8 +504,13 @@ export struct LauncherHome {
   /** [B] 玩家选的隔离粒度。改它要走 chooseGranularity()，别直接赋值。 */
   @State granularity: string = GRANULARITY_OFF;
 
-  /** [B] 存档列表。只含文件名/大小/时间，不含元数据 —— 元数据点开才读。 */
+  /** [B] 存档列表。只含文件名/大小/时间，不含元数据 —— 元数据点开才读。
+   * ⚠️ 这是**当前版本**那一份（给「按版本」面板和兜底用）。**列表用 `saveGroups`。** */
   @State saves: SaveEntry[] = [];
+
+  /* [A] ⭐ 「按存档」列表的数据：**所有版本**的存档，按数据目录分组。
+   * ⚠️ 在 `refresh()` 里算一次（它要扫每个版本的目录），⛔ 不在渲染里算。 */
+  @State saveGroups: SaveGroup[] = [];
 
   /* [A] 当前选中的存档 id；'' 表示没选。
    * ⭐ 带 `@Watch` —— 一选中就去读它的元数据（右侧栏要显示「哪个版本写的」）。
@@ -512,6 +552,16 @@ export struct LauncherHome {
     return false;
   }
 
+  /* [A] 当前选中的那一行，形如 **`<目录>|<存档 id>`**。
+   *
+   * ⛔⛔ 原来这里只存 `id`，而开启隔离后**不同版本里的存档会重名**
+   *    （每份数据里都有 `manual:0`）⇒ 一个 id 会同时命中好几行。
+   *    ⭐ 带上目录之后，「选的是哪一份」与「对它做哪个动作」都有了唯一答案。
+   *    ⚠️ 目录里不会出现 `|`，存档 id（`manual:0` / `sector:serpulo`）也不会
+   *    ⇒ 用**第一个** `|` 切分是安全的。
+   *
+   * ⭐ 带 `@Watch` —— 一选中就去读它的元数据（右侧栏要显示「哪个版本写的」）。
+   * ⚠️ `@Watch` **只在值真的变化时触发**，所以 `refresh()` 里还要显式调一次。 */
   @State @Watch('onSaveSelected') selectedSave: string = '';
 
 
@@ -1029,10 +1079,6 @@ export struct LauncherHome {
       hilog.error(DOMAIN, TAG, 'isolation: STALE -- on, but %{public}s does not exist '
                 + '(the un-isolated copy does)', dataDir);
     }
-    /* [B] 选中的那个已经不在了（被删了/换了目录）⇒ 清掉选择，别指着一个不存在的东西。 */
-    if (this.selectedSave !== '' && !this.saves.some((x: SaveEntry) => x.id === this.selectedSave)) {
-      this.selectedSave = '';
-    }
     /* [A] ⚠️ 版本列表要在 `resolution` / `hasBundled` / `games` **都算好之后**才能建 ——
      * 它三样都用（判定谁是「当前版本」、内置那份在不在、有哪些玩家 jar）。
      * 而建它的那一步会**读每个 jar**（见 versionEntryOf 上的说明），所以整轮 refresh
@@ -1054,6 +1100,14 @@ export struct LauncherHome {
      *    ⛔ 每帧跑一次是不可接受的。`refresh()` 只在切页签/切版本/改设置/操作完之后跑。 */
     this.reloadVault();
     this.vaultDays = readVaultDays(this.filesDir);
+    /* [A] ⭐⭐ 「按存档」那一屏的数据 —— **所有版本**的存档，按数据目录分组。
+     * ⚠️ 必须在 `this.versions` 算好之后（它逐个版本解目录），见 buildSaveGroups。 */
+    this.saveGroups = this.buildSaveGroups();
+    /* [B] **清失效的选中**放在这之后 —— 它要拿 saveGroups 去查那一行还在不在。
+     * ⚠️ 换隔离粒度、删掉一个存档、切换版本，都会让原来那一行消失。 */
+    if (this.selectedSave !== '' && this.selectedSaveRow() === undefined) {
+      this.selectedSave = '';
+    }
     /* [A] ⚠️ 必须显式再读一次。`@Watch` 只在 id **真的变了**时才触发，而这里的
      * 常见情形恰恰是「id 没变、那份存档换了」—— 例如改了隔离粒度再回来：列表整份换掉，
      * 但选中的那个如果两边同名，id 就一模一样。那时右侧栏会**显示上一个目录的元数据**，
@@ -1072,11 +1126,50 @@ export struct LauncherHome {
   }
 
   /** [B] 当前选中的那个存档项；没选（或它已经不在了）时 `undefined`。 */
-  private selectedSaveEntry(): SaveEntry | undefined {
+  private selectedSaveRow(): SaveRow | undefined {
     if (this.selectedSave === '') {
       return undefined;
     }
-    return this.saves.find((x: SaveEntry) => x.id === this.selectedSave);
+    const cut: number = this.selectedSave.indexOf('|');
+    if (cut < 0) {
+      return undefined;
+    }
+    const dir: string = this.selectedSave.substring(0, cut);
+    const id: string = this.selectedSave.substring(cut + 1);
+    const g: SaveGroup | undefined = this.saveGroups.find((x: SaveGroup) => x.dir === dir);
+    if (g === undefined) {
+      return undefined;
+    }
+    const e: SaveEntry | undefined = g.saves.find((s: SaveEntry) => s.id === id);
+    return e === undefined ? undefined : { dir: dir, entry: e };
+  }
+
+  private selectedSaveEntry(): SaveEntry | undefined {
+    const r: SaveRow | undefined = this.selectedSaveRow();
+    return r === undefined ? undefined : r.entry;
+  }
+
+  /* [A] ⭐ 选中那一行**所在的目录** —— 每个动作都该用它。
+   * ⛔ 别退回 `savesDirShown`：那是**当前版本**的目录，而现在列表里可能有
+   *    好几个版本的存档，「当前」与「选中的那个」不是一回事。 */
+  private selectedSaveDir(): string {
+    const r: SaveRow | undefined = this.selectedSaveRow();
+    return r === undefined ? '' : r.dir;
+  }
+
+  /** [B] 存档列表里一行的选中键。⭐ 唯一性靠**目录**，见 `selectedSave` 的说明。 */
+  private saveKey(dir: string, id: string): string {
+    return dir + '|' + id;
+  }
+
+  /** [B] 选中那一行属于哪些版本。⭐ 详情面板用它写「属于：A、B」。 */
+  private selectedSaveVersions(): VersionEntry[] {
+    const r: SaveRow | undefined = this.selectedSaveRow();
+    if (r === undefined) {
+      return [];
+    }
+    const g: SaveGroup | undefined = this.saveGroups.find((x: SaveGroup) => x.dir === r.dir);
+    return g === undefined ? [] : g.versions;
   }
 
   /* [A] 下面三个是给右侧栏用的取值函数。
@@ -1193,6 +1286,87 @@ export struct LauncherHome {
     return out;
   }
 
+  /* [A]
+   * ⭐⭐ 把**所有版本**的存档按数据目录聚起来 —— 「按存档」那一屏的数据源。
+   *
+   * ⚠️ 按**目录**分组而不是按版本：隔离关着时所有版本共用一份数据，
+   *    按版本分会让同一批存档出现 N 遍；按目录分恰好一组，
+   *    而组头的版本名单正好就是「属于哪几个版本」。
+   *
+   * ⭐ 顺序：`this.versions` 的顺序（内置在前、玩家 jar 在后）⇒ 组也是这个序，
+   *    也就是用户要的「A版本 → B版本 这样排下去」。
+   *
+   * ⚠️ 另外补一组**未隔离的那一份**（只在它不属于任何版本时）：
+   *    「复制过去」刻意不动源目录（为了可逆），所以那份原始数据会一直留着。
+   *    ⛔ 不列出来的话，玩家会以为它不见了 —— 而它其实是最后一道保险。
+   *    ⚠️ 隔离关着时它**就是**各版本那一组，所以那时不会重复列。
+   */
+  private buildSaveGroups(): SaveGroup[] {
+    const out: SaveGroup[] = [];
+    const byDir: Map<string, SaveGroup> = new Map<string, SaveGroup>();
+    for (const v of this.versions) {
+      const dir: string = v.dataDir + '/saves';
+      let g: SaveGroup | undefined = byDir.get(dir);
+      if (g === undefined) {
+        g = { dir: dir, versions: [], saves: listSaves(dir) };
+        byDir.set(dir, g);
+        out.push(g);
+      }
+      g.versions.push(v);
+    }
+    const liveDir: string = liveGameDataDir();
+    const live: string = liveDir + '/saves';
+    if (byDir.get(live) === undefined && gameDataExists(liveDir)) {
+      const only: SaveGroup = { dir: live, versions: [], saves: listSaves(live) };
+      if (only.saves.length > 0) {
+        out.push(only);
+      }
+    }
+    /* [A] ⭐⭐ **空组只在它是「当前版本」时留着。**
+     *
+     * ⚠️ 实测：按构建号隔离时有 4 份独立目录，其中 3 份是空的（还没复制过）
+     *    ⇒ 全列出来一屏 5 组、3 组空，**噪音大过信息**。
+     * ⭐ 而空组里没有存档 ⇒ 不给任何存档「隐身」的机会，全丢掉也不丢数据。
+     * ✅ 只有**当前版本**那一个例外：它是游戏真正会读的那份，
+     *    「这里还没有数据」正是玩家换了粒度之后最需要看到的那句话。
+     */
+    const kept: SaveGroup[] = [];
+    for (const g of out) {
+      if (g.saves.length > 0 || g.versions.some((v: VersionEntry) => v.isCurrent)) {
+        kept.push(g);
+      }
+    }
+    return kept;
+  }
+
+  /** [B] 一组的标题：共用这份数据的版本名。空数组 = 没有版本读它（未隔离的那一份）。 */
+  private groupTitle(g: SaveGroup): string {
+    if (g.versions.length === 0) {
+      return '未隔离的那一份';
+    }
+    const names: string[] = [];
+    for (const v of g.versions) {
+      names.push(v.label);
+    }
+    return names.join('  ·  ');
+  }
+
+  /** [B] 一组的副标题：谁在读它。 */
+  private groupSub(g: SaveGroup): string {
+    if (g.versions.length === 0) {
+      return '现在没有版本读它 —— 这是你数据最初的那一份，「复制过去」不会动它';
+    }
+    /* [A] ⭐ 标出**游戏真正会读的那一份**（当前版本指向的目录）。
+     * ⛔ 不标的话，玩家看到两堆存档会不知道哪个是「正在玩的」——
+     *    而那正是他换粒度之后第一个要问的问题。 */
+    const cur: boolean = g.versions.some((v: VersionEntry) => v.isCurrent);
+    const head: string = cur ? '当前版本在用 · ' : '';
+    if (g.versions.length === 1) {
+      return head + '只有这个版本读它';
+    }
+    return head + String(g.versions.length) + ' 个版本共用同一份数据';
+  }
+
   /** [B] 当前选中的那个版本项；没选或它已经不在（jar 被删了）时 `undefined`。 */
   private selectedVersionEntry(): VersionEntry | undefined {
     if (this.selectedVersion === '') {
@@ -1245,15 +1419,11 @@ export struct LauncherHome {
    *    不是 bug —— 它正是「不隔离」的含义。
    */
   private savesSeenByText(): string {
-    if (this.savesDirShown === '' || this.versions.length === 0) {
-      return '';
-    }
-    const seen: VersionEntry[] = this.versions.filter((v: VersionEntry) =>
-      (v.dataDir + '/saves') === this.savesDirShown);
+    const seen: VersionEntry[] = this.selectedSaveVersions();
     if (seen.length === 0) {
-      /* [B] 理论上不该发生（当前版本必然指向这个目录）。真发生了就说出来，
-       * ⛔ 不要悄悄显示成「没有」—— 那会把一个内部矛盾伪装成一个正常结论。 */
-      return '没有版本指向这个目录（异常）';
+      /* [B] 没有版本读这个目录 ⇒ 它是那份「未隔离的原始数据」。
+       * ⛔ 不要显示成「没有」—— 要说清它是什么，否则玩家会以为这是个坏掉的条目。 */
+      return '没有版本在读它 —— 这是你数据最初的那一份';
     }
     if (seen.length === this.versions.length) {
       return '全部 ' + String(seen.length) + ' 个版本';
@@ -1387,7 +1557,7 @@ export struct LauncherHome {
      *
      * ⭐ 键是 `id @ 目录`：id 相同但目录换了（改完隔离粒度再回来）**要**重读，
      *    而两者都没变时重读没有任何意义。 */
-    const key: string = (sv === undefined ? '' : (sv.id + '@' + this.savesDirShown));
+    const key: string = (sv === undefined ? '' : (sv.id + '@' + this.selectedSaveDir()));
     if (key === this.metaLoadedKey) {
       return;
     }
@@ -1398,14 +1568,14 @@ export struct LauncherHome {
     if (sv === undefined) {
       return;
     }
-    const file: string = newestFileOf(sv, this.savesDirShown);
+    const file: string = newestFileOf(sv, this.selectedSaveDir());
     if (file === '') {
       this.selMetaNote = '这个存档里没有可读的文件（只剩备份）。';
       hilog.info(DOMAIN, TAG, 'saves: %{public}s has no readable file', sv.id);
       return;
     }
 
-    const m: SaveMeta = readSaveMeta(this.savesDirShown + '/' + file);
+    const m: SaveMeta = readSaveMeta(this.selectedSaveDir() + '/' + file);
     if (!m.ok) {
       this.selMetaRows = [{ label: '读取自', value: file }];
       this.selMetaNote = '这个文件读不出来，可能不是有效的存档，或者已损坏。';
@@ -1420,11 +1590,17 @@ export struct LauncherHome {
    * 所以「选中」与「进去看」是同一个动作（用户 2026-10-02：「如果手机上点，
    * 就是进去那个子页面，可以返回退出」）。
    * ⚠️ 宽屏时不设 `panelOpen` —— 那时详情一直就在右边。 */
-  private openSaveRow(id: string): void {
-    this.selectedSave = id;
+  private openSaveRow(dir: string, id: string): void {
+    this.selectedSave = this.saveKey(dir, id);
     if (this.isNarrow()) {
       this.panelOpen = true;
     }
+  }
+
+  /** [B] 「按版本」面板里那个版本的 `saves/` 目录。 */
+  private versionSavesDir(): string {
+    const v: VersionEntry | undefined = this.selectedVersionEntry();
+    return v === undefined ? '' : (v.dataDir + '/saves');
   }
 
   /** [B] 版本列表同理。 */
@@ -1492,7 +1668,7 @@ export struct LauncherHome {
       return;
     }
     const now: number = Date.now();
-    const err: string = vaultDelete(sv, this.savesDirShown, this.vaultDays, now);
+    const err: string = vaultDelete(sv, this.selectedSaveDir(), this.vaultDays, now);
     if (err !== '') {
       this.vaultNote = err;
       this.refresh();
@@ -1518,6 +1694,7 @@ export struct LauncherHome {
 
   /** [B] 放回。刷新后存档列表当场出现它。 */
   private doVaultRestore(e: VaultEntry): void {
+    /* [B] 第二个参数只是**兜底**（原来那个目录没了时用它）—— 用当前版本的目录合适。 */
     this.vaultNote = vaultRestore(e, this.savesDirShown);
     /* ⚠️ 先短后长：垃圾站自己的名单立刻更新，`refresh()` 再去更新存档列表。 */
     this.reloadVault();
@@ -1615,7 +1792,11 @@ export struct LauncherHome {
    *    否则会出现一个看起来能选、点下去报「源和目标在同一个目录」的选项。
    */
   private transferTargets(): VersionEntry[] {
-    const here: string = this.savesDirShown;
+    /* [A] ⭐ 「源」= **选中那一行自己的目录**，不再是当前版本的目录 ——
+     * 现在列表里可能有别的版本的存档，从那里也能复制/移动。
+     * ⛔ 用 `savesDirShown` 的话，从别的版本选一个存档再复制，
+     *    会把**当前版本那一份**当成源（而它可能根本没有这个存档）。 */
+    const here: string = this.selectedSaveDir();
     return this.versions.filter((v: VersionEntry) => (v.dataDir + '/saves') !== here);
   }
 
@@ -1653,7 +1834,7 @@ export struct LauncherHome {
       if (v === undefined) {
         fails.push('选中的目标已经不在了');
       } else {
-        const e: string = moveSaveTo(sv, this.savesDirShown, v.dataDir + '/saves');
+        const e: string = moveSaveTo(sv, this.selectedSaveDir(), v.dataDir + '/saves');
         if (e === '') {
           okCount += 1;
         } else {
@@ -1663,7 +1844,7 @@ export struct LauncherHome {
     } else {
       for (const key of this.transferPicked) {
         if (key === DUP_KEY) {
-          const e: string = duplicateSave(sv, this.savesDirShown);
+          const e: string = duplicateSave(sv, this.selectedSaveDir());
           if (e === '') {
             okCount += 1;
           } else {
@@ -1676,7 +1857,7 @@ export struct LauncherHome {
             fails.push('有个选中的目标已经不在了');
             continue;
           }
-          const e: string = copySaveTo(sv, this.savesDirShown, v.dataDir + '/saves');
+          const e: string = copySaveTo(sv, this.selectedSaveDir(), v.dataDir + '/saves');
           if (e === '') {
             okCount += 1;
           } else {
@@ -2200,34 +2381,47 @@ export struct LauncherHome {
           .strokeWidth(1).color($r('app.color.launcher_border'))
           .margin({ top: 14, bottom: 12 })
 
-        Row() {
-          Button('复制')
-            .fontSize(BUTTON_FONT_VP)
-            .onClick(() => { this.askTransfer('copy'); })
-          Button('移动')
-            .fontSize(BUTTON_FONT_VP)
-            .margin({ left: 8 })
-            .onClick(() => { this.askTransfer('move'); })
-          Button('删除')
-            .fontSize(BUTTON_FONT_VP)
-            .fontColor($r('sys.color.warning'))
-            .backgroundColor($r('app.color.launcher_bg'))
-            .margin({ left: 8 })
-            .onClick(() => { this.askDelete(); })
-        }
-        /* [A] ⭐ **靠右**（用户 2026-10-02：「复制、移动、删除按钮应该在界面最右边，
-         * 这样更符合人点击习惯」）。
-         * ⚠️ 用 `justifyContent(FlexAlign.End)` 而不是塞一个 `Blank()` 占位 ——
-         *    靠右由**布局**保证，不需要多一个节点。
-         * ⚠️ 拇指在右侧：动作放右、内容放左，是平板/手机上的通行摆法。 */
-        .width('100%')
-        .justifyContent(FlexAlign.End)
-        .alignItems(VerticalAlign.Center)
+        this.SaveActionRow()
       }
     }
     .width('100%').height('100%')
     .padding({ left: 8, right: 16, top: 12 })
     .alignItems(HorizontalAlign.Start)
+  }
+
+  /* [A]
+   * 对一个存档可做的事。⭐ 抽成零参 `@Builder`，因为**两个面板都要用**：
+   * 「按存档」那边（选中任意版本的一行）与「按版本」那边（选中该版本里的一行）。
+   *
+   * ⚠️ 两份动作是安全的**现在**才成立：选中项自带目录（见 `selectedSave`），
+   *    所以「操作的是哪一份数据」有唯一答案。⛔ 在它只存 `id` 的那些日子里，
+   *    两边各放一份动作会让它们对「操作谁」的理解分叉。
+   */
+  @Builder
+  SaveActionRow() {
+    Row() {
+      Button('复制')
+        .fontSize(BUTTON_FONT_VP)
+        .onClick(() => { this.askTransfer('copy'); })
+      Button('移动')
+        .fontSize(BUTTON_FONT_VP)
+        .margin({ left: 8 })
+        .onClick(() => { this.askTransfer('move'); })
+      Button('删除')
+        .fontSize(BUTTON_FONT_VP)
+        .fontColor($r('sys.color.warning'))
+        .backgroundColor($r('app.color.launcher_bg'))
+        .margin({ left: 8 })
+        .onClick(() => { this.askDelete(); })
+    }
+    /* [A] ⭐ **靠右**（用户 2026-10-02：「复制、移动、删除按钮应该在界面最右边，
+     * 这样更符合人点击习惯」）。
+     * ⚠️ 用 `justifyContent(FlexAlign.End)` 而不是塞一个 `Blank()` 占位 ——
+     *    靠右由**布局**保证，不需要多一个节点。
+     * ⚠️ 拇指在右侧：动作放右、内容放左，是平板/手机上的通行摆法。 */
+    .width('100%')
+    .justifyContent(FlexAlign.End)
+    .alignItems(VerticalAlign.Center)
   }
 
   @Builder
@@ -2282,6 +2476,14 @@ export struct LauncherHome {
         Text('这个目录里的存档')
           .fontSize(12).fontColor($r('sys.color.font_tertiary'))
 
+        /* [A] ⭐⭐ 用户 2026-10-02：「**按版本那里也要能管理存档**」。
+         * ⛔ 原来这里只是一串只读文字 —— 看得到、动不了。
+         * ⇒ 现在每一行**可以点**（选中它，与「按存档」那边用同一个选中状态），
+         *    选中之后底下就是那三个动作。
+         *
+         * ⚠️ 两处共用同一个 `selectedSave` ⇒ 在一边选了、切到另一边，选中的还是同一份。
+         *    这是对的：它在两个视图里都是**同一个存档**。
+         */
         Scroll() {
           Column() {
             if (this.versionSaves.length === 0) {
@@ -2290,12 +2492,24 @@ export struct LauncherHome {
                 .margin({ top: 8 })
             }
             ForEach(this.versionSaves, (sv: SaveEntry) => {
-              Text(sv.label + '   ·   ' + formatSaveSize(sv.bytes)
-                   + '   ·   ' + formatSaveDate(sv.mtime))
-                .fontSize(12).fontColor($r('sys.color.font_secondary'))
-                .width('100%')
-                .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-                .margin({ top: 6 })
+              Row() {
+                Text(sv.label + '   ·   ' + formatSaveSize(sv.bytes)
+                     + '   ·   ' + formatSaveDate(sv.mtime))
+                  .fontSize(12)
+                  .fontColor(this.selectedSave === this.saveKey(this.versionSavesDir(), sv.id)
+                             ? $r('sys.color.brand') : $r('sys.color.font_secondary'))
+                  .layoutWeight(1)
+                  .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+
+                if (this.selectedSave === this.saveKey(this.versionSavesDir(), sv.id)) {
+                  Text('✓').fontSize(14).fontColor($r('sys.color.brand'))
+                }
+              }
+              .width('100%')
+              .margin({ top: 8 })
+              .onClick(() => {
+                this.selectedSave = this.saveKey(this.versionSavesDir(), sv.id);
+              })
             }, (sv: SaveEntry) => sv.id)
           }
           .width('100%')
@@ -2304,6 +2518,14 @@ export struct LauncherHome {
         .layoutWeight(1)
         .align(Alignment.TopStart)
         .scrollBar(BarState.Off)
+
+        /* [B] 选中了某一项才给动作 —— 没选时按下去无事可做，给出来只会让人点空。 */
+        if (this.selectedSave !== '' && this.selectedSaveDir() === this.versionSavesDir()) {
+          Divider()
+            .strokeWidth(1).color($r('app.color.launcher_border'))
+            .margin({ top: 14, bottom: 12 })
+          this.SaveActionRow()
+        }
       }
     }
     .width('100%').height('100%')
@@ -2877,7 +3099,7 @@ export struct LauncherHome {
                     .margin({ bottom: 8 })
                     .onClick(() => { this.openVersionRow(v.path); })
                   }, (v: VersionEntry) => v.path)
-                } else if (this.saves.length === 0) {
+                } else if (this.saveGroups.length === 0) {
                   Text('没有存档')
                     .fontSize(15).fontColor($r('sys.color.font_secondary'))
                     .margin({ top: 20 })
@@ -2885,34 +3107,69 @@ export struct LauncherHome {
                     .fontSize(12).fontColor($r('sys.color.font_tertiary'))
                     .margin({ top: 8 })
                 } else {
-                  ForEach(this.saves, (sv: SaveEntry) => {
-                    Row() {
-                      Column() {
-                        Text(sv.label)
-                          .fontSize(15)
-                          .fontColor(this.selectedSave === sv.id
-                                     ? $r('sys.color.brand') : $r('sys.color.font_primary'))
-                          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-                        Text((sv.kind === 'sector' ? (sv.sectors + ' 个区块 · ') : '')
-                             + formatSaveSize(sv.bytes) + ' · ' + formatSaveDate(sv.mtime))
-                          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-                          .margin({ top: 4 })
-                      }
-                      .alignItems(HorizontalAlign.Start)
-                      .layoutWeight(1)
+                  /* [A]
+                   * ⭐⭐ 一屏列出**所有版本**的存档，按「共用同一份数据的版本」分组。
+                   *
+                   * 用户 2026-10-02：「按存档那里应该列出**所有版本**的存档，
+                   *   按照顺序"A版本"->"B版本"这样排下去，小字和详情标注这个存档属于哪（几个）版本」。
+                   *
+                   * ⛔⛔ 原来只列**当前版本**那一个目录 ⇒ 开了隔离之后，
+                   *    别的版本的存档**完全看不见**；而当前那个目录还没建出来时
+                   *    屏幕会写「没有存档」—— 玩家看到的是「我的存档全都不见了」，
+                   *    尽管几十上百个存档都还在盘上。**这就是他报的那个 bug。**
+                   *
+                   * ⚠️ 分组键是**目录**而不是版本（理由见 buildSaveGroups）：
+                   *    隔离关着时只有一组，组头会写「N 个版本共用同一份数据」。
+                   */
+                  ForEach(this.saveGroups, (g: SaveGroup) => {
+                    Column() {
+                      /* [B] 组头 = 用户要的「小字」那一半：谁在读这份数据。 */
+                      Text(this.groupTitle(g))
+                        .fontSize(13).fontColor($r('sys.color.font_secondary'))
+                        .width('100%')
+                        .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
+                      Text(this.groupSub(g))
+                        .fontSize(11).fontColor($r('sys.color.font_tertiary'))
+                        .width('100%').margin({ top: 2 })
 
-                      if (this.selectedSave === sv.id) {
-                        Text('✓')
-                          .fontSize(16).fontColor($r('sys.color.brand'))
+                      if (g.saves.length === 0) {
+                        Text('这个目录还没有存档')
+                          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                          .width('100%').margin({ top: 8 })
                       }
+                      ForEach(g.saves, (sv: SaveEntry) => {
+                        Row() {
+                          Column() {
+                            Text(sv.label)
+                              .fontSize(15)
+                              .fontColor(this.selectedSave === this.saveKey(g.dir, sv.id)
+                                         ? $r('sys.color.brand') : $r('sys.color.font_primary'))
+                              .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                            Text((sv.kind === 'sector' ? (sv.sectors + ' 个区块 · ') : '')
+                                 + formatSaveSize(sv.bytes) + ' · ' + formatSaveDate(sv.mtime))
+                              .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                              .margin({ top: 4 })
+                          }
+                          .alignItems(HorizontalAlign.Start)
+                          .layoutWeight(1)
+
+                          if (this.selectedSave === this.saveKey(g.dir, sv.id)) {
+                            Text('✓')
+                              .fontSize(16).fontColor($r('sys.color.brand'))
+                          }
+                        }
+                        .width('100%')
+                        .padding(14)
+                        .borderRadius(CARD_RADIUS_VP)
+                        .backgroundColor($r('app.color.launcher_card'))
+                        .margin({ top: 8 })
+                        .onClick(() => { this.openSaveRow(g.dir, sv.id); })
+                      }, (sv: SaveEntry) => this.saveKey(g.dir, sv.id))
                     }
                     .width('100%')
-                    .padding(14)
-                    .borderRadius(CARD_RADIUS_VP)
-                    .backgroundColor($r('app.color.launcher_card'))
-                    .margin({ bottom: 8 })
-                    .onClick(() => { this.openSaveRow(sv.id); })
-                  }, (sv: SaveEntry) => sv.id)
+                    .margin({ bottom: 16 })
+                    .alignItems(HorizontalAlign.Start)
+                  }, (g: SaveGroup) => g.dir)
                 }
               }
               .width('100%')
