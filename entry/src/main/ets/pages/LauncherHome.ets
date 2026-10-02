@@ -536,6 +536,18 @@ export struct LauncherHome {
    */
   @State pendingUsesBundled: boolean = false;
 
+  /* [A] ⭐ 询问窗要点名的那个版本：【「名字 · 版本号」】与它在**这一档下**会用的键。
+   *
+   * 用户 2026-10-02：「弹窗现在说的是'这个版本'。我们加上具体的版本粒度就行」。
+   * ⚠️ 整句话里只有指代（「当前选中的版本」「这个版本」），而那个版本的**身份**
+   *    在那一屏上是看不见的（它在「首页」页签里）。⇒ 这里点名。
+   *
+   * ⚠️ `pendingKey` 必须用**待确认的那一档**算，⛔ 不能用 `versions` 里现成的 `.key`
+   *    （那是按**当前**档位算的）—— 两者在玩家正切换时是不一样的。
+   */
+  @State pendingVersionName: string = '';
+  @State pendingKey: string = '';
+
   /* [A]
    * ⭐ **隔离开着，但那一份数据目录根本不存在** —— 即「开关拨过去了、数据没过去」。
    *
@@ -631,6 +643,24 @@ export struct LauncherHome {
    * ==================================================================== */
 
   /** [B] 某一档的一句话说明。四档的差别对玩家不是自明的，所以每档都要写清。 */
+  /* [A] 档位的**名字**（给弹窗标题用）。
+   * ⚠️ 措辞必须与设置页那四个药丸（不隔离 / 大版本 / 构建号 / 小版本）**逐字一致** ——
+   *    弹窗标题说「按构建号」而设置页写着「构建号」，玩家会以为是两个东西。
+   * ⛔ 别在这里自己造一套更好听的说法。
+   */
+  private granularityName(g: string): string {
+    if (g === GRANULARITY_NUMBER) {
+      return '按大版本';
+    }
+    if (g === GRANULARITY_BUILD) {
+      return '按构建号';
+    }
+    if (g === GRANULARITY_PATCH) {
+      return '按小版本';
+    }
+    return '不隔离';
+  }
+
   private granularityHint(g: string): string {
     if (g === GRANULARITY_NUMBER) {
       return 'v8 的所有版本共用一份；v9 出来之后才会分开';
@@ -676,6 +706,21 @@ export struct LauncherHome {
      * 用户 2026-10-02：「弹窗没说明是怎么分类的，必须让人选完了才知道是啥情况」。 */
     this.pendingPreview = this.buildGranularityPreview(g);
     this.pendingUsesBundled = this.versions.some((v: VersionEntry) => v.source === 'bundled');
+    /* [A] ⭐ 点名当前这个版本，以及它**在这一档下**会用哪个目录 —— 见那两个 @State 的说明。
+     * ⚠️ 版本名从 `versions` 里按 `resolution.path` 找：那是**版本身份**（jar 路径），
+     *    ⛔ 不是版本号（两个 jar 可以是同一个版本号）。 */
+    const res: GameResolution = this.resolution;
+    const rk: GameDirForKey = resolveGameDirAndKey(g, res.source, res.path);
+    this.pendingKey = rk.key;
+    const hit: VersionEntry | undefined =
+      this.versions.find((v: VersionEntry) => v.path === res.path);
+    if (hit === undefined) {
+      /* [B] 找不到就说实话（jar 在两次读取之间被删了）。⛔ 不要留空 ——
+       * 空行会让玩家以为「没有版本」，而实际只是这个引用过期了。 */
+      this.pendingVersionName = '（当前没有可用的游戏版本）';
+    } else {
+      this.pendingVersionName = hit.label + (hit.version === '' ? '' : ('  ·  ' + hit.version));
+    }
     this.showIsolationAsk = true;
   }
 
@@ -2480,15 +2525,40 @@ export struct LauncherHome {
     if (this.showIsolationAsk) {
       Column() {
         Column() {
-          Text('打开数据隔离')
+          /* [A] ⭐ 标题里直接点出**这一档叫什么**（用户 2026-10-02：
+           * 「我们加上具体的版本粒度就行」）。
+           * ⚠️ 原来只有「打开数据隔离」四个字，玩家看不出自己点的是哪一档 ——
+           *    而那正是他下一步要确认的东西。 */
+          Text('打开数据隔离  ·  ' + this.granularityName(this.pendingGranularity))
             .fontSize(18).fontColor($r('sys.color.font_primary'))
           /* ⛔⛔ 这一行**是用户留给他自己改的**（2026-10-02 他点名要自己动措辞）。
-           * ⇒ 我**不动它**。刚才那一轮我顺手改过一次，已还原 —— 那是他的句子。
+           * ⇒ 我**不动它**。之前有一轮我顺手改过一次，已还原 —— 那是他的句子。
            * ⚠️ 谁要改这句，先问他。 */
           Text('之后，当前选中的版本的数据与其他版本隔离。你想怎么处理存档？')
             .fontSize(13).fontColor($r('sys.color.font_secondary'))
             .width('100%').textAlign(TextAlign.Center)
             .margin({ top: 12 })
+
+          /* [A] ⭐⭐ 把「当前选中的版本」**点名**。
+           *
+           * 用户 2026-10-02 原话：「点开后的弹窗，现在说的是'这个版本'。
+           *                    我们加上具体的版本粒度就行」。
+           *
+           * ⚠️ 原来整句话里只有「当前选中的版本」「这个版本」这种**指代**，
+           *    而玩家在那一屏上根本看不到自己选的是哪一个（它在「首页」页签里）。
+           *    ⇒ 这里给出【版本名 + 版本号】，并把它**这一档下实际会用的目录**也写出来 ——
+           *    那就是「具体到什么粒度」的答案。
+           *
+           * ⚠️ 目录名那一行**刻意**与上面那份总表用同一套键，两处不会分叉。
+           */
+          Text(this.pendingVersionName)
+            .fontSize(14).fontColor($r('sys.color.font_primary'))
+            .width('100%').textAlign(TextAlign.Center)
+            .margin({ top: 10 })
+          Text('这一档下，它用目录：' + (this.pendingKey === '' ? '（不隔离）' : this.pendingKey))
+            .fontSize(12).fontColor($r('sys.color.font_secondary'))
+            .width('100%').textAlign(TextAlign.Center)
+            .margin({ top: 4 })
 
           /* ============================================================
            * [A] ⭐⭐ 「这一档到底怎么分」—— 用户 2026-10-02 点名要的。
