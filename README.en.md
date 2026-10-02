@@ -9,10 +9,11 @@ The launcher embeds a JDK, creates a JVM from native code, and hands the game a
 real SDL3 window. This repository is the launcher.
 
 **The game itself is the upstream release — byte for byte, modified in no way.**
-What gets patched is the framework underneath it: **26 Arc classes** — all 18 of
-upstream's `arc/backend/sdl/`, plus five classes that exist only in this build
-(`GLBootstrap` and friends), plus three under `arc/graphics/gl/` — are recompiled
-into **a patch jar of their own**, loaded ahead of the game.
+What gets patched is the framework underneath it: ten of the twelve sources under
+`arc/backend/sdl/` are ours (seven modified, three that exist only in this build:
+`GLBootstrap`, `GLDiag`, `GLDispatchFix`), plus `arc/graphics/gl/`. They are
+recompiled into **a patch jar of their own** (26 class entries), loaded ahead of
+the game.
 ⚠️ The patch has to come **first** on the class path — JVM resolution takes the
 first match, so the other order makes the patch silently do nothing.
 
@@ -24,10 +25,8 @@ first match, so the other order makes the patch silently do nothing.
 ## Status
 
 Working on HarmonyOS 7 / API 26 devices — a HUAWEI MatePad Pro 12.2" 2025 tablet
-and a HUAWEI Mate 80 Pro phone. The main menu renders, the mobile layout is
-used, audio plays through OHAudio, touch and physical keyboard both work, and
-import/export via the Download folder works **on some devices only** -- see
-[limitations](docs/LIMITATIONS.md).
+and a HUAWEI Mate 80 Pro phone. The main menu renders, the mobile layout is used,
+audio plays through OHAudio, and touch and physical keyboard both work.
 
 ⭐ **Which devices can run it**: **HarmonyOS 7 / API 26 or later**, tablet **or phone**. Install it
 self-signed (see the release notes) and it runs at full speed on either. Full-speed operation
@@ -43,10 +42,29 @@ in the store**: a store (release) signature never gets it. ⚠️ **HarmonyOS 5 
 | Touch | Works, including two-finger pinch zoom |
 | Keyboard | Works (physical keyboard; WASD and ESC). Typing into game text fields uses an on-screen field with full input-method support — see [limitations](docs/LIMITATIONS.md) |
 | Gamepad / mouse | Mouse works. Gamepad untested |
-| Save import/export | Via the app's folder in Download. ⚠️ **Whether the game's own browser can read that path is not yet verified** -- it uses a path through libc, while the app's grant is held per URI -- see [limitations](docs/LIMITATIONS.md) |
+| Save import/export | Via the app's folder in Download, using the picker — **measured working on both devices, and it needs no permission at all**. ⚠️ **Still unverified**: whether the game's own browser can read that path — it uses a path through libc, while the app's grant is held per URI — see [limitations](docs/LIMITATIONS.md) |
 | Mods | Work. Import them with the **game's own "import mod" button** — that is the only way in, and it needs no restart. The app deliberately does **not** take files from Downloads by itself; drop one in `Download/com.haohandc.mindustryark/` and pick it in that browser. See [limitations](docs/LIMITATIONS.md) |
 | Desktop/mobile mode switch | Switches, but needs an app restart — see the [FAQ](docs/FAQ.md) |
-| Networking / multiplayer | **The platform side works** — `socket`, `epoll`, DNS, TCP, TLS and HTTP all measured working here. **LAN, public-server search and hosting on the device have each been tested.** ⚠️ **But a full multiplayer match has not been played through** |
+| Networking / multiplayer | **The platform side works** — `socket`, `epoll`, DNS, TCP, TLS and HTTP all measured working here. **LAN, public-server search and hosting on the device have each been tested, and a match has actually been played** (2026-09-23) |
+
+## The launcher: game versions and save management
+
+The launcher has a UI of its own — **Home / Saves / Settings** — which is
+independent of the game and **usable without starting it**.
+
+| What you can do | How it works |
+|---|---|
+| Pick a game version | One is bundled; drop any number of jars into `Download/Mindustry Ark/games/` and choose between them. The version is read out of the jar, not guessed from the file name |
+| **Version isolation** | Each game version gets its own set of game data. Four tiers: off (the factory setting) / major version / build / patch |
+| **Save management** | Lists the saves of **every** version (grouped by which versions share the same data), shows the metadata (version / map / playtime / mods), and copies, moves or carries them across versions |
+| Delete = vault | A delete is not an erase: the save moves to a vault for 3 / 7 / 30 days, or is **archived** (never auto-removed). It can be put back at any time |
+| Launch mode | Show the launcher first each time, or go straight into the game |
+
+⭐ One guarantee about isolation: **the bundled copy's data never moves**, and **a jar
+at the same version shares that copy** — so swapping the bundled jar cannot make a
+player's data "disappear" on upgrade.
+⚠️ Isolation is something the player **turns on** (the factory setting is off), and
+turning it on offers either copying the existing data across or starting empty.
 
 ## How to download and install
 
@@ -108,12 +126,10 @@ Per-component obligations are in [THIRD-PARTY.md](THIRD-PARTY.md).
 ## Credits
 
 - [**Mindustry**](https://github.com/Anuken/Mindustry) — by Anuken, the game, **loaded unmodified**
-- [**Arc**](https://github.com/Anuken/Arc) — by Anuken, the game framework; `arc/backend/sdl/**` and `arc/graphics/gl/**` carry patches for this platform, **in a separate jar rather than written into the game**
+- [**Arc**](https://github.com/Anuken/Arc) — by Anuken, the game framework; this platform's patches live in it
 - [**SDL3**](https://github.com/libsdl-org/SDL) — the windowing / input / audio layer
 - [**LWJGL**](https://github.com/LWJGL/lwjgl3) — the JNI bindings for OpenGL and SDL
 - [**OpenJDK 21**](https://github.com/openjdk/jdk) — the runtime
-
-Licensing and redistribution terms for each are in [THIRD-PARTY.md](THIRD-PARTY.md).
 
 Most of the code, phrases and documents in this repository were written with AI assistance
 (Claude via Cherry Studio, model deepseek-flash v4.1).
