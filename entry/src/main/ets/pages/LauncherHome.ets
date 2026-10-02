@@ -3747,11 +3747,16 @@ export struct LauncherHome {
             .fontSize(13).fontColor($r('sys.color.font_secondary'))
             .margin({ top: 4 })
 
-          /* ⚠️ 上游与本仓库是两个地址，别合并：本应用是上游的 fork，而「报问题」应当去
-           * 它自己那个仓库。两个都列是因为它们回答的是不同的问题。 */
+          /* 上游与本仓库是两个地址，别合并：本应用是上游的 fork，而「报问题」应当去
+           * 它自己那个仓库。两个都列是因为它们回答的是不同的问题。
+           *
+           * ⛔ 这里原来缺了 `Text('上游')` 那一行，而它的三个修饰符留了下来、接到了上面那句
+           * 「以 GPL-3.0 分发。」身上（后写的胜）⇒ 那行字实际渲染成 12/tertiary/间距16。
+           * 同时第一个地址写的是**本仓库**，而注释说的是上游。两处都已修。 */
+          Text('上游')
             .fontSize(12).fontColor($r('sys.color.font_tertiary'))
             .margin({ top: 16 })
-          Text('https://github.com/haohandc/MindustryArk')
+          Text('https://github.com/Anuken/Mindustry')
             .fontSize(12).fontColor($r('sys.color.brand'))
             .margin({ top: 2 }).copyOption(CopyOptions.LocalDevice)
           Text('本仓库')
