@@ -60,10 +60,9 @@ import { SymbolGlyphModifier, uiMaterial } from '@kit.ArkUI';
 import { GameJar, GameResolution, listGameJars, readSelection, writeSelection,
          resolveGame, gameJarDir, ensureGameJarDir,
          bundledGameVersion, hasBundledGame, bundledGamePath } from '../games/GameLibrary';
-/* [A] 界面偏好（内容宽度）。单独一个文件，因为它不是「游戏知识」——
- * 理由见那个文件的开头。 */
-import { readWidthPct, writeWidthPct, WIDTH_PCT_MIN, WIDTH_PCT_MAX,
-         WIDTH_PCT_DEFAULT, readLaunchMode, writeLaunchMode,
+/* [A] 界面偏好（启动后进哪里）。单独一个文件，因为它不是「游戏知识」——
+ * 理由见那个文件的开头。⛔ 内容宽度**不再**在这里 —— 见 gamesWidthVp 的说明。 */
+import { readLaunchMode, writeLaunchMode,
          LAUNCH_MODE_HOME, LAUNCH_MODE_GAME } from '../settings/LauncherPrefs';
 /* [A] 版本隔离：四档粒度、键的计算、以及打开时的那次复制。
  * ⛔ 实际的 `-Duser.home=` 在 native 侧 —— 这里只负责【决定】并把结论写进桥。 */
@@ -235,18 +234,31 @@ function metaRowsOf(m: SaveMeta, sv: SaveEntry): MetaRow[] {
 /** [A]
  * 内容占窗口宽度的**百分比下限**（按 vp 算）。
  *
- * 用户给的规格（2026-10-01）：**「内容本身占 30%，在最左边，像 AMCL 那样。
- * Mindustry 的电脑 UI 也是菜单在左边，而不是居中。」** 看过之后改成 **默认 40%**，
- * 并要一个滑条让玩家自己调。
- *
- * ⭐ 按**比例**算，不用固定值（900 那一版是拍的）。百分数存在
- * `settings/LauncherPrefs.ets`，滑条改的就是它。
- *
- * 下限的存在：手机上窗口只有 360–420 vp，40% 会得到一百多 vp 的窄条，没法用。
- * `max(360, 百分比)` 这个组合让**手机退回全宽、平板收成左栏** —— 同一个式子管两种设备，
- * 不需要断点。
+ * ⭐ 下限的存在：手机上窗口只有 360–420 vp，30% 会得到一百多 vp 的窄条，没法用。
+ * `max(360, 百分比)` 这个组合让**手机退回全宽、平板收成左栏** ——
+ * 同一个式子管两种设备，不需要断点。
  */
 const CONTENT_MIN_VP = 360;
+
+/** [A]
+ * 首页的内容宽度：**固定 30%**。
+ *
+ * 这条规格从第一天就在（用户 2026-10-01）：「内容本身占 30%，在最左边，像 AMCL 那样。
+ * Mindustry 的电脑 UI 也是菜单在左边，而不是居中。」
+ * ⚠️ 中间加过一条 20–60 的滑条，用户 2026-10-02 收回了：「那个不要了，首页就固定在 30%」。
+ *
+ * ⛔ 存档与设置**不用**这个值 —— 它们是 100%，直接写 `'100%'`：那两条没有「占比」的
+ * 概念，就是铺满，连窗口宽度都不必量。
+ */
+const GAMES_WIDTH_PCT = 30;
+
+/** [A]
+ * 窄屏（手机）的阈值，vp。低于它就把存档页的详情改成**子页**而不是右栏 ——
+ * 理由与实测依据见 `isNarrow()`。
+ *
+ * ⚠️ 600 与参考项目 AMCL 的断点一致（他们 `viewportWidth >= 600` 才走双栏）。
+ */
+const NARROW_VP = 600;
 
 /** [A]
  * 底部悬浮栏的**目标宽度**上限。
@@ -421,19 +433,19 @@ export struct LauncherHome {
    */
   @State winW: number = 0;
 
-  /** [A]
-   * 内容占窗口宽度百分之几 —— **已经生效的**那个值。布局读的是它。
+  /* [A] ⭐ 内容宽度**不再是可调的**（用户 2026-10-02）。
    *
-   * ⚠️ 它与下面的 sliderPct **必须分开**，这是用户要的：
-   * 「切换内容宽度现在是实时切换，看着比较奇怪，应该弄成我拖动完松开才切换宽度」。
-   * 拖动过程中只动 sliderPct（数字标签跟着走，有反馈），松手才提升进 contentPct，
-   * **布局到那一刻才变**。
+   * 「那个不要了，首页就固定在 30%，存档固定在 100%，设置固定在 100%」
+   *
+   * ⇒ 三条路各有各的**固定**宽度，见 `gamesWidthVp()`：
+   *    · 首页 30% —— 那条规格从第一天就是「内容本身占 30%，在最左边，像 AMCL 那样」，
+   *      中间加过一条 20–60 的滑条，现在回到固定值。
+   *    · 存档 / 设置 100% —— ⭐ 存档要 100% 是为了**把「查看存档数据」挪进右侧的空位**
+   *      （不再弹窗），设置要 100% 是为了铺成 AMCL 那种整片卡片。
+   *
+   * ⛔ 原来那两个 @State（`contentPct` / `sliderPct`）与写盘的 `launcher_width_pct.txt`
+   *    已一并删除 —— 留着它们会变成一段没有用户的代码，而下一个读者会以为还有一个滑条。
    */
-  @State contentPct: number = WIDTH_PCT_DEFAULT;
-
-  /** [B] 滑条手柄当前的位置。拖动时只有它变。 */
-  @State sliderPct: number = WIDTH_PCT_DEFAULT;
-
   /** [B] 启动后进哪里。由设置里那个开关写盘，启动时由 Index.ets 读。 */
   @State launchMode: string = LAUNCH_MODE_HOME;
 
@@ -490,7 +502,6 @@ export struct LauncherHome {
    * ⚠️ `selMetaNote` 非空 ⇒ 读失败了，`selMetaRows` 里只有能确定的那一两行。
    *    ⛔ **不允许「读失败但界面上看起来正常」** —— 那会让玩家以为存档是空的。
    */
-  @State metaShown: boolean = false;
   @State selMetaRows: MetaRow[] = [];
   @State selMetaNote: string = '';
 
@@ -630,8 +641,6 @@ export struct LauncherHome {
   private barMaterial: uiMaterial.Material | undefined = immersiveBarMaterial();
 
   aboutToAppear(): void {
-    this.contentPct = readWidthPct(this.filesDir);
-    this.sliderPct = this.contentPct;
     this.launchMode = readLaunchMode(this.filesDir);
     this.granularity = readGranularity(this.filesDir);
     this.appLabel = this.resolveAppLabel();
@@ -1328,12 +1337,53 @@ export struct LauncherHome {
                file, String(m.ok), m.build);
   }
 
-  /** [A] 打开「查看存档数据」弹窗。数据已经读好了（见 loadSelectedMeta）。 */
-  private openSaveMeta(): void {
-    if (this.selectedSaveEntry() === undefined) {
-      return;
+  /* [A] 点一行的落点。⭐ 窄屏时**同时**打开子页 —— 手机上列表与详情放不下两栏，
+   * 所以「选中」与「进去看」是同一个动作（用户 2026-10-02：「如果手机上点，
+   * 就是进去那个子页面，可以返回退出」）。
+   * ⚠️ 宽屏时不设 `panelOpen` —— 那时详情一直就在右边。 */
+  private openSaveRow(id: string): void {
+    this.selectedSave = id;
+    if (this.isNarrow()) {
+      this.panelOpen = true;
     }
-    this.metaShown = true;
+  }
+
+  /** [B] 版本列表同理。 */
+  private openVersionRow(path: string): void {
+    this.selectedVersion = path;
+    if (this.isNarrow()) {
+      this.panelOpen = true;
+    }
+  }
+
+  /* [A] ⭐⭐ 窄屏（手机）的判定，以及「详情子页」是否开着。
+   *
+   * ⚠️ 阈值 600 vp 与参考项目 AMCL 一致（他们 `viewportWidth >= 600` 才走双栏）。
+   *    本项目已有的实测依据也吻合：`CONTENT_MIN_VP` 那条注释记着
+   *    「手机上窗口只有 360–420 vp」。
+   *
+   * ⚠️ `winW <= 0` 时（还没量到）**当作宽屏**：宁可先按宽屏画一帧，
+   *    也不要让平板上闪一下子页 —— 平板上量到宽度之前就点进子页的概率极低，
+   *    而误判成窄屏会让**平板**上一进页面就少一半界面。
+   */
+  private isNarrow(): boolean {
+    return this.winW > 0 && this.winW < NARROW_VP;
+  }
+
+  /** [B] 手机上打开了详情子页。宽屏恒为 false（宽屏没有子页）。 */
+  @State panelOpen: boolean = false;
+
+  /** [A]
+   * 元数据里**除了头条那三项**之外的行。
+   *
+   * ⛔ 为什么要有它：右侧面板把「构建号 / 地图 / 保存时间」放在头条（构建号还放大到 22），
+   *    而 `metaRowsOf` 的完整列表里也有这三项 ⇒ 不去掉的话**同一个字段在一屏上出现两遍**，
+   *    读者会以为是两个不同的东西。
+   * ⚠️ 排的是**标签**，而那些标签在 `metaRowsOf` 里定义、只此一处 ⇒ 改名时两边一起改。
+   */
+  private metaRowsExcept(): MetaRow[] {
+    const skip: string[] = ['写入时的构建号', '地图', '保存时间'];
+    return this.selMetaRows.filter((r: MetaRow) => skip.indexOf(r.label) < 0);
   }
 
   /** [A] 玩家点了某个 jar。只是【记下来】，不在这里启动 —— 启动要重建整棵树。 */
@@ -1368,11 +1418,11 @@ export struct LauncherHome {
    *
    * ⚠️ 窗口宽度还没量到时给下限；`winW <= 0` 只出现在第一帧。
    */
-  private contentWidthVp(): number {
+  private gamesWidthVp(): number {
     if (this.winW <= 0) {
       return CONTENT_MIN_VP;
     }
-    const want: number = this.winW * (this.contentPct / 100);
+    const want: number = this.winW * (GAMES_WIDTH_PCT / 100);
     return want > CONTENT_MIN_VP ? want : CONTENT_MIN_VP;
   }
 
@@ -1569,7 +1619,7 @@ export struct LauncherHome {
           .padding({ left: 16, right: 16, top: 16 })
             }
             }
-            .width(this.contentWidthVp())
+            .width(this.gamesWidthVp())
             .animation({ duration: 300, curve: Curve.FastOutSlowIn })
           }
           /* [B] 靠左**且**靠上 —— 见上面那层 Row 的说明。
@@ -1621,7 +1671,7 @@ export struct LauncherHome {
          * ⇒ 它现在只在**上一次启动失败**时出现，而且是弹窗，见 build() 末尾那个浮层。
          *   设置页里那个同名的按钮也一并撤了 —— 同一个东西不该有两处常驻入口。 */
       }
-      .width(this.contentWidthVp())
+      .width(this.gamesWidthVp())
       .animation({ duration: 300, curve: Curve.FastOutSlowIn })
       .padding({ left: 16, right: 16, top: 12 })
     }
@@ -1633,365 +1683,427 @@ export struct LauncherHome {
     /* [A] 给悬浮栏让位，见 BAR_CLEARANCE_VP。 */
     .padding({ bottom: BAR_CLEARANCE_VP })
   }
+  /* ==================================================================
+   * 存档页的两个详情面板
+   *
+   * ⭐⭐ 抽成**零参** `@Builder` 是为了让**宽屏内嵌**与**窄屏子页**共用同一份。
+   *    ⛔ 注意是零参：本文件开头记着「@Builder 的参数按值传递，`selected` 变了不会重跑」
+   *    —— 那条**只针对带参数的 @Builder**。零参的那种只读 `this`，`this` 上任何 @State
+   *    变化都会让它重新执行，所以这里安全。
+   *    ⇒ 若哪天要给它们加参数，先回去读文件头第 2 条。
+   * ================================================================== */
+
+  @Builder
+  SaveDataPanel() {
+    Column() {
+      if (this.selectedSave === '') {
+        Text(this.saves.length === 0 ? '还没有存档' : '从左边选一个存档')
+          .fontSize(13).fontColor($r('sys.color.font_tertiary'))
+      } else {
+        Text(this.selectedSaveLabel())
+          .fontSize(16).fontColor($r('sys.color.font_primary'))
+          .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(this.selectedSaveSummary())
+          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+          .margin({ top: 6 })
+        Text(this.selectedSaveUpdated())
+          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+          .margin({ top: 4 })
+
+        Divider()
+          .strokeWidth(1).color($r('app.color.launcher_border'))
+          .margin({ top: 14, bottom: 14 })
+
+        /* [A] ⚠️ 读失败时（`selMetaNote` 非空）**只显示那句话**，不显示半截数据 ——
+         * ⛔ 一个「读不出来」的存档如果看起来和正常存档一样（只是字段空着），
+         * 玩家会以为存档本身是空的。 */
+        if (this.selMetaNote !== '') {
+          Text(this.selMetaNote)
+            .fontSize(12).fontColor($r('sys.color.font_secondary'))
+        } else {
+          /* [A] ⭐ 头条三行：构建号放大，地图与保存时间跟在下面。
+           * ⛔ 这三项**不再出现在下面的完整列表里**（用 `metaRowsExcept` 排掉）——
+           * 同一个字段在一屏上出现两遍，读者会以为是两个不同的东西。 */
+          Text('写入时的游戏构建号')
+            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+          Text(rowValue(this.selMetaRows, '写入时的构建号') === ''
+               ? '—' : rowValue(this.selMetaRows, '写入时的构建号'))
+            .fontSize(22).fontColor($r('sys.color.font_primary'))
+            .margin({ top: 2 })
+
+          if (rowValue(this.selMetaRows, '地图') !== '') {
+            Text('地图  ' + rowValue(this.selMetaRows, '地图'))
+              .fontSize(12).fontColor($r('sys.color.font_secondary'))
+              .margin({ top: 10 })
+          }
+          if (rowValue(this.selMetaRows, '保存时间') !== '') {
+            Text('保存于  ' + rowValue(this.selMetaRows, '保存时间'))
+              .fontSize(12).fontColor($r('sys.color.font_secondary'))
+              .margin({ top: 4 })
+          }
+
+          /* [A] ⭐⭐ **这里是「查看存档数据」原来那个弹窗的内容**，现在直接铺在右侧。
+           * 用户 2026-10-02：「我想把'查看存档数据'改成不弹窗，直接显示在右侧空白区域」。
+           * ⇒ 那个按钮与那个弹窗**都已删除**，不是藏起来了。
+           * ⚠️ 行内容在可滚动的一块里：`模组` 那条会长成 `[a, b, c]`，行数也跟着变。 */
+          Divider()
+            .strokeWidth(1).color($r('app.color.launcher_border'))
+            .margin({ top: 14, bottom: 14 })
+
+          Scroll() {
+            Column() {
+              ForEach(this.metaRowsExcept(), (r: MetaRow) => {
+                Row() {
+                  Text(r.label)
+                    .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                    .width(88)
+                  Text(r.value)
+                    .fontSize(12).fontColor($r('sys.color.font_primary'))
+                    .layoutWeight(1)
+                    .copyOption(CopyOptions.LocalDevice)
+                }
+                .width('100%')
+                .margin({ bottom: 8 })
+                .alignItems(VerticalAlign.Top)
+              }, (r: MetaRow) => r.label)
+            }
+            .width('100%')
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .align(Alignment.TopStart)
+          .scrollBar(BarState.Off)
+        }
+
+        /* [A] ⭐ 用户 2026-10-02 要的就是这一行：「右侧可以看到存档生效于哪个版本
+         * （哪个版本可以用这个存档）」。
+         *
+         * ⭐ 答的是**目录**层面的问题（谁的 user.home 指向这里），那是能确切回答的那个；
+         * ⛔ 不是「这个存档能被哪些版本读」—— 那个还要看模组与版本迁移规则，
+         * 我们答不了，所以不在这儿答。存档自己的 `build` 就在上面，两件事分开摆着。 */
+        if (this.savesSeenByText() !== '') {
+          Text('这个存档对哪些版本可见')
+            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+            .margin({ top: 12 })
+          Text(this.savesSeenByText())
+            .fontSize(12).fontColor($r('sys.color.font_secondary'))
+            .margin({ top: 2 })
+        }
+      }
+    }
+    .width('100%').height('100%')
+    .padding({ left: 8, right: 16, top: 12 })
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  VersionDataPanel() {
+    Column() {
+      if (this.selectedVersionEntry() === undefined) {
+        Text('从左边选一个版本')
+          .fontSize(13).fontColor($r('sys.color.font_tertiary'))
+      } else {
+        Text(this.selectedVersionLabel())
+          .fontSize(16).fontColor($r('sys.color.font_primary'))
+          .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(this.selectedVersionLine())
+          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+          .margin({ top: 6 })
+
+        Divider()
+          .strokeWidth(1).color($r('app.color.launcher_border'))
+          .margin({ top: 14, bottom: 14 })
+
+        Text(this.selectedVersionDataLine())
+          .fontSize(12).fontColor($r('sys.color.font_secondary'))
+        /* [B] 数据目录写出来 —— 这一屏的意义就是让「谁读哪一份数据」变得看得见。 */
+        Text(this.selectedVersionDir())
+          .fontSize(11).fontColor($r('sys.color.font_tertiary'))
+          .margin({ top: 4 })
+          .copyOption(CopyOptions.LocalDevice)
+
+        /* [A] ⭐⭐ **这一句是「按版本」这一屏真正的价值。**
+         * 用户 2026-10-02 问的「哪个版本可以用这个存档」，在机制上的真答案是
+         * 「谁的 `user.home` 指向同一个目录，谁就看得见」。
+         * ⚠️ 隔离**关着**时全部版本指向同一份 ⇒ 这句话会写成「全部 N 个版本」，
+         * 而那不是 bug，那正是「不隔离」的含义。 */
+        if (this.selectedVersionSharedText() !== '') {
+          Text(this.selectedVersionSharedText())
+            .fontSize(11).fontColor($r('sys.color.font_tertiary'))
+            .margin({ top: 10 })
+        }
+
+        if (!this.selectedVersionIsCurrent()) {
+          /* [B] 说的是**怎么去操作**，不是「不行」—— 门要能开。
+           * 存档页的四个动作只作用于**当前版本**的数据（那是游戏实际会读的那份）。 */
+          Text('这还不是当前版本。要操作这份数据，先在「首页」把它切过去。')
+            .fontSize(11).fontColor($r('sys.color.font_tertiary'))
+            .margin({ top: 10 })
+        }
+
+        Divider()
+          .strokeWidth(1).color($r('app.color.launcher_border'))
+          .margin({ top: 14, bottom: 14 })
+
+        Text('这个目录里的存档')
+          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+
+        Scroll() {
+          Column() {
+            if (this.versionSaves.length === 0) {
+              Text(this.selectedVersionHasDataText())
+                .fontSize(12).fontColor($r('sys.color.font_secondary'))
+                .margin({ top: 8 })
+            }
+            ForEach(this.versionSaves, (sv: SaveEntry) => {
+              Text(sv.label + '   ·   ' + formatSaveSize(sv.bytes)
+                   + '   ·   ' + formatSaveDate(sv.mtime))
+                .fontSize(12).fontColor($r('sys.color.font_secondary'))
+                .width('100%')
+                .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                .margin({ top: 6 })
+            }, (sv: SaveEntry) => sv.id)
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .align(Alignment.TopStart)
+        .scrollBar(BarState.Off)
+      }
+    }
+    .width('100%').height('100%')
+    .padding({ left: 8, right: 16, top: 12 })
+    .alignItems(HorizontalAlign.Start)
+  }
 
   /* [A]
-   * 存档页。
+   * 存档页。用户 2026-10-02 的布局：「左侧列表选择存档/版本」＋ 右侧详情，
+   * 并要求左右**对称** —— 不管左边选的是什么，右边永远是同一套「详情 + 对它可做的事」。
    *
-   * 用户 2026-10-02 的规格：「打开可以看到所有存档（按照粒度分，是整个星球的 msav 在一起算
-   * 一个存档）」。⭐ 左右两侧**对称**（这一条我提了建议、用户同意）：不管左边选的是什么，
-   * 右边永远是同一套「详情 + 对它可做的事」。
+   * ⭐⭐ 这一版的三处变化（同一条消息里要的）：
    *
-   * ⚠️ 这一版只做**列表 + 选中**。详情与那四个操作（删除/复制/移动/查看数据）是后面几步 ——
-   *    先让列表能看、能选，再看效果往上堆。
+   *   1. **宽度 100%**（原来 30–60% 可调）——
+   *      用户：「存档固定在 100%」。⭐ 理由是他自己给的：
+   *      「我说搞到 100%，是因为我想把'查看存档数据'改成不弹窗，直接显示在右侧空白区域」。
+   *   2. **「查看存档数据」不再弹窗**，内容直接铺在右侧（见 `SaveDataPanel`）。
+   *      那个按钮与 `metaShown` 弹窗**都已删除**。
+   *   3. **窄屏（手机）走子页**：「如果手机上点，就是进去那个子页面，可以返回退出」。
+   *      ⛔ 没有用 `Navigation` / `NavDestination` —— 那是另一套机制，而这一页的
+   *      `Navigation` 现在是 `NavigationMode.Stack` 且**一个 NavDestination 都没有**，
+   *      附近还栽过两次。这里用一个 `panelOpen` 开关在**同一个页签内**换内容，
+   *      出口是屏幕左上角那个返回箭头（就是用户说的「可以返回退出」）。
    *
-   * ⛔⛔ **`@Builder` 必须紧挨着方法声明，中间不能夹注释。**
-   *    第一版我把这段说明写在 `@Builder` 与 `SavesTab()` 之间，编译报的是一串
-   *    「';' expected」，位置指向**后面**那个方法 —— 完全看不出病因在注释上。
-   *    ⇒ 装饰器与它修饰的声明之间不插任何东西。
+   * ⚠️ 两栏按 **3 : 7** 分（`layoutWeight`），不是各一半：左边只是存档名与一行摘要（很短），
+   *    右边要放下整张元数据表。⭐ 用 `layoutWeight` 而不是写死 vp，是为了让它在
+   *    任何窗口宽度下都自成比例（手机走子页，这条根本不参与）。
    */
   @Builder
   SavesTab() {
     Column() {
-      Column() {
-        /* [A]
-         * 视图切换：按存档 / 按版本。⭐ **它就是这一屏的标题**（用户 2026-10-02 定的）。
-         *
-         * ⚠️ 原来这里写着一行 `Text('存档')`，分段控件摆在**右边**。用户指出两个问题：
-         *    ① 分段控件应当在**左边**；② `存档` 与 `按存档` **语义重复**。
-         *    ⇒ 于是标题整个撤掉，由分段控件顶上 —— 屏幕上少一个词，信息一个不少。
-         *    ⚠️ 这不是「少了个标题」（页面底部的页签仍然写着「存档」），
-         *    而是**把标题与控制合成一个东西**：玩家看到「按存档/按版本」就知道这是哪一屏。
-         *
-         * ⚠️ 形状**照抄设置页那组粒度选择**（一排 `Text` ＋ 切底色），⛔ 不新造组件。
-         *    理由有两条：一是项目里已经有一处这样写的，两处长得一样读起来才顺；
-         *    二是「分段控件」这种自带主题的组件，本项目为它付过代价 ——
-         *    `stateStyles` 那次编译期崩（`Node must have a real position`），
-         *    HdsTabs 那次发现 UI Design Kit 只在中国境内可用。⇒ 用最朴素的写法。
-         *
-         * ⚠️ 选中态用 `launcher_border` 做底（那是灰），文字换成 `font_primary`。
-         *    与设置页一致：**不给它一个手搓的强调色** —— 那两处迟早会分叉。
-         *    ⭐ 同理**字号也保持 13**、不因为「它现在是标题」就单独放大：一旦这里放大，
-         *    设置页那组就会与它不一致，而那种不一致没人会想起是为什么。
-         *    真觉得太小，就**两处一起**改大小（那是一次有理由的改动，而不是一次分叉）。
-         *
-         * ⚠️ 结构从「Row{ Column{标题+路径} ＋ 分段 }」塌成**一个 Column**：
-         *    标题没了之后，那层 Row 只剩一个孩子，位置靠左也就自然成立，
-         *    ⛔ 不再需要 `layoutWeight` / `margin({left})` 这些东西去推它。
-         */
+      if (this.isNarrow() && this.panelOpen) {
+        /* ===================== 窄屏：子页 ===================== */
         Row() {
-          Text('按存档')
-            .fontSize(13)
-            .fontColor(this.savesView === SAVES_VIEW_SAVE
-                       ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
-            .padding({ left: 12, right: 12, top: 7, bottom: 7 })
-            .borderRadius(9)
-            .backgroundColor(this.savesView === SAVES_VIEW_SAVE
-                             ? $r('app.color.launcher_border') : $r('app.color.launcher_card'))
-            .onClick(() => { this.savesView = SAVES_VIEW_SAVE; })
-          Text('按版本')
-            .fontSize(13)
-            .fontColor(this.savesView === SAVES_VIEW_VERSION
-                       ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
-            .padding({ left: 12, right: 12, top: 7, bottom: 7 })
-            .borderRadius(9)
-            .backgroundColor(this.savesView === SAVES_VIEW_VERSION
-                             ? $r('app.color.launcher_border') : $r('app.color.launcher_card'))
-            .margin({ left: 8 })
-            .onClick(() => { this.savesView = SAVES_VIEW_VERSION; })
+          SymbolGlyph($r('sys.symbol.chevron_left'))
+            .fontSize(18).fontColor([$r('sys.color.brand')])
+            .padding({ right: 8 })
+            .onClick(() => { this.panelOpen = false; })
+          Text(this.savesView === SAVES_VIEW_VERSION
+               ? this.selectedVersionLabel() : this.selectedSaveLabel())
+            .fontSize(18).fontColor($r('sys.color.font_primary'))
+            .layoutWeight(1)
+            .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
         }
+        .width('100%')
+        .padding({ left: 12, right: 16, top: 16, bottom: 8 })
         .alignItems(VerticalAlign.Center)
 
-        /* [B] 明确写出**在数哪个目录**。隔离一开一关，这个路径就换了 ——
-         * 而不写出来的话，玩家会以为存档丢了。
-         * ⚠️ 「按版本」视图下这一行改成版本个数：那时左边根本不是某一份存档目录，
-         *    继续写当前版本的 saves 路径会与屏幕上的内容对不上。 */
-        Text(this.savesHeaderLine())
-          .fontSize(11).fontColor($r('sys.color.font_tertiary'))
-          .margin({ top: 8 })
-          .copyOption(CopyOptions.LocalDevice)
-      }
-      .width(this.contentWidthVp())
-      .padding({ left: 16, right: 16, top: 20 })
-      .alignItems(HorizontalAlign.Start)
-
-      /* [A]
-       * 左列表 + 右详情。用户 2026-10-02 的布局：「左侧列表选择存档/版本，
-       * 右侧可以看到存档生效于哪个版本」，并要求左右**对称** —— 不管左边选的是什么，
-       * 右边永远是同一套「详情 + 对它可做的事」。
-       *
-       * ⚠️ 右边现在只有「查看存档数据」一个动作。复制/移动/删除是后面几步，
-       *    它们加进同一处，⛔ **不需要动这里的左右分栏**。
-       *
-       * ⚠️ 两栏**等宽**（各 `layoutWeight(1)`），不按内容分：左边是存档名（短），
-       *    右边是版本/地图（也短），按内容分会让两栏随选中项不停挪位置。
-       *    等宽由**结构**保证，不需要给某个拍出来的数。
-       *
-       * ⚠️ 两种视图共用这**同一个** `Row`，分支只在两栏**各自内部** ——
-       *    ⛔ 不要为了「按版本」再抄一份 Row 骨架：那样骨架的每一处修饰符
-       *    （`height` / `alignItems` / `layoutWeight`）都得改两遍，而漏掉任何一处，
-       *    症状都只在某一个视图下出现（列表居中那条就是这种错）。
-       */
-      Row() {
-        Scroll() {
-          Row() {
-            Column() {
-              if (this.savesView === SAVES_VIEW_VERSION) {
-                /* [A] 版本列表。⚠️ 列表项同样**内联**写 —— 见文件开头 @Builder 按值传递那条。 */
-                if (this.versions.length === 0) {
-                  Text('没有可用的游戏版本')
-                    .fontSize(14).fontColor($r('sys.color.font_secondary'))
-                    .margin({ top: 20 })
-                }
-                ForEach(this.versions, (v: VersionEntry) => {
-                  Row() {
-                    Column() {
-                      Text(v.label)
-                        .fontSize(15)
-                        .fontColor(this.selectedVersion === v.path
-                                   ? $r('sys.color.brand') : $r('sys.color.font_primary'))
-                        .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-                      Text((v.version === '' ? '未知版本' : v.version)
-                           + '  ·  ' + this.versionSavesLine(v))
-                        .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-                        .margin({ top: 4 })
-                        .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-                    }
-                    .alignItems(HorizontalAlign.Start)
-                    .layoutWeight(1)
-
-                    if (this.selectedVersion === v.path) {
-                      Text('✓')
-                        .fontSize(16).fontColor($r('sys.color.brand'))
-                    }
-                  }
-                  .width('100%')
-                  .padding(14)
-                  .borderRadius(CARD_RADIUS_VP)
-                  .backgroundColor($r('app.color.launcher_card'))
-                  .margin({ bottom: 8 })
-                  .onClick(() => { this.selectedVersion = v.path; })
-                }, (v: VersionEntry) => v.path)
-              } else if (this.saves.length === 0) {
-                Text('没有存档')
-                  .fontSize(15).fontColor($r('sys.color.font_secondary'))
-                  .margin({ top: 20 })
-                Text('进游戏玩一局，存档会出现在这里')
-                  .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-                  .margin({ top: 8 })
-              } else {
-                ForEach(this.saves, (sv: SaveEntry) => {
-                  Row() {
-                    Column() {
-                      Text(sv.label)
-                        .fontSize(15)
-                        .fontColor(this.selectedSave === sv.id
-                                   ? $r('sys.color.brand') : $r('sys.color.font_primary'))
-                        .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-                      Text((sv.kind === 'sector' ? (sv.sectors + ' 个区块 · ') : '')
-                           + formatSaveSize(sv.bytes) + ' · ' + formatSaveDate(sv.mtime))
-                        .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-                        .margin({ top: 4 })
-                    }
-                    .alignItems(HorizontalAlign.Start)
-                    .layoutWeight(1)
-
-                    if (this.selectedSave === sv.id) {
-                      Text('✓')
-                        .fontSize(16).fontColor($r('sys.color.brand'))
-                    }
-                  }
-                  .width('100%')
-                  .padding(14)
-                  .borderRadius(CARD_RADIUS_VP)
-                  .backgroundColor($r('app.color.launcher_card'))
-                  .margin({ bottom: 8 })
-                  .onClick(() => { this.selectedSave = sv.id; })
-                }, (sv: SaveEntry) => sv.id)
-              }
-            }
-            .width('100%')
-            .padding({ left: 16, right: 8, top: 12 })
-          }
-          /* [A] ⭐⭐ 这两行是「列表贴着顶部」的全部原因，而它们是从 GamesTab
-           * **抄过来的** —— 我第一版漏了，于是列表在竖直方向**居中**。
-           *
-           * ⚠️ 关键的是 `alignItems(VerticalAlign.Top)`：Row 的交叉轴默认是
-           *    `VerticalAlign.Center`，而 `height('100%')` 让它有整个视口那么高
-           *    ⇒ 内容就被摆在**中间**了。
-           * ⛔ 少了 height 则 Row 只是内容高，`VerticalAlign` 看不出差别 ——
-           *    **两行缺一不可**，而症状只在有 height 时才出现。 */
-          .width('100%')
-          .height('100%')
-          .justifyContent(FlexAlign.Start)
-          .alignItems(VerticalAlign.Top)
-        }
-        .layoutWeight(1)
-        .height('100%')
-        .scrollBar(BarState.Off)
-
-        /* [A]
-         * 右侧：详情，以及**对它可做的事**。
-         *
-         * ⭐ 「按存档」这边只放**选完就该看见**的几项（版本、地图、时间）；
-         *    完整的字段在「查看存档数据」弹窗里。两处**刻意不重复** ——
-         *    重复的话，将来加一个字段要改两个地方，而它们迟早会分叉。
-         *
-         * ⚠️ 读失败时（`selMetaNote` 非空）**只显示那句话**，不显示半截数据 ——
-         *    ⛔ 一个「读不出来」的存档如果看起来和正常存档一样（只是字段空着），
-         *    玩家会以为存档本身是空的。
-         *
-         * ⚠️ 「按版本」那边是**纯信息**，没有动作 —— 用户 2026-10-02 的规格里，
-         *    删除/复制/移动/查看数据这四个都挂在「点击存档」上，也就是「按存档」那一侧。
-         *    ⛔ 别在版本侧也放一份动作：那样同一个操作会有两个入口，
-         *    而它们对「操作的是哪个版本的哪份数据」的默认理解迟早会分叉。
-         */
+        /* [A] ⚠️ 面板必须包一层 `layoutWeight(1)`：面板自身写的是 `height('100%')`，
+         * 而这里它上面还有一个返回行、下面还有一个 `Blank` ⇒ 不包的话它会要求
+         * **整列**那么高，把返回行挤出屏幕。包一层之后 `height('100%')` 参照的是
+         * 这一层，剩下的高度正好是它。 */
         Column() {
           if (this.savesView === SAVES_VIEW_VERSION) {
-            if (this.selectedVersionEntry() === undefined) {
-              Text('从左边选一个版本')
-                .fontSize(13).fontColor($r('sys.color.font_tertiary'))
-            } else {
-              Text(this.selectedVersionLabel())
-                .fontSize(16).fontColor($r('sys.color.font_primary'))
-                .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
-              Text(this.selectedVersionLine())
-                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-                .margin({ top: 6 })
-
-              Divider()
-                .strokeWidth(1).color($r('app.color.launcher_border'))
-                .margin({ top: 14, bottom: 14 })
-
-              Text(this.selectedVersionDataLine())
-                .fontSize(12).fontColor($r('sys.color.font_secondary'))
-              /* [B] 数据目录写出来 —— 这一屏的意义就是让「谁读哪一份数据」变得看得见。 */
-              Text(this.selectedVersionDir())
-                .fontSize(11).fontColor($r('sys.color.font_tertiary'))
-                .margin({ top: 4 })
-                .copyOption(CopyOptions.LocalDevice)
-
-              /* [A] ⭐⭐ **这一句是「按版本」这一屏真正的价值。**
-               *   用户 2026-10-02 问的「哪个版本可以用这个存档」，在机制上的真答案是
-               *   「谁的 `user.home` 指向同一个目录，谁就看得见」。
-               *   ⚠️ 隔离**关着**时全部版本指向同一份 ⇒ 这句话会写成「全部 N 个版本」，
-               *   而那不是 bug，那正是「不隔离」的含义 —— 说出来，玩家才看得懂隔离在干什么。 */
-              if (this.selectedVersionSharedText() !== '') {
-                Text(this.selectedVersionSharedText())
-                  .fontSize(11).fontColor($r('sys.color.font_tertiary'))
-                  .margin({ top: 10 })
-              }
-
-              if (!this.selectedVersionIsCurrent()) {
-                /* [B] 说的是**怎么去操作**，不是「不行」—— 门要能开。
-                 * 存档页的四个动作只作用于**当前版本**的数据（那是游戏实际会读的那份）。 */
-                Text('这还不是当前版本。要操作这份数据，先在「首页」把它切过去。')
-                  .fontSize(11).fontColor($r('sys.color.font_tertiary'))
-                  .margin({ top: 10 })
-              }
-
-              Divider()
-                .strokeWidth(1).color($r('app.color.launcher_border'))
-                .margin({ top: 14, bottom: 14 })
-
-              Text('这个目录里的存档')
-                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-
-              Scroll() {
-                Column() {
-                  if (this.versionSaves.length === 0) {
-                    Text(this.selectedVersionHasDataText())
-                      .fontSize(12).fontColor($r('sys.color.font_secondary'))
-                      .margin({ top: 8 })
-                  }
-                  ForEach(this.versionSaves, (sv: SaveEntry) => {
-                    Text(sv.label + '   ·   ' + formatSaveSize(sv.bytes)
-                         + '   ·   ' + formatSaveDate(sv.mtime))
-                      .fontSize(12).fontColor($r('sys.color.font_secondary'))
-                      .width('100%')
-                      .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-                      .margin({ top: 6 })
-                  }, (sv: SaveEntry) => sv.id)
-                }
-                .width('100%')
-              }
-              .width('100%')
-              .layoutWeight(1)
-              .align(Alignment.TopStart)
-              .scrollBar(BarState.Off)
-            }
-          } else if (this.selectedSave === '') {
-            Text(this.saves.length === 0 ? '还没有存档' : '从左边选一个存档')
-              .fontSize(13).fontColor($r('sys.color.font_tertiary'))
+            this.VersionDataPanel()
           } else {
-            Text(this.selectedSaveLabel())
-              .fontSize(16).fontColor($r('sys.color.font_primary'))
-              .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
-            Text(this.selectedSaveSummary())
-              .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-              .margin({ top: 6 })
-            Text(this.selectedSaveUpdated())
-              .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-              .margin({ top: 4 })
-
-            Divider()
-              .strokeWidth(1).color($r('app.color.launcher_border'))
-              .margin({ top: 14, bottom: 14 })
-
-            if (this.selMetaNote !== '') {
-              Text(this.selMetaNote)
-                .fontSize(12).fontColor($r('sys.color.font_secondary'))
-            } else {
-              Text('写入时的游戏构建号')
-                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-              Text(rowValue(this.selMetaRows, '写入时的构建号') === ''
-                   ? '—' : rowValue(this.selMetaRows, '写入时的构建号'))
-                .fontSize(22).fontColor($r('sys.color.font_primary'))
-                .margin({ top: 2 })
-
-              if (rowValue(this.selMetaRows, '地图') !== '') {
-                Text('地图  ' + rowValue(this.selMetaRows, '地图'))
-                  .fontSize(12).fontColor($r('sys.color.font_secondary'))
-                  .margin({ top: 10 })
-              }
-              if (rowValue(this.selMetaRows, '保存时间') !== '') {
-                Text('保存于  ' + rowValue(this.selMetaRows, '保存时间'))
-                  .fontSize(12).fontColor($r('sys.color.font_secondary'))
-                  .margin({ top: 4 })
-              }
-            }
-
-            /* [A] ⭐ 用户 2026-10-02 要的就是这一行：「右侧可以看到存档生效于哪个版本
-             * （哪个版本可以用这个存档）」。
-             *
-             * ⭐ 答的是**目录**层面的问题（谁的 user.home 指向这里），
-             *    那是能确切回答的那个；⛔ 不是「这个存档能被哪些版本读」——
-             *    那个还要看模组与版本迁移规则，我们答不了，所以不在这儿答。
-             *    存档自己的 `build` 就在上面那行，两件事分开摆着。 */
-            if (this.savesSeenByText() !== '') {
-              Text('这个存档对哪些版本可见')
-                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-                .margin({ top: 12 })
-              Text(this.savesSeenByText())
-                .fontSize(12).fontColor($r('sys.color.font_secondary'))
-                .margin({ top: 2 })
-            }
-
-            Button('查看存档数据')
-              .fontSize(14)
-              .width('60%').alignSelf(ItemAlign.Start)
-              .margin({ top: 18 })
-              .onClick(() => { this.openSaveMeta(); })
+            this.SaveDataPanel()
           }
         }
+        .width('100%')
         .layoutWeight(1)
-        .height('100%')
-        .padding({ left: 8, right: 16, top: 12 })
+      } else {
+        /* ===================== 列表（含宽屏的右侧面板）===================== */
+        Column() {
+          /* [A]
+           * 视图切换：按存档 / 按版本。⭐ **它就是这一屏的标题**（用户 2026-10-02 定的）。
+           *
+           * ⚠️ 原来这里写着一行 `Text('存档')`，分段控件摆在**右边**。用户指出两个问题：
+           *    ① 分段控件应当在**左边**；② `存档` 与 `按存档` **语义重复**。
+           *    ⇒ 于是标题整个撤掉，由分段控件顶上 —— 屏幕上少一个词，信息一个不少。
+           *
+           * ⚠️ 形状**照抄设置页那组粒度选择**（一排 `Text` ＋ 切底色），⛔ 不新造组件。
+           *    「分段控件」这种自带主题的组件，本项目为它付过代价 ——
+           *    `stateStyles` 那次编译期崩，HdsTabs 那次发现 UI Design Kit 只在中国境内可用。
+           * ⚠️ 未选中的底色是 `launcher_bg`（不是 `launcher_card`）：后者与页面底色同色，
+           *    会让未选中的那一个**完全看不见**。
+           */
+          Row() {
+            Text('按存档')
+              .fontSize(13)
+              .fontColor(this.savesView === SAVES_VIEW_SAVE
+                         ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
+              .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+              .borderRadius(9)
+              .backgroundColor(this.savesView === SAVES_VIEW_SAVE
+                               ? $r('app.color.launcher_border') : $r('app.color.launcher_bg'))
+              .onClick(() => {
+                this.savesView = SAVES_VIEW_SAVE;
+                this.panelOpen = false;
+              })
+            Text('按版本')
+              .fontSize(13)
+              .fontColor(this.savesView === SAVES_VIEW_VERSION
+                         ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
+              .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+              .borderRadius(9)
+              .backgroundColor(this.savesView === SAVES_VIEW_VERSION
+                               ? $r('app.color.launcher_border') : $r('app.color.launcher_bg'))
+              .margin({ left: 8 })
+              .onClick(() => {
+                this.savesView = SAVES_VIEW_VERSION;
+                this.panelOpen = false;
+              })
+          }
+          .alignItems(VerticalAlign.Center)
+
+          /* [B] 明确写出**在数哪个目录**。隔离一开一关，这个路径就换了 ——
+           * 而不写出来的话，玩家会以为存档丢了。
+           * ⚠️ 「按版本」视图下这一行改成版本个数：那时左边根本不是某一份存档目录。 */
+          Text(this.savesHeaderLine())
+            .fontSize(11).fontColor($r('sys.color.font_tertiary'))
+            .margin({ top: 8 })
+            .copyOption(CopyOptions.LocalDevice)
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 20 })
         .alignItems(HorizontalAlign.Start)
+
+        Row() {
+          Scroll() {
+            Row() {
+              Column() {
+                if (this.savesView === SAVES_VIEW_VERSION) {
+                  /* [B] 版本列表。⚠️ 列表项同样**内联**写 —— 见文件开头 @Builder 按值传递那条。 */
+                  if (this.versions.length === 0) {
+                    Text('没有可用的游戏版本')
+                      .fontSize(14).fontColor($r('sys.color.font_secondary'))
+                      .margin({ top: 20 })
+                  }
+                  ForEach(this.versions, (v: VersionEntry) => {
+                    Row() {
+                      Column() {
+                        Text(v.label)
+                          .fontSize(15)
+                          .fontColor(this.selectedVersion === v.path
+                                     ? $r('sys.color.brand') : $r('sys.color.font_primary'))
+                          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                        Text((v.version === '' ? '未知版本' : v.version)
+                             + '  ·  ' + this.versionSavesLine(v))
+                          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                          .margin({ top: 4 })
+                          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                      }
+                      .alignItems(HorizontalAlign.Start)
+                      .layoutWeight(1)
+
+                      if (this.selectedVersion === v.path) {
+                        Text('✓')
+                          .fontSize(16).fontColor($r('sys.color.brand'))
+                      }
+                    }
+                    .width('100%')
+                    .padding(14)
+                    .borderRadius(CARD_RADIUS_VP)
+                    .backgroundColor($r('app.color.launcher_card'))
+                    .margin({ bottom: 8 })
+                    .onClick(() => { this.openVersionRow(v.path); })
+                  }, (v: VersionEntry) => v.path)
+                } else if (this.saves.length === 0) {
+                  Text('没有存档')
+                    .fontSize(15).fontColor($r('sys.color.font_secondary'))
+                    .margin({ top: 20 })
+                  Text('进游戏玩一局，存档会出现在这里')
+                    .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                    .margin({ top: 8 })
+                } else {
+                  ForEach(this.saves, (sv: SaveEntry) => {
+                    Row() {
+                      Column() {
+                        Text(sv.label)
+                          .fontSize(15)
+                          .fontColor(this.selectedSave === sv.id
+                                     ? $r('sys.color.brand') : $r('sys.color.font_primary'))
+                          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                        Text((sv.kind === 'sector' ? (sv.sectors + ' 个区块 · ') : '')
+                             + formatSaveSize(sv.bytes) + ' · ' + formatSaveDate(sv.mtime))
+                          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                          .margin({ top: 4 })
+                      }
+                      .alignItems(HorizontalAlign.Start)
+                      .layoutWeight(1)
+
+                      if (this.selectedSave === sv.id) {
+                        Text('✓')
+                          .fontSize(16).fontColor($r('sys.color.brand'))
+                      }
+                    }
+                    .width('100%')
+                    .padding(14)
+                    .borderRadius(CARD_RADIUS_VP)
+                    .backgroundColor($r('app.color.launcher_card'))
+                    .margin({ bottom: 8 })
+                    .onClick(() => { this.openSaveRow(sv.id); })
+                  }, (sv: SaveEntry) => sv.id)
+                }
+              }
+              .width('100%')
+              .padding({ left: 16, right: 8, top: 12 })
+            }
+            /* [A] ⭐⭐ 这两行是「列表贴着顶部」的全部原因，而它们是从 GamesTab
+             * **抄过来的** —— 我第一版漏了，于是列表在竖直方向**居中**。
+             *
+             * ⚠️ 关键的是 `alignItems(VerticalAlign.Top)`：Row 的交叉轴默认是
+             *    `VerticalAlign.Center`，而 `height('100%')` 让它有整个视口那么高
+             *    ⇒ 内容就被摆在**中间**了。
+             * ⛔ 少了 height 则 Row 只是内容高，`VerticalAlign` 看不出差别 ——
+             *    **两行缺一不可**，而症状只在有 height 时才出现。 */
+            .width('100%')
+            .height('100%')
+            .justifyContent(FlexAlign.Start)
+            .alignItems(VerticalAlign.Top)
+          }
+          .layoutWeight(3)
+          .height('100%')
+          .scrollBar(BarState.Off)
+
+          /* [A] ⚠️ 窄屏时**不渲染右侧面板** —— 那时它是子页（见上面那个分支）。
+           * ⛔ 别因为「窄屏也能挤一挤」就把它留下：手机上 100% 宽度里再切两栏，
+           * 每栏只剩一百多 vp，两栏都没法读。 */
+          if (!this.isNarrow()) {
+            if (this.savesView === SAVES_VIEW_VERSION) {
+              this.VersionDataPanel()
+            } else {
+              this.SaveDataPanel()
+            }
+          }
+        }
+        /* [A] ⚠️ 这里**只有** `layoutWeight(1)`，没有 `height('100%')` ——
+         * 外面那个 Column 里除了它还有一行标题和一个 `Blank`，写 height('100%')
+         * 就是在要求超出父容器的高度。（我改这一版时顺手加过，已去掉。） */
+        .width('100%')
+        .layoutWeight(1)
+        .alignItems(VerticalAlign.Top)
       }
-      .width(this.contentWidthVp())
-      .height('100%')
-      .layoutWeight(1)
-      .alignItems(VerticalAlign.Top)
 
       /* [B] 与悬浮底栏之间的留白。见 BAR_CLEARANCE_VP。 */
       Blank().height(BAR_CLEARANCE_VP)
@@ -2000,328 +2112,262 @@ export struct LauncherHome {
     .alignItems(HorizontalAlign.Start)
   }
 
+  /* [A]
+   * 设置页。用户 2026-10-02 改成**全宽 + 卡片**，参考 AMCL 的设置页：
+   *
+   *   「设置你可以参考AMCL的那种布局」
+   *
+   * ⭐ 从那边的形态里取了三样**结构**上的东西，⛔ 不是照抄它的配色/图标体系：
+   *   1. **整片铺满**（左右各留 20）—— 它原本是一条 30% 的窄栏，现在有整屏可用。
+   *   2. **圆角卡片分组**（`launcher_card` + `CARD_RADIUS_VP` + 内边距 16）——
+   *      每一组是一块，组与组之间用留白分开，而不是靠一堆 `top: 28` 硬撑。
+   *   3. **组标题在卡片外面**（AMCL 的「常用配置」「按场景调整」）——
+   *      ⭐ 标题在卡片外，读者才知道它是**这一组的名字**，而不是卡片里的第一项。
+   *
+   * ⚠️ 我们**没有**取它的「每节点进去是子页」那套：这一页只有四组、六项设置，
+   *    再套一层子页只会让人多点一次。用户也是这么选的（「只改外观」）。
+   *
+   * ⚠️ 外面套 `Scroll` 是新加的。原来是裸 `Column` + `Blank()`，在平板上刚好放得下；
+   *    但卡片式（每块有内边距、组间有留白）**总高变大了**，而手机上可用高度只有 800 上下
+   *    ⇒ 不滚就会被裁掉，且裁掉的正好是最后一组「关于」。
+   *    ⛔ `Blank()` 一并去掉 —— 它在可滚动容器里没有任何作用。
+   */
   @Builder
   SettingsTab() {
-    Column() {
+    Scroll() {
       Column() {
-        Text('游戏 jar 目录')
-          .fontSize(14).fontColor($r('sys.color.font_secondary'))
-        /* [B] 与空状态同款两行：给人找的一行 + 可复制的一行。理由见空状态里的说明。 */
-        Text(this.jarDirHuman === '' ? '　' : this.jarDirHuman)
+        /* ================= 游戏 ================= */
+        Text('游戏')
           .fontSize(13).fontColor($r('sys.color.font_secondary'))
-          .margin({ top: 4 })
-        Text(this.jarDirHint === '' ? '（本设备上拿不到）' : this.jarDirHint)
-          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-          .margin({ top: 2 })
-          .copyOption(CopyOptions.LocalDevice)
-      }
-      .width(this.contentWidthVp())
-      .animation({ duration: 300, curve: Curve.FastOutSlowIn }).alignItems(HorizontalAlign.Start)
-      .padding({ left: 16, right: 16, top: 20 })
-
-      /* [A]
-       * 内容宽度的滑条。用户要的：「加一个滑条让用户自由调整」。
-       *
-       * ⚠️ 只在 `End` / `Click` 时**写盘**，拖动过程中只改内存里的 @State。
-       * `onChange` 在拖动时每帧都会触发 —— 每帧写一次文件既没必要，也会让磁盘
-       * 每帧就动一下。界面本身在拖动时是实时更新的（@State 变了就重绘）。
-       */
-      Column() {
-        Row() {
-          Text('内容宽度')
-            .fontSize(14).fontColor($r('sys.color.font_secondary'))
-          Blank()
-          Text(String(Math.round(this.sliderPct)) + '%')
-            .fontSize(14).fontColor($r('sys.color.font_secondary'))
-        }
-        .width('100%')
-
-        Slider({
-          value: this.sliderPct,
-          min: WIDTH_PCT_MIN,
-          max: WIDTH_PCT_MAX,
-          /* [A]
-           * ⚠️ step 同时决定两件事，所以不能随便改：
-           *   ① 拖动的吸附粒度  ② `showSteps(true)` 那些小圆点画在哪
-           *
-           * 用户 2026-10-01 定的是：**范围 20–60，每 10% 一个挡位** ⇒
-           * 圆点落在 20 / 30 / 40 / 50 / 60，正好五个。
-           *
-           * 代价：吸附到挡位 ⇒ 中间值取不到（比如 35%）。
-           * ⚠️ 这与用户更早说的「自由调整」有张力 —— 但后来他明确改成了固定挡位，
-           * 以近的一次为准。若哪天要两者兼得，得**自己画标记而不动 step**（要算轨道内边距）。
-           */
-          step: 10,
-          style: SliderStyle.OutSet,
-        })
           .width('100%')
-          .margin({ top: 4 })
-          .showSteps(true)
-          /* [A]
-           * ⚠️ 拖动中**只动 sliderPct**（数字标签跟着走，给反馈），
-           * 松手（End / Click）才提升进 contentPct 并写盘。
-           *
-           * 之前是每帧都改 contentPct ⇒ 布局跟着手指实时重排，用户的原话是
-           * 「看着比较奇怪」。而且每帧写一次文件也没必要。
-           *
-           * ⚠️⚠️ 松手那一下包在 **animateTo** 里 —— 用户报「松手后切换的速度太快了，
-           * 看着很不舒服」。那说的不是「太快」而是「**瞬间跳变**」：宽度从旧值直接
-           * 闪到新值，中间没有任何过渡。
-           *
-           * ⚠️⚠️ **`this.getUIContext().animateTo(...)`，不是全局的 `animateTo(...)`** ——
-           * 这一条踩了两次，别再改回去。
-           *
-           * SDK 原文（common.d.ts 的全局 animateTo）：
-           *
-           *     @since 7
-           *     @deprecated since 18
-           *     @useinstead ohos.arkui.UIContext.UIContext#animateTo
-           *
-           * ⛔ **全局那个自 API 18 起弃用，在本设备（API 26）上【静默不生效】** ——
-           * 不报错、不警告，就是没动画。这正是「用户说『还是太快了』」的原因：
-           * 我一直在调时长，而那条路根本就是死的。
-           *
-           * ⭐ 答案在参考项目 AMCL 里 —— 他们的注释写着：
-           *     「2026-05-23 API NEXT 迁移：全局 mediaquery / px2vp / promptAction /
-           *       router / animateTo 均已弃用，本页全部改走 this.getUIContext().XXX(...)」
-           *   而他们每一处动画都是 `this.getUIContext().animateTo(...)`。
-           *
-           * ⚠️ 属性选错的教训也在：第一版包的是 `constraintSize`（布局约束）⇒ 同样没动画。
-           * 见 contentWidthVp()。
-           *
-           * ⛔ 而现在**连 `animateTo` 都不用了** —— 改走声明式的 `.animation()`。
-           * 理由：它紧跟在 `.width(...)` 后面，作用域就是它前面那些属性，而且**不涉及
-           * 「用哪个 animateTo」这个坑**。参考项目 AMCL 给尺寸/位置做动画就是这么写的
-           * （见 GameControls.ets 的 `Text(...).width(this.w)....animation({duration:50})`）。
-           *
-           * ⇒ 所以这里只改状态，动画由布局上的 `.animation()` 负责。
-           */
-          .onChange((value: number, mode: SliderChangeMode) => {
-            this.sliderPct = value;
-            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
-              const next: number = Math.round(value);
-              this.contentPct = next;
-              writeWidthPct(this.filesDir, next);
-            }
-          })
-
-        Text('窗口较窄时自动占满整行 —— 这个百分比只在宽屏（平板）上才起作用。')
-          .fontSize(11).fontColor($r('sys.color.font_tertiary'))
-          .margin({ top: 4 })
-      }
-      .width(this.contentWidthVp())
-      .animation({ duration: 300, curve: Curve.FastOutSlowIn }).alignItems(HorizontalAlign.Start)
-      .padding({ left: 16, right: 16, top: 24 })
-
-      Column() {
-        Text('本次启动将加载')
-          .fontSize(14).fontColor($r('sys.color.font_secondary'))
-        Text(this.resolution.path === ''
-               ? '（没有可加载的游戏）'
-               : (this.resolution.source === 'user' ? '（玩家选择的）' : '（包内自带的）'))
-          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-          .margin({ top: 4 })
-        Text(this.resolution.path === '' ? '—' : this.resolution.path)
-          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-          .margin({ top: 4 })
-          .copyOption(CopyOptions.LocalDevice)
-      }
-      .width(this.contentWidthVp())
-      .animation({ duration: 300, curve: Curve.FastOutSlowIn }).alignItems(HorizontalAlign.Start)
-      .padding({ left: 16, right: 16, top: 24 })
-
-      /* [A]
-       * 现在只剩一个按钮。
-       *
-       * ⛔ 这里【曾经】是「重新扫描」+「仍然尝试启动」**上下堆叠**的两个按钮，而堆叠
-       * 本身是为一处实测缺陷做的修复：「字号一致，但**分配的左边区域太小了，导致字挤在
-       * 一起**」—— 并排时每个只拿一半宽度，而「仍然尝试启动」有六个字。
-       *
-       * ⚠️ 那段历史的结论仍然成立（**能靠结构解决的，不要靠调数值**），只是对象没了：
-       * 用户 2026-10-01 要求「仍然尝试启动」只在启动失败时以弹窗出现，所以它从这里撤走，
-       * 不再有第二个标签要和它争宽度。
-       */
-      Column() {
-        /* [A] 字号【要给】。不给的话按钮会按标签长度自适应，长标签会被缩小 ——
-         * 那正是当初「两个按钮字体大小不一样」的成因，换到别处同样成立。 */
-        Button('重新扫描')
-          .fontSize(BUTTON_FONT_VP)
-          .width('100%')
-          .onClick(() => { this.refresh(); })
-      }
-      .width(this.contentWidthVp())
-      .animation({ duration: 300, curve: Curve.FastOutSlowIn })
-      .padding({ left: 16, right: 16, top: 28 })
-
-      /* [A]
-       * 启动后进哪里。用户 2026-10-01 要的：「加一个开关，用于选择是否启动进入首页/直接进入游戏」。
-       *
-       * ⭐ 这个开关是从一次真实的卡死里长出来的：他把一个 **mod 当成游戏**选了，于是
-       * 每次打开都直接进游戏树、立刻闪退，而**没有任何界面能让他改回来**。
-       * 检测机制（launch_pending）现在也能把他送回启动器，但这是**不依赖检测**的那条路 ——
-       * 一个存在感为零、却让最坏情况有出口的开关。
-       *
-       * ⚠️ 默认是「先进首页」，见 LauncherPrefs 的 LAUNCH_MODE_DEFAULT。想省掉这一次点击
-       * 就拨到「直接进游戏」；拨完立刻写盘，下一次启动生效。
-       */
-      Column() {
-        Row() {
-          Column() {
-            Text('启动时')
-              .fontSize(14).fontColor($r('sys.color.font_secondary'))
-            Text(this.launchMode === LAUNCH_MODE_GAME
-                 ? '直接进入游戏（跳过这个界面）'
-                 : '先进这个界面，由你点「启动游戏」')
-              .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-              .margin({ top: 4 })
-          }
-          .alignItems(HorizontalAlign.Start)
-          .layoutWeight(1)
-
-          /* [B] 开关的「开」= 直接进游戏。写成左侧标签 + 右侧开关，而不是两个单选，
-           * 是因为它确实是一个二元选择，没有第三种。 */
-          Toggle({ type: ToggleType.Switch,
-                   isOn: this.launchMode === LAUNCH_MODE_GAME })
-            .onChange((on: boolean) => {
-              this.launchMode = on ? LAUNCH_MODE_GAME : LAUNCH_MODE_HOME;
-              writeLaunchMode(this.filesDir, this.launchMode);
-            })
-        }
-        .width('100%')
-      }
-      .width(this.contentWidthVp())
-      .animation({ duration: 300, curve: Curve.FastOutSlowIn })
-      .padding({ left: 16, right: 16, top: 28 })
-
-      /* [A]
-       * 数据隔离 —— 四档粒度，用户 2026-10-02 定。
-       *
-       * ⚠️ 四个写成**并列的一行**而不是下拉菜单：这是互斥的四选一，一眼看全比点开一层省事，
-       * 而且「当前是哪一档」不需要点开才看得见。
-       *
-       * ⚠️ 下面那行说明是**必需**的，不是装饰：四档的差别（尤其中间两档）对玩家不是自明的，
-       * 而选错的代价是「换个版本就看不到存档了」。
-       */
-      Column() {
-        Text('数据隔离')
-          .fontSize(14).fontColor($r('sys.color.font_secondary'))
-        Text('把不同游戏版本的存档、蓝图、模组、研究进度分开保存')
-          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-          .margin({ top: 4 })
-
-        Row() {
-          Text('不隔离')
-            .fontSize(13)
-            .fontColor(this.granularity === GRANULARITY_OFF
-                       ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
-            .padding({ left: 12, right: 12, top: 7, bottom: 7 })
-            .borderRadius(9)
-            .backgroundColor(this.granularity === GRANULARITY_OFF
-                             ? $r('app.color.launcher_border') : $r('app.color.launcher_card'))
-            .onClick(() => { this.chooseGranularity(GRANULARITY_OFF); })
-          Text('大版本')
-            .fontSize(13)
-            .fontColor(this.granularity === GRANULARITY_NUMBER
-                       ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
-            .padding({ left: 12, right: 12, top: 7, bottom: 7 })
-            .borderRadius(9)
-            .backgroundColor(this.granularity === GRANULARITY_NUMBER
-                             ? $r('app.color.launcher_border') : $r('app.color.launcher_card'))
-            .margin({ left: 8 })
-            .onClick(() => { this.chooseGranularity(GRANULARITY_NUMBER); })
-          Text('构建号')
-            .fontSize(13)
-            .fontColor(this.granularity === GRANULARITY_BUILD
-                       ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
-            .padding({ left: 12, right: 12, top: 7, bottom: 7 })
-            .borderRadius(9)
-            .backgroundColor(this.granularity === GRANULARITY_BUILD
-                             ? $r('app.color.launcher_border') : $r('app.color.launcher_card'))
-            .margin({ left: 8 })
-            .onClick(() => { this.chooseGranularity(GRANULARITY_BUILD); })
-          Text('小版本')
-            .fontSize(13)
-            .fontColor(this.granularity === GRANULARITY_PATCH
-                       ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
-            .padding({ left: 12, right: 12, top: 7, bottom: 7 })
-            .borderRadius(9)
-            .backgroundColor(this.granularity === GRANULARITY_PATCH
-                             ? $r('app.color.launcher_border') : $r('app.color.launcher_card'))
-            .margin({ left: 8 })
-            .onClick(() => { this.chooseGranularity(GRANULARITY_PATCH); })
-        }
-        .width('100%').margin({ top: 10 })
-
-        Text(this.granularityHint(this.granularity))
-          .fontSize(12).fontColor($r('sys.color.font_secondary'))
-          .margin({ top: 8 })
-
-        /* [A] ⭐⭐ 这一条是给**已经踩进去的状态**留的出口。
-         * 它不是错误提示，而是一句**诊断**：说清现在什么状态、以及怎么退回去。
-         * ⛔ 没有它，玩家只能看到「存档全没了」，而界面上没有任何线索指向隔离。 */
-        if (this.isolationStale) {
-          Text('⚠ 隔离现在是开着的，但当前版本的数据目录还不存在 —— '
-               + '进游戏会看到空数据。请把隔离关掉（或重新打开一次让它复制），原存档一直都在。')
-            .fontSize(12).fontColor($r('sys.color.warning'))
-            .margin({ top: 8 })
-        }
-
-        /* [B] 迁移出问题时的提示。⛔ 它不是门 —— 隔离照旧打开，只是新目录可能是空的，
-         * 而原数据完好（我们是复制）。 */
-        if (this.isolationNote !== '') {
-          Text(this.isolationNote)
+        Column() {
+          Text('游戏 jar 目录')
+            .fontSize(14).fontColor($r('sys.color.font_primary'))
+          /* [B] 与空状态同款两行：给人找的一行 + 可复制的一行。理由见空状态里的说明。 */
+          Text(this.jarDirHuman === '' ? '　' : this.jarDirHuman)
+            .fontSize(13).fontColor($r('sys.color.font_secondary'))
+            .margin({ top: 4 })
+          Text(this.jarDirHint === '' ? '（本设备上拿不到）' : this.jarDirHint)
             .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-            .margin({ top: 6 })
-        }
-      }
-      .width(this.contentWidthVp())
-      .animation({ duration: 300, curve: Curve.FastOutSlowIn })
-      .alignItems(HorizontalAlign.Start)
-      .padding({ left: 16, right: 16, top: 28 })
-      .padding({ left: 16, right: 16, top: 28 })
+            .margin({ top: 2 })
+            .copyOption(CopyOptions.LocalDevice)
 
-      /* [A]
-       * 关于 —— 现在是一个【入口】，点开才是内容。
-       *
-       * 用户 2026-10-01 的原话：「关于独立出来，点击出现一个有关闭按钮（右上角）的窗口
-       * 展示信息。」
-       *
-       * ⚠️ 它【曾经】是把整块信息平铺在这一页上的。那样做的问题不是好不好看，而是：
-       * 设置页的主语是**设置**，而一块只能读、不能改的长文字会把真正的设置项挤下去。
-       * ⇒ 收成一行，点开再看。
-       *
-       * ⚠️ 游戏那边（本页之外的悬浮球 →「关于」）还有一份同内容的浮层。它们够不到彼此
-       * （那个在游戏树里），所以两份都得留；改文案时两边一起改。 */
-      Column() {
-        Row() {
-          Column() {
-            Text('关于')
-              .fontSize(14).fontColor($r('sys.color.font_secondary'))
-            Text(this.appVersion === '' ? 'Mindustry Ark' : ('Mindustry Ark  ' + this.appVersion))
-              .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-              .margin({ top: 4 })
+          Divider().strokeWidth(1).color($r('app.color.launcher_border'))
+            .margin({ top: 14, bottom: 14 })
+
+          Text('本次启动将加载')
+            .fontSize(14).fontColor($r('sys.color.font_primary'))
+          Text(this.resolution.path === ''
+                 ? '（没有可加载的游戏）'
+                 : (this.resolution.source === 'user' ? '（玩家选择的）' : '（包内自带的）'))
+            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+            .margin({ top: 4 })
+          Text(this.resolution.path === '' ? '—' : this.resolution.path)
+            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+            .margin({ top: 4 })
+            .copyOption(CopyOptions.LocalDevice)
+
+          /* [A] 字号【要给】。不给的话按钮会按标签长度自适应，长标签会被缩小 ——
+           * 那正是当初「两个按钮字体大小不一样」的成因，换到别处同样成立。 */
+          Button('重新扫描')
+            .fontSize(BUTTON_FONT_VP)
+            .width('100%')
+            .margin({ top: 14 })
+            .onClick(() => { this.refresh(); })
+        }
+        .width('100%').padding(16)
+        .backgroundColor($r('app.color.launcher_card'))
+        .borderRadius(CARD_RADIUS_VP)
+        .alignItems(HorizontalAlign.Start)
+        .margin({ top: 8 })
+
+        /* ================= 数据 ================= */
+        Text('数据')
+          .fontSize(13).fontColor($r('sys.color.font_secondary'))
+          .width('100%')
+          .margin({ top: 20 })
+        Column() {
+          Text('数据隔离')
+            .fontSize(14).fontColor($r('sys.color.font_primary'))
+          Text('把不同游戏版本的存档、蓝图、模组、研究进度分开保存')
+            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+            .margin({ top: 4 })
+
+          /* [A] 四个写成**并列的一行**而不是下拉菜单：这是互斥的四选一，一眼看全比点开一层省事，
+           * 而且「当前是哪一档」不需要点开才看得见。
+           *
+           * ⚠️ 下面那行说明是**必需**的，不是装饰：四档的差别（尤其中间两档）对玩家不是自明的，
+           * 而选错的代价是「换个版本就看不到存档了」。
+           *
+           * ⚠️ 未选中的底色从 `launcher_card` 改成 `launcher_bg`：卡片本身就是 `launcher_card`，
+           * 两者同色会让未选中的那三个**完全看不见**（这不是「颜色不好看」，是「没画出来」）。
+           * 本项目在隔离弹窗那三个按钮上正是栽过这一跤。 */
+          Row() {
+            Text('不隔离')
+              .fontSize(13)
+              .fontColor(this.granularity === GRANULARITY_OFF
+                         ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
+              .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+              .borderRadius(9)
+              .backgroundColor(this.granularity === GRANULARITY_OFF
+                               ? $r('app.color.launcher_border') : $r('app.color.launcher_bg'))
+              .onClick(() => { this.chooseGranularity(GRANULARITY_OFF); })
+            Text('大版本')
+              .fontSize(13)
+              .fontColor(this.granularity === GRANULARITY_NUMBER
+                         ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
+              .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+              .borderRadius(9)
+              .backgroundColor(this.granularity === GRANULARITY_NUMBER
+                               ? $r('app.color.launcher_border') : $r('app.color.launcher_bg'))
+              .margin({ left: 8 })
+              .onClick(() => { this.chooseGranularity(GRANULARITY_NUMBER); })
+            Text('构建号')
+              .fontSize(13)
+              .fontColor(this.granularity === GRANULARITY_BUILD
+                         ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
+              .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+              .borderRadius(9)
+              .backgroundColor(this.granularity === GRANULARITY_BUILD
+                               ? $r('app.color.launcher_border') : $r('app.color.launcher_bg'))
+              .margin({ left: 8 })
+              .onClick(() => { this.chooseGranularity(GRANULARITY_BUILD); })
+            Text('小版本')
+              .fontSize(13)
+              .fontColor(this.granularity === GRANULARITY_PATCH
+                         ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
+              .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+              .borderRadius(9)
+              .backgroundColor(this.granularity === GRANULARITY_PATCH
+                               ? $r('app.color.launcher_border') : $r('app.color.launcher_bg'))
+              .margin({ left: 8 })
+              .onClick(() => { this.chooseGranularity(GRANULARITY_PATCH); })
           }
-          .alignItems(HorizontalAlign.Start)
-          .layoutWeight(1)
-          /* [B] 一个朝右的箭头，表示「点进去还有一页」。用符号字形而不是字符，
-           * 免得不同字体下宽度跳变。 */
-          SymbolGlyph($r('sys.symbol.chevron_right'))
-            .fontSize(16).fontColor([$r('sys.color.font_tertiary')])
-        }
-        .width('100%')
-      }
-      .width(this.contentWidthVp())
-      .animation({ duration: 300, curve: Curve.FastOutSlowIn })
-      .padding({ left: 16, right: 16, top: 28, bottom: 16 })
-      .onClick(() => { this.showAbout = true; })
+          .width('100%').margin({ top: 12 })
 
-      Blank()
+          Text(this.granularityHint(this.granularity))
+            .fontSize(12).fontColor($r('sys.color.font_secondary'))
+            .margin({ top: 10 })
+
+          /* [A] ⭐⭐ 这一条是给**已经踩进去的状态**留的出口。
+           * 它不是错误提示，而是一句**诊断**：说清现在什么状态、以及怎么退回去。
+           * ⛔ 没有它，玩家只能看到「存档全没了」，而界面上没有任何线索指向隔离。 */
+          if (this.isolationStale) {
+            Text('⚠ 隔离现在是开着的，但当前版本的数据目录还不存在 —— '
+                 + '进游戏会看到空数据。请把隔离关掉（或重新打开一次让它复制），原存档一直都在。')
+              .fontSize(12).fontColor($r('sys.color.warning'))
+              .margin({ top: 8 })
+          }
+
+          /* [B] 迁移出问题时的提示。⛔ 它不是门 —— 隔离照旧打开，只是新目录可能是空的，
+           * 而原数据完好（我们是复制）。 */
+          if (this.isolationNote !== '') {
+            Text(this.isolationNote)
+              .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+              .margin({ top: 8 })
+          }
+        }
+        .width('100%').padding(16)
+        .backgroundColor($r('app.color.launcher_card'))
+        .borderRadius(CARD_RADIUS_VP)
+        .alignItems(HorizontalAlign.Start)
+        .margin({ top: 8 })
+
+        /* ================= 启动 ================= */
+        Text('启动')
+          .fontSize(13).fontColor($r('sys.color.font_secondary'))
+          .width('100%')
+          .margin({ top: 20 })
+        Column() {
+          /* [A]
+           * 启动后进哪里。用户 2026-10-01 要的：「加一个开关，用于选择是否启动进入首页/直接进入游戏」。
+           *
+           * ⭐ 这个开关是从一次真实的卡死里长出来的：他把一个 **mod 当成游戏**选了，于是
+           * 每次打开都直接进游戏树、立刻闪退，而**没有任何界面能让他改回来**。
+           * 检测机制（launch_pending）现在也能把他送回启动器，但这是**不依赖检测**的那条路 ——
+           * 一个存在感为零、却让最坏情况有出口的开关。
+           *
+           * ⚠️ 默认是「先进首页」，见 LauncherPrefs 的 LAUNCH_MODE_DEFAULT。想省掉这一次点击
+           * 就拨到「直接进游戏」；拨完立刻写盘，下一次启动生效。
+           */
+          Row() {
+            Column() {
+              Text('启动时直接进游戏')
+                .fontSize(14).fontColor($r('sys.color.font_primary'))
+              Text(this.launchMode === LAUNCH_MODE_GAME
+                   ? '跳过这个界面，直接开始游戏'
+                   : '先停在这个界面，由你点「启动游戏」')
+                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                .margin({ top: 4 })
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+
+            /* [B] 开关的「开」= 直接进游戏。写成左侧标签 + 右侧开关，而不是两个单选，
+             * 是因为它确实是一个二元选择，没有第三种。 */
+            Toggle({ type: ToggleType.Switch,
+                     isOn: this.launchMode === LAUNCH_MODE_GAME })
+              .onChange((on: boolean) => {
+                this.launchMode = on ? LAUNCH_MODE_GAME : LAUNCH_MODE_HOME;
+                writeLaunchMode(this.filesDir, this.launchMode);
+              })
+          }
+          .width('100%')
+        }
+        .width('100%').padding(16)
+        .backgroundColor($r('app.color.launcher_card'))
+        .borderRadius(CARD_RADIUS_VP)
+        .margin({ top: 8 })
+
+        /* ================= 关于 ================= */
+        Text('关于')
+          .fontSize(13).fontColor($r('sys.color.font_secondary'))
+          .width('100%')
+          .margin({ top: 20 })
+        /* [A]
+         * 关于 —— 现在是一个【入口】，点开才是内容。
+         *
+         * 用户 2026-10-01 的原话：「关于独立出来，点击出现一个有关闭按钮（右上角）的窗口
+         * 展示信息。」
+         *
+         * ⚠️ 它【曾经】是把整块信息平铺在这一页上的。那样做的问题不是好不好看，而是：
+         * 设置页的主语是**设置**，而一块只能读、不能改的长文字会把真正的设置项挤下去。
+         * ⇒ 收成一行，点开再看。
+         *
+         * ⚠️ 游戏那边（本页之外的悬浮球 →「关于」）还有一份同内容的浮层。它们够不到彼此
+         * （那个在游戏树里），所以两份都得留；改文案时两边一起改。
+         */
+        Column() {
+          Row() {
+            Column() {
+              Text('版本与许可')
+                .fontSize(14).fontColor($r('sys.color.font_primary'))
+              Text(this.appVersion === '' ? 'Mindustry Ark' : ('Mindustry Ark  ' + this.appVersion))
+                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                .margin({ top: 4 })
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+            /* [B] 一个朝右的箭头，表示「点进去还有一页」。用符号字形而不是字符，
+             * 免得不同字体下宽度跳变。 */
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(16).fontColor([$r('sys.color.font_tertiary')])
+          }
+          .width('100%')
+        }
+        .width('100%').padding(16)
+        .backgroundColor($r('app.color.launcher_card'))
+        .borderRadius(CARD_RADIUS_VP)
+        .margin({ top: 8 })
+        .onClick(() => { this.showAbout = true; })
+      }
+      .width('100%')
+      .padding({ left: 20, right: 20, top: 20, bottom: BAR_CLEARANCE_VP })
+      .alignItems(HorizontalAlign.Start)
     }
-    .width('100%')
-    .height('100%')
-    /* [A] 同上：内容靠左。 */
-    .alignItems(HorizontalAlign.Start)
-    .padding({ bottom: BAR_CLEARANCE_VP })
+    .width('100%').height('100%')
+    .align(Alignment.TopStart)
+    .scrollBar(BarState.Off)
   }
 
   build() {
@@ -2810,116 +2856,6 @@ export struct LauncherHome {
       /* [B] 点卡片【外面】的空白处也关。与右上角那个 ✕ 并存 —— 两个都是出口，
        * 而出口多一点，比少一点安全。 */
       .onClick(() => { this.showAbout = false; })
-    }
-
-    /* [A]
-     * 「查看存档数据」。
-     *
-     * ⭐ 结构照抄「关于」那个窗口（同屏遮罩 + 卡片 + 点卡片不冒泡 + 点空白也关）——
-     *    理由也相同：里面的文字**要能选中/复制**，所以点卡片不能等于点遮罩。
-     *    与「打开数据隔离」那个窗不同：那个会改数据位置，所以只留「取消」一个出口；
-     *    这个是**只读**的，多一个出口只会更顺手。
-     *
-     * ⚠️ 它排在「上次没能启动成功」那个弹窗**前面** —— Stack 里后声明的在上层，
-     *    而启动失败是必须处理的，不能被一个可选的读数窗盖住。
-     *
-     * ⚠️ 行内容在**可滚动**的一块里：`模组` 那条会长成 `[a, b, c]`，行数也跟着变，
-     *    裸 Column 会把卡片撑高、把 ✕ 顶出屏幕。
-     */
-    if (this.metaShown) {
-      Column() {
-        Column() {
-          Row() {
-            Text(this.selectedSaveLabel())
-              .fontSize(18).fontColor($r('sys.color.font_primary'))
-              .layoutWeight(1)
-              .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-            Text('✕')
-              .fontSize(18).fontColor($r('sys.color.font_secondary'))
-              .padding({ left: 14, right: 4, top: 2, bottom: 2 })
-              .onClick(() => { this.metaShown = false; })
-          }
-          .width('100%')
-
-          Text('存档数据')
-            .fontSize(13).fontColor($r('sys.color.font_tertiary'))
-            .margin({ top: 4 })
-          /* [B] 明确写出**是从哪个目录读的** —— 隔离一开一关，来源就换了。 */
-          Text(this.savesDirShown)
-            .fontSize(11).fontColor($r('sys.color.font_tertiary'))
-            .margin({ top: 4 })
-            .copyOption(CopyOptions.LocalDevice)
-
-          Scroll() {
-            Column() {
-              ForEach(this.selMetaRows, (r: MetaRow) => {
-                Row() {
-                  Text(r.label)
-                    .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-                    .width(96)
-                  Text(r.value)
-                    .fontSize(12).fontColor($r('sys.color.font_primary'))
-                    .layoutWeight(1)
-                    .copyOption(CopyOptions.LocalDevice)
-                }
-                .width('100%')
-                .margin({ bottom: 8 })
-                /* ⚠️ 值可能很长（`模组` 是一整串、`保存时间` 也比标签长），
-                 * 两行之后省略 —— 要全的就点上面的「读取自」那一行去复制，或者
-                 * 用命令行的 `hdc`。这里不做「展开」，那会把卡片变成一屏文件浏览器。 */
-                .alignItems(VerticalAlign.Top)
-              }, (r: MetaRow) => r.label)
-
-              if (this.selMetaNote !== '') {
-                Text(this.selMetaNote)
-                  .fontSize(12).fontColor($r('sys.color.font_secondary'))
-                  .width('100%').margin({ top: 4 })
-              }
-            }
-            .width('100%')
-          }
-          .width('100%')
-          .constraintSize({ maxHeight: FAULT_BOX_VP })
-          .align(Alignment.TopStart)
-          .margin({ top: 14 })
-
-          /* [A] ⚠️ 这一句**必须留着**。
-           *    `build` 是「**写**这个存档时的游戏构建号」，而玩家很容易把它读成
-           *    「这个存档能在哪些版本上用」—— 后者还要看模组清单和版本规则，是另一件事。
-           *    ⛔ 不写这句，界面就在**主动误导**，而界面上看不出来。 */
-          Text('这里的构建号是写这个存档时的游戏版本，不是兼容范围 —— 能不能读还取决于模组。')
-            .fontSize(11).fontColor($r('sys.color.font_tertiary'))
-            .margin({ top: 10 })
-        }
-        .width('100%')
-        .constraintSize({ maxWidth: this.dialogWidthVp() })
-        .padding(20)
-        .backgroundColor($r('app.color.launcher_card'))
-        .borderRadius(CARD_RADIUS_VP)
-        .alignItems(HorizontalAlign.Start)
-        /* [A] ⭐ 这里**刻意没有** `.onClick(() => {})`。
-         *
-         * ⚠️ 它原先有一句「吞掉落在卡片上的点击」，是为了不让点击冒泡到遮罩把窗口关掉。
-         *    ⇒ 遮罩不再关窗口之后（见下面），它就**没有用户了** —— 空处理器本身不做事，
-         *    留着只会让下一个读者以为这里还有什么要防的东西。
-         *
-         * ⭐ 与「关于」那个窗口的差别，也正因为这一条：那边点卡片【外面】也关，
-         *    所以才需要那一句来区分「点卡片」与「点遮罩」。这边没有那个区分。
-         */
-      }
-      /* [A]
-       * ⛔ **遮罩上【没有】关闭动作** —— 用户 2026-10-02 明确要求：
-       *    「可以把关闭改成只能点击右上角的 x 关闭，现在是点击任意区域关闭。」
-       *
-       * ⚠️ 与「关于」那个窗口**刻意不一致**，别照着那边「出口多一点更安全」去改回来：
-       *    那边是纯展示，这边是**读数**——玩家常常是在对着某一行数字、
-       *    手指正落在卡片外面比划，一个手滑就把窗关了，还得重新选中存档再点开。
-       *    这里的出口就是右上角那个 ✕，它是显式的、要被瞄准的。
-       */
-      .width('100%').height('100%')
-      .backgroundColor('#80000000')
-      .justifyContent(FlexAlign.Center)
-      .padding({ left: 32, right: 32 })
     }
 
     if (this.launchFault !== '' && !this.faultAck) {
