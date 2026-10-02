@@ -84,6 +84,20 @@ HarmonyOS 7 / API 26 真机验证：**HUAWEI MatePad Pro 12.2" 2025** 平板、
 | 存档与数据导入导出 | 从「下载」目录往返 |
 | 退出 | 正常关闭，不被系统标记为崩溃 |
 
+### 本分支（`lite`）专有的两条
+
+⭐ **2026-10-03 实测**，在同一台平板上，用**本分支自己构建并安装**的
+`ArkLauncher-v1.3.0.1`（包名 `com.haohandc.arklauncher`，**与上游是另一个沙箱**）：
+
+| 项目 | 证据 |
+|---|---|
+| **包里没有游戏** | `stderr.log` 里 `MISSING /data/storage/el1/bundle/libs/arm64/game/mindustry.so`；整包 178.3 MB 对上游的 263.1 MB |
+| **玩家提供的那份被用上了** | `game jar: …/Download/com.haohandc.arklauncher/games/Mindustry160.5.jar  (chosen in the launcher)`，紧跟 `*** JVM CREATED ***`，随后 `[Mindustry] Version: 160.5` |
+
+⚠️ **「第一次打开会停在启动器界面」**（见 [README](README.md) 顶部）是**由上面第一条推出的**，
+不是单独测的 —— 那台设备上已经放着一个 jar，所以第一次打开直接进了游戏。
+推导本身很直接（没有 jar ⇒ `resolveGame()` 返回 `none` ⇒ 界面拦住），但它是**推导**，记在这里。
+
 ## 已知限制
 
 **完整的限制清单（附实测证据）在 [docs/LIMITATIONS.md](docs/LIMITATIONS.md)。**
@@ -419,6 +433,21 @@ HarmonyOS 7 / API 26.
 | Keyboard no longer covers the field | the framework pushes the game's field clear |
 | Save and data import/export | via the Download folder |
 | Quitting | clean exit, not flagged as a crash |
+
+### Two things only this branch (`lite`) has
+
+⭐ **Measured 2026-10-03**, on the same tablet, from `ArkLauncher-v1.3.0.1` built and installed
+by this branch (bundle `com.haohandc.arklauncher` — **a different sandbox from upstream**):
+
+| Item | Evidence |
+|---|---|
+| **The package carries no game** | `MISSING /data/storage/el1/bundle/libs/arm64/game/mindustry.so` in `stderr.log`; 178.3 MB against upstream's 263.1 MB |
+| **The copy the player supplies is what runs** | `game jar: …/Download/com.haohandc.arklauncher/games/Mindustry160.5.jar  (chosen in the launcher)`, followed by `*** JVM CREATED ***` and `[Mindustry] Version: 160.5` |
+
+⚠️ **"The first launch stops at the launcher screen"** (top of the [README](README.en.md)) is
+**derived** from the first row above, not measured on its own — the device had a jar in place, so
+the first launch went straight into the game. The derivation is direct (no jar => `resolveGame()`
+returns `none` => the screen stops it), but it is a derivation, and it is recorded as one.
 
 ## Known limitations
 
