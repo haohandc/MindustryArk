@@ -1689,9 +1689,26 @@ export struct LauncherHome {
     if (fails.length === 0) {
       this.closeTransferDialog();
     } else {
-      this.transferNote = (okCount > 0 ? ('成功了 ' + String(okCount) + ' 个；') : '')
-                        + '没成功：' + fails.join('；');
-      /* [B] 只把**没成功**的那几个从选择里去掉 —— 成功的再点一次会撞同名而报错。 */
+      /* [A] ⭐⭐ 失败提示就两行：**「复制失败：」/「移动失败：」＋具体原因**。
+       *
+       * 用户 2026-10-02：
+       *   「复制失败的提示不太美观。应该这样：复制失败：「具体原因」
+       *     别的解释不需要，复制又不是移动。」
+       *
+       * ⛔ 我原来拼的是「成功了 N 个；没成功：A；B；C」—— 一句话里塞了三件事，
+       *    而且用分号连起来，读起来像日志。⇒ 改成**一个标题 + 逐行的原因**。
+       *
+       * ⚠️ 多目标时**每个目标单独一行**，原因里带目标名（`v.label + '：' + e` 已经在
+       *    `fails` 里了）—— 那才是能定位的那部分，⛔ 不是「别的解释」。
+       *
+       * ⚠️ 部分成功时只留一行「成功了 N 个。」在最前面：那不是解释，是**事实**——
+       *    少了它，屏幕上写着「复制失败」而玩家会以为一个都没成（其实成了几个）。
+       *    ⛔ 但也仅此一行，不再展开。
+       */
+      const head: string = this.transferOp === 'move' ? '移动失败' : '复制失败';
+      const okLine: string = okCount > 0 ? ('成功了 ' + String(okCount) + ' 个。\n') : '';
+      this.transferNote = okLine + head + '：\n' + fails.join('\n');
+      /* [B] 清掉选择 —— 成功的那些再点一次会撞同名而报错，失败的那些让玩家重新挑。 */
       this.transferPicked = [];
     }
     this.refresh();
