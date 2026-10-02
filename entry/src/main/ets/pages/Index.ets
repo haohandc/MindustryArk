@@ -17,7 +17,7 @@ import { publish as publishCrash, exportNow as exportDiagnosticsNow,
  * 为什么判定必须发生在本页、而不是 native：见 decideStartup()。 */
 import { consumeLauncherRequest, requestLauncher, resolveGame, reportGameResolution,
          markLaunchAttempt, pendingLaunchAttempt, clearLaunchAttempt,
-         GameResolution } from '../games/GameLibrary';
+         GameResolution, bundledGamePath } from '../games/GameLibrary';
 /* [A] 启动后进哪里 —— 设置页那开关写盘，这里读。见 LauncherPrefs 里的 LAUNCH_MODE_DEFAULT。 */
 import { readLaunchMode, LAUNCH_MODE_HOME } from '../settings/LauncherPrefs';
 /* [A] 版本隔离：在**真正要启动的那一刻**把结论写给 native。⚠️ 不能只靠 EntryAbility.onCreate
@@ -1962,7 +1962,8 @@ struct Index {
     try {
       const g: string = readGranularity(ctx.filesDir);
       const src: string = jarPath !== '' ? 'user' : res.source;
-      writeIsolationBridge(ctx.filesDir, g, computeKey(g, src, attempted));
+      writeIsolationBridge(ctx.filesDir, g,
+                           computeKey(g, src, attempted, bundledGamePath(ctx.bundleCodeDir)));
     } catch (e) {
       const err = e as BusinessError;
       hilog.warn(DOMAIN, TAG, 'isolation: could not decide at launch (%{public}s)', err.message);

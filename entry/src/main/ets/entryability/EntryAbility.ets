@@ -8,7 +8,7 @@ import { fileIo as fs, Environment } from '@kit.CoreFileKit';
 import { modFolderPath } from '../mods/ModImporter';
 /* [A] 只为了拿「玩家挑了哪个游戏 jar」—— 桥接要把它写进 user_dirs.txt 给 native 读。
  * 方向是单向的：GameLibrary 不反过来 import 本文件，所以没有环。 */
-import { GameResolution, readSelection, resolveGame } from '../games/GameLibrary';
+import { GameResolution, readSelection, resolveGame, bundledGamePath } from '../games/GameLibrary';
 /* [A] 版本隔离：算出这次该用哪个数据目录，写进 isolation.txt 给 native 读。
  * ⚠️ 方向同样是单向的 —— Isolation 不 import 本文件。 */
 import { computeKey, readGranularity, writeIsolationBridge } from '../settings/Isolation';
@@ -279,7 +279,8 @@ export default class EntryAbility extends UIAbility {
     try {
       const g: string = readGranularity(this.context.filesDir);
       const res: GameResolution = resolveGame(this.context.filesDir, this.context.bundleCodeDir);
-      const key: string = computeKey(g, res.source, res.path);
+      const key: string = computeKey(g, res.source, res.path,
+                                    bundledGamePath(this.context.bundleCodeDir));
       writeIsolationBridge(this.context.filesDir, g, key);
     } catch (e) {
       const err = e as BusinessError;

@@ -79,7 +79,8 @@ import { GRANULARITY_OFF, GRANULARITY_NUMBER, GRANULARITY_BUILD, GRANULARITY_PAT
          readGranularity, writeGranularity,
          copyLiveDataInto, gameDataExists, liveGameDataDir, isolatedGameDataDir,
          GameDataCounts, countsOf, describeCounts,
-         resolveGameDataDir, resolveGameDirAndKey, GameDirForKey } from '../settings/Isolation';
+         resolveGameDataDir, resolveGameDirAndKey, GameDirForKey,
+         listInstanceKeys } from '../settings/Isolation';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
@@ -141,6 +142,12 @@ interface SaveGroup {
   versions: VersionEntry[];
   /** [B] 这个目录里的存档。 */
   saves: SaveEntry[];
+  /* [A] ⭐ `versions` 为空时，这个目录**是哪种**「没人读」——
+   *    `''` = 未隔离的那一份（它本来就不属于任何版本）；
+   *    非空 = 一个**以前某一档隔离留下的**键（`b160.5` 这种）。
+   * ⚠️ 两者要分开说：前者的正常状态，后者是「换了粒度/合并之后留下的」，
+   *    而后者正是玩家会问「我的数据呢」的那一种。 */
+  orphanKey: string;
 }
 
 /* [A]
@@ -908,7 +915,7 @@ export struct LauncherHome {
      * ⚠️ 版本名从 `versions` 里按 `resolution.path` 找：那是**版本身份**（jar 路径），
      *    ⛔ 不是版本号（两个 jar 可以是同一个版本号）。 */
     const res: GameResolution = this.resolution;
-    const rk: GameDirForKey = resolveGameDirAndKey(g, res.source, res.path);
+    const rk: GameDirForKey = resolveGameDirAndKey(g, res.source, res.path, this.bundledJar());
     this.pendingKey = rk.key;
     const hit: VersionEntry | undefined =
       this.versions.find((v: VersionEntry) => v.path === res.path);
@@ -938,7 +945,7 @@ export struct LauncherHome {
     }
     const lines: string[] = [];
     for (const v of this.versions) {
-      const key: string = resolveGameDirAndKey(g, v.source, v.path).key;
+      const key: string = resolveGameDirAndKey(g, v.source, v.path, this.bundledJar()).key;
       lines.push(v.label + '   →   ' + (key === '' ? '（不隔离）' : key));
     }
     return lines.join('\n');
@@ -958,7 +965,7 @@ export struct LauncherHome {
     const res: GameResolution = resolveGame(this.filesDir, this.bundleCodeDir);
     /* ⚠️ 用成对的那个函数，只取 `key` —— 目录这次用不上，但 `computeKey` 要读 jar，
      * 分开调两次就会读两遍。见 Isolation.resolveGameDirAndKey 上的说明。 */
-    const key: string = resolveGameDirAndKey(g, res.source, res.path).key;
+    const key: string = resolveGameDirAndKey(g, res.source, res.path, this.bundledJar()).key;
     if (key === '') {
       /* 一个可加载的游戏都没有 ⇒ 键是空的 ⇒ 隔离没有意义。不落盘、也不报错。 */
       this.isolationNote = '现在没有可加载的游戏，先选一个游戏版本再开隔离';
@@ -1089,7 +1096,8 @@ export struct LauncherHome {
   private copyStaleCurrent(): void {
     this.staleCopyNote = '';
     const res: GameResolution = resolveGame(this.filesDir, this.bundleCodeDir);
-    const key: string = resolveGameDirAndKey(this.granularity, res.source, res.path).key;
+    const key: string = resolveGameDirAndKey(this.granularity, res.source, res.path,
+                                             this.bundledJar()).key;
     if (key === '') {
       /* [B] 不隔离时这一块根本不显示；走到这里说明状态刚好变了。
        * ⛔ 不要硬造一个键 —— 那会造出一个游戏根本不会去读的目录。 */
@@ -1232,6 +1240,12 @@ export struct LauncherHome {
     return new BottomTabBarStyle(marks, label);
   }
 
+  /* [B] 内置那份游戏 jar 的路径 —— 它现在参与**算隔离键**（同版本要合并）。
+   * ⚠️ 做成方法是为了让「合并规则用的是哪一份内置」只有一处。 */
+  private bundledJar(): string {
+    return bundledGamePath(this.bundleCodeDir);
+  }
+
   /** [B] 重新读一遍磁盘。文件夹在这里【再确认一次】存在，因为玩家可能刚把它删掉。 */
   private refresh(): void {
     ensureGameJarDir(this.filesDir);
@@ -1245,7 +1259,7 @@ export struct LauncherHome {
      * 否则这里会列出另一份存档，而那是最坏的一类不一致：界面上看起来完全正常。
      * ⚠️ 但两者仍可能分叉：玩家改了粒度但还没重启时，游戏那边还是旧目录。 */
     const dataDir: string = resolveGameDataDir(this.granularity, this.resolution.source,
-                                              this.resolution.path);
+                                              this.resolution.path, this.bundledJar());
     const dir: string = dataDir + '/saves';
     this.savesDirShown = dir;
     this.saves = listSaves(dir);
@@ -1417,7 +1431,7 @@ export struct LauncherHome {
    */
   private versionEntryOf(path: string, source: string,
                          label: string, version: string): VersionEntry {
-    const rk: GameDirForKey = resolveGameDirAndKey(this.granularity, source, path);
+    const rk: GameDirForKey = resolveGameDirAndKey(this.granularity, source, path, this.bundledJar());
     return {
       path: path,
       source: source,
@@ -1505,7 +1519,7 @@ export struct LauncherHome {
       const dir: string = v.dataDir + '/saves';
       let g: SaveGroup | undefined = byDir.get(dir);
       if (g === undefined) {
-        g = { dir: dir, versions: [], saves: listSaves(dir) };
+        g = { dir: dir, versions: [], saves: listSaves(dir), orphanKey: '' };
         byDir.set(dir, g);
         out.push(g);
       }
@@ -1514,10 +1528,34 @@ export struct LauncherHome {
     const liveDir: string = liveGameDataDir();
     const live: string = liveDir + '/saves';
     if (byDir.get(live) === undefined && gameDataExists(liveDir)) {
-      const only: SaveGroup = { dir: live, versions: [], saves: listSaves(live) };
+      const only: SaveGroup = { dir: live, versions: [], saves: listSaves(live), orphanKey: '' };
       if (only.saves.length > 0) {
         out.push(only);
       }
+    }
+    /* [A] ⭐⭐ **`instances/` 下没有版本读的那些目录也要列出来。**
+     *
+     * ⛔⛔ 光靠 `this.versions` 推不出它们，而它们的来源全是**规则的改变**：
+     *    · 换粒度（小版本 → 构建号）⇒ 昨天的 `b160.5` 今天没有版本指向它
+     *    · 换 jar ⇒ 同理
+     *    · 内置/同版本合并 ⇒ 玩家 jar 原来那个槽位立刻变成没人读
+     *    ⭐ 第三种就是**这次改动自己会造出来的** —— 不做这一步，合并完的下一眼
+     *      就会是「我的 160.5 存档不见了」，而那是我**亲手**造成的。
+     *
+     * ⚠️ 只列**真有存档**的（空目录列出来只是噪音，而它没有任何东西可丢）。
+     * ⛔ 也不要列已经被 `byDir` 认领的 —— 那样同一份数据会出现两遍。 */
+    for (const k of listInstanceKeys()) {
+      const d: string = isolatedGameDataDir(k);
+      if (byDir.get(d + '/saves') !== undefined) {
+        continue;
+      }
+      const saves: SaveEntry[] = listSaves(d + '/saves');
+      if (saves.length === 0) {
+        continue;
+      }
+      out.push({ dir: d + '/saves', versions: [], saves: saves, orphanKey: k });
+      hilog.warn(DOMAIN, TAG, 'save group: %{public}s has %{public}d save(s) but no version reads it',
+                 k, saves.length);
     }
     /* [A] ⛔⛔ **订正（2026-10-02，用户报上来的）：空组不再丢掉。**
      *
@@ -1562,7 +1600,8 @@ export struct LauncherHome {
   /** [B] 一组的标题：共用这份数据的版本名。空数组 = 没有版本读它（未隔离的那一份）。 */
   private groupTitle(g: SaveGroup): string {
     if (g.versions.length === 0) {
-      return '未隔离的那一份';
+      /* [B] 两种「没人读」：以前某一档留下的键 vs 未隔离的那一份本身。 */
+      return g.orphanKey === '' ? '未隔离的那一份' : ('没有版本读它（' + g.orphanKey + '）');
     }
     const names: string[] = [];
     for (const v of g.versions) {
@@ -1574,6 +1613,12 @@ export struct LauncherHome {
   /** [B] 一组的副标题：谁在读它。 */
   private groupSub(g: SaveGroup): string {
     if (g.versions.length === 0) {
+      if (g.orphanKey !== '') {
+        /* [A] ⭐ 说清**它从哪来**，并给出路 —— ⛔ 只说「没人读」会让玩家以为这是垃圾。
+         * ⭐ 最常见的成因就是我们自己改的合并规则，所以那句要写在这里。 */
+        return '这是以前某一档隔离留下的数据，现在没有版本指向它了 —— '
+             + '要接着玩，就从某一组里复制/移动一份过去（或者在「按版本」那边看看谁和它同版本）';
+      }
       return '现在没有版本读它 —— 这是你数据最初的那一份，「复制过去」不会动它';
     }
     /* [A] ⭐ 标出**游戏真正会读的那一份**（当前版本指向的目录）。
@@ -1879,7 +1924,7 @@ export struct LauncherHome {
     const out: CopyTarget[] = [];
     const byKey: Map<string, CopyTarget> = new Map<string, CopyTarget>();
     for (const v of this.versions) {
-      const k: string = resolveGameDirAndKey(g, v.source, v.path).key;
+      const k: string = resolveGameDirAndKey(g, v.source, v.path, this.bundledJar()).key;
       if (k === '') {
         continue;   /* [B] 不隔离 ⇒ 没有分类可复制进 */
       }
@@ -1945,8 +1990,12 @@ export struct LauncherHome {
     if (sv === undefined) {
       return;
     }
+    const dir: string = this.selectedSaveDir();
     const now: number = Date.now();
-    const err: string = vaultDelete(sv, this.selectedSaveDir(), this.vaultDays, now);
+    /* [A] ⭐ 把**来源**一起记下来（用户 2026-10-02：垃圾站里区分不出原来是哪个版本的）。
+     * ⚠️ 在这里取值而不是在垃圾站里现算：删除之后那个 jar 可能就没了。 */
+    const err: string = vaultDelete(sv, dir, this.vaultDays, now,
+                                    this.ownerOfDir(dir), this.keyOfDir(dir));
     if (err !== '') {
       this.vaultNote = err;
       this.refresh();
@@ -1968,6 +2017,35 @@ export struct LauncherHome {
     }
     this.selectedSave = '';
     this.refresh();
+  }
+
+  /* [A] ⭐ 一个**存档目录**属于哪些版本 —— 直接复用「按存档」那一屏的分组结论。
+   *
+   * ⭐ 用 `groupTitle` 而不是自己拼：那里已经处理了「内置游戏要带版本号」
+   *    （`versionLabelOf`），而这两个地方必须**说同一件事** ——
+   *    垃圾站里写「内置游戏」、存档页写「内置游戏（v8 Build 160.5）」，
+   *    玩家会以为是两个东西。 */
+  private ownerOfDir(dir: string): string {
+    const g: SaveGroup | undefined = this.saveGroups.find((x: SaveGroup) => x.dir === dir);
+    return g === undefined || g.versions.length === 0 ? '' : this.groupTitle(g);
+  }
+
+  /** [B] 上面那个目录的隔离键；`''` = 未隔离（或推不出来）。 */
+  private keyOfDir(dir: string): string {
+    const g: SaveGroup | undefined = this.saveGroups.find((x: SaveGroup) => x.dir === dir);
+    return g === undefined || g.versions.length === 0 ? '' : g.versions[0].key;
+  }
+
+  /* [A] 垃圾站一行里「原来属于谁」。
+   * ⚠️ 老条目（或那一刻的 jar 已被删、目录已不在）没有 `owner` ⇒ **现算一次**，
+   *    拿 `from` 去当前的分组里找。⛔ 都失败就说实话，别留空 ——
+   *    空着会被读成「没有版本」，而那是错的。 */
+  private vaultOwnerText(e: VaultEntry): string {
+    if (e.owner !== '') {
+      return e.owner + (e.key === '' ? '' : ('（' + e.key + '）'));
+    }
+    const now: string = this.ownerOfDir(e.from);
+    return now === '' ? '（这条记录里没写下来源）' : now;
   }
 
   /** [B] 放回。刷新后存档列表当场出现它。 */
@@ -3123,6 +3201,10 @@ export struct LauncherHome {
                          + String(e.count) + ' 个文件  ·  ' + formatSaveSize(e.bytes))
                       .fontSize(12).fontColor($r('sys.color.font_tertiary'))
                       .margin({ top: 4 })
+                    Text('原来属于 ' + this.vaultOwnerText(e))
+                      .fontSize(12).fontColor($r('sys.color.font_secondary'))
+                      .margin({ top: 2 })
+                      .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
                     Text(describeExpiry(e, Date.now()))
                       .fontSize(12)
                       .fontColor(e.archived
@@ -3487,16 +3569,20 @@ export struct LauncherHome {
               .width('100%')
               .padding({ left: 16, right: 8, top: 12 })
             }
-            /* [A] ⭐⭐ 这两行是「列表贴着顶部」的全部原因，而它们是从 GamesTab
-             * **抄过来的** —— 我第一版漏了，于是列表在竖直方向**居中**。
+            /* [A] ⛔⛔ **这一行 `height('100%')` 必须没有，而它是用户 2026-10-02 报的
+             *    「我只能看到头两个，后面的看不到（列表是固定死的）」的唯一原因。**
              *
-             * ⚠️ 关键的是 `alignItems(VerticalAlign.Top)`：Row 的交叉轴默认是
-             *    `VerticalAlign.Center`，而 `height('100%')` 让它有整个视口那么高
-             *    ⇒ 内容就被摆在**中间**了。
-             * ⛔ 少了 height 则 Row 只是内容高，`VerticalAlign` 看不出差别 ——
-             *    **两行缺一不可**，而症状只在有 height 时才出现。 */
+             * ⭐ `Scroll` 的直接子节点写 `height('100%')` ⇒ 它的高度**等于视口**
+             *    ⇒ 内容再高也是「和视口一样高」⇒ `Scroll` **可滚动的余量是 0**，
+             *    多出来的部分被裁掉。⚠️ 界面上看起来就像「列表只有这么长」，
+             *    而不是「滚不动」—— 所以它一直没被发现。
+             *
+             * ⚠️ 它当初是被加进来治「列表在竖直方向居中」的（Row 的交叉轴默认
+             *    `VerticalAlign.Center`，有了 100% 高度就真去居中了）。
+             * ⭐ 而正确的解法是**不要那个高度**：Row 变成内容高 ⇒ 没有多余空间
+             *    ⇒ 居中无从发生，滚动也照常。⇒ **同一行同时治了两件事，只是方向相反。**
+             * ⛔ 别再把 height 加回来「以防万一」。 */
             .width('100%')
-            .height('100%')
             .justifyContent(FlexAlign.Start)
             .alignItems(VerticalAlign.Top)
           }

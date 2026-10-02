@@ -66,6 +66,17 @@ export interface VaultEntry {
   label: string;
   /** [B] 原来那个 `saves/` 目录 —— 「放回」会放回**这里**。 */
   from: string;
+  /* [A] ⭐⭐ **它原来属于哪个（些）版本** —— 用户 2026-10-02 报的：
+   *    「细分后，放到垃圾站区分不出来原来那个存档属于哪个版本」。
+   *
+   * ⚠️ 这一条是**删除那一刻的快照**，不是现在现算的。两个理由：
+   *    ① 玩家可能早就把那个 jar 删了 —— 现算只会得到空，而记录本身忘不掉；
+   *    ② 「我删的是哪个版本的东西」是关于**那一刻**的问题。
+   * ⭐ `owner` 是给人看的（「内置游戏（v8 Build 160.5）」），`key` 是给排查用的
+   *    （`b160.5`）—— 与 `versionEntryOf` 那两行的口径一致。 */
+  owner: string;
+  /** [B] 删除那一刻的隔离键；'' = 未隔离（或老条目没记）。 */
+  key: string;
   /** [B] 删除时刻（Unix 毫秒）。 */
   deletedMs: number;
   /** [B] 到期时刻（Unix 毫秒）；**0 表示归档，永不过期**。 */
@@ -179,8 +190,8 @@ function slug(label: string): string {
  *    留一份在 `saves/` 里就等于没删。⚠️ 但顺序必须是**先复制、成功了再删源**：
  *    反过来做，一旦复制失败，那些文件就**只存在于垃圾站**（数据没丢，但存档列表里没了）。
  */
-export function vaultDelete(save: SaveEntry, savesDir: string, days: number,
-                           nowMs: number): string {
+export function vaultDelete(save: SaveEntry, savesDir: string, days: number, nowMs: number,
+                           owner: string, key: string): string {
   if (save.files.length === 0) {
     return '这个存档里没有文件。';
   }
@@ -217,6 +228,8 @@ export function vaultDelete(save: SaveEntry, savesDir: string, days: number,
   const expires: number = nowMs + days * DAY_MS;
   const meta: string = 'label=' + sanitizeValue(save.label) + '\n'
                      + 'from=' + sanitizeValue(savesDir) + '\n'
+                     + 'owner=' + sanitizeValue(owner) + '\n'
+                     + 'key=' + sanitizeValue(key) + '\n'
                      + 'deleted=' + String(nowMs) + '\n'
                      + 'expires=' + String(expires) + '\n'
                      + 'archived=0\n'
@@ -317,6 +330,8 @@ export function listVault(): VaultEntry[] {
       id: id,
       label: metaOf(text, 'label'),
       from: metaOf(text, 'from'),
+      owner: metaOf(text, 'owner'),
+      key: metaOf(text, 'key'),
       deletedMs: numberOrZero(metaOf(text, 'deleted')),
       expiresMs: numberOrZero(metaOf(text, 'expires')),
       archived: arch === '1',

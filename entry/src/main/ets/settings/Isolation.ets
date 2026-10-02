@@ -119,7 +119,47 @@ export function granularityKey(granularity: string, parts: GameVersionParts): st
  * ⚠️ `source === 'none'`（一个可加载的游戏都没有）⇒ 返回空串。
  * 那时什么都没得启动，`user.home` 指向哪里都无所谓，那就别白白造一个空目录出来。
  */
-export function computeKey(granularity: string, source: string, jarPath: string): string {
+/* [B] 一个版本**在这一档下**的身份 —— 两个版本这个值相等，就说明它们本来会落进同一个槽位。 */
+function slotOf(granularity: string, parts: GameVersionParts): string {
+  if (granularity === GRANULARITY_NUMBER) {
+    return parts.number;
+  }
+  if (granularity === GRANULARITY_BUILD) {
+    return buildMajor(parts.build);
+  }
+  if (granularity === GRANULARITY_PATCH) {
+    return parts.build;
+  }
+  return '';
+}
+
+/* [A] ⭐⭐ 算这次该用哪个键。
+ *
+ * `bundledJarPath` = **内置那份游戏** jar 的路径。⛔ 它不是可选的，理由在下面「合并」那段。
+ *
+ * ⭐⭐ 合并（用户 2026-10-02 定）：「如果内置的和用户导入的**版本一致**，就合并。」
+ *
+ * ⛔⛔ 为什么要有这条：内置那份**永远**用 `bundled` 键（见下），与粒度无关。
+ *    于是「内置的 160.5」与「玩家导入的 160.5」被分到两个槽位 ——
+ *    同一个版本两份数据。⭐ 而这是**看得出来的**：设备实测（2026-10-02）
+ *        version: 内置游戏            | v8 Build 160.5 | key=bundled
+ *        version: Mindustry160.5.jar | v8 Build 160.5 | key=b160.5
+ *    玩家看到的就是「我不就是玩同一个版本吗，怎么两边各有一份」。
+ *
+ * ⭐ 「版本一致」**按当前这一档的粗细去判**，不是按字符串相等：
+ *    构建号档下 `160.5` 与 `160.4` 本来就是同一个槽位（都折成 `160`），
+ *    那它们就都该落进内置那一份。⇒ 判据用 `slotOf()`，与 `granularityKey()` 同一套折叠。
+ *
+ * ⚠️ 版本读不出来的一律**不合并**（`mine === ''`）—— 那是 `_unknown`，
+ *    而「读不出」不等于「同一个版本」。⛔ 它照样单独占一个槽位。
+ *
+ * ⚠️ 合并的**代价**要说清：内置那份的数据会**胜出**（键是它），
+ *    而玩家 jar 原来那个槽位里的数据**还在盘上**，只是不再有版本指向它。
+ *    ⇒ `buildSaveGroups` 会把那种目录也列出来（"没有版本读它"），
+ *      玩家能看见、能搬走 —— ⛔ 不然就成了「我的数据不见了」。
+ */
+export function computeKey(granularity: string, source: string, jarPath: string,
+                           bundledJarPath: string): string {
   if (granularity === GRANULARITY_OFF || !isValidGranularity(granularity)) {
     return '';
   }
@@ -129,7 +169,40 @@ export function computeKey(granularity: string, source: string, jarPath: string)
   if (source === 'bundled') {
     return KEY_BUNDLED;
   }
-  return granularityKey(granularity, gameVersionParts(jarPath));
+  const parts: GameVersionParts = gameVersionParts(jarPath);
+  const mine: string = slotOf(granularity, parts);
+  if (mine !== '' && bundledJarPath !== '') {
+    const theirs: string = slotOf(granularity, gameVersionParts(bundledJarPath));
+    if (theirs !== '' && mine === theirs) {
+      return KEY_BUNDLED;
+    }
+  }
+  return granularityKey(granularity, parts);
+}
+
+/* [A] ⭐ **`instances/` 下现存的每一个键。**
+ *
+ * ⭐ 用途只有一个，但那一个是必须的：「一个目录现在还有没有版本读它」。
+ *    ⛔ 只从 `this.versions` 推是**推不出来**的 —— 数据目录是按**键**建的，
+ *    而玩家一换粒度、一换 jar、一改合并规则，昨天的键今天就没有版本指向它了。
+ *    那些目录**还在盘上**，而「界面上看不见」与「数据没了」在玩家眼里是同一件事
+ *    （他已经为这一条报过一次：「其他的消失了」）。
+ *
+ * ⚠️ 只认**名字合法**的目录 —— 与 native 那侧的 `resolve_user_home()` 同一套判据，
+ *    `instances/` 下可能躺着别的东西。
+ * ⛔ 返回的是**键**，不是完整路径：路径拼法只有 `isolatedGameDataDir()` 知道。
+ */
+export function listInstanceKeys(): string[] {
+  try {
+    if (!fs.accessSync(INSTANCES_ROOT)) {
+      return [];
+    }
+    return fs.listFileSync(INSTANCES_ROOT).filter((n: string) => KEY_SAFE.test(n));
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'isolation: listing %{public}s failed (%{public}s)', INSTANCES_ROOT, err.message);
+    return [];
+  }
 }
 
 /* ====================================================================
@@ -272,8 +345,9 @@ export function liveGameDataDir(): string {
  *    玩家在启动器里改了粒度、还没重启的话，这里算出来的就是**新的**、而游戏那边还是**旧的**。
  *    ⇒ 调用方（存档页）要把这件事说清楚，或者在切换粒度后提示需要重启。
  */
-export function resolveGameDataDir(granularity: string, source: string, jarPath: string): string {
-  return resolveGameDirAndKey(granularity, source, jarPath).dir;
+export function resolveGameDataDir(granularity: string, source: string, jarPath: string,
+                                   bundledJarPath: string): string {
+  return resolveGameDirAndKey(granularity, source, jarPath, bundledJarPath).dir;
 }
 
 /** [B] 一次解析的结果：隔离键，以及它指向的数据目录。 */
@@ -299,9 +373,9 @@ export interface GameDirForKey {
  *
  * ⭐ `resolveGameDataDir()` 就是它取 `dir` 的薄包装 —— 判据只有一套，不会分叉。
  */
-export function resolveGameDirAndKey(granularity: string, source: string,
-                                     jarPath: string): GameDirForKey {
-  const key: string = computeKey(granularity, source, jarPath);
+export function resolveGameDirAndKey(granularity: string, source: string, jarPath: string,
+                                     bundledJarPath: string): GameDirForKey {
+  const key: string = computeKey(granularity, source, jarPath, bundledJarPath);
   return { key: key, dir: key === '' ? liveGameDataDir() : isolatedGameDataDir(key) };
 }
 
