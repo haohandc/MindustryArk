@@ -349,11 +349,17 @@ static int read_kv(const char *path, const char *key, char *out, size_t outlen);
  *      是「门关上了却没有开的路径」的同族。
  *   3. 任何一步失败 ⇒ 回退 DEST_ROOT 并说明原因。宁可回到不隔离，也不要起不来。
  *
- * ⚠️⚠️ 为什么还要写一个【文件】，而不是只 SDL_Log：
- *   这个函数在 `redirect_io()` **之前**运行（选项要早于 CreateJavaVM 备好，而重定向在更后面），
- *   所以这里的 SDL_Log 落在进程自己的 stderr 上、**不会进 DEST_ROOT/stderr.log**。
- *   ⇒ 只留日志的话，这个功能在设备上**没法验证** —— 而那正是最需要验证的一处。
- *   一个一行文件既能被 hdc 直接读走，也回答了排障时的第一个问题：「上次数据用的哪个目录」。
+ * ⚠️ 为什么还要另写一个【文件】，而不是只 SDL_Log：
+ *   一行日志要先知道去哪里 grep（哪个日志、哪次启动），而这个文件是一个**稳定的两行**，
+ *   回答的是排障时的第一个问题：「上次启动用的哪个数据目录」。它由 hdc 直接读走即可。
+ *
+ * ⛔ **订正（2026-10-02，实测）**：这段注释原先写着「它在 redirect_io() 之前运行，
+ *   所以 SDL_Log 不会进 stderr.log」。**那是错的。**
+ *   当时我是按**行号**判断先后的 —— 而行号跟执行顺序无关：
+ *   `main()` 在 3193 行调 `redirect_io()`，在 3258 行才调 `start_jvm()`，
+ *   而本函数是在 `start_jvm()` 内部被调的。⇒ **重定向在前**，日志确实进了 stderr.log。
+ *   设备实测两条都在：`isolation: off, user.home=…` 与 `opt: -Duser.home=…`。
+ *   ⭐ 记录文件本身仍然值得留（上面那个理由成立），但**它的理由不是这个**。
  */
 #define USERHOME_RECORD_FILE DEST_ROOT "/userhome_used.txt"
 
