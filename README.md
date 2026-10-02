@@ -105,4 +105,4 @@ Copyright (C) 2026 Haohandc and contributors.
 
 各组件许可证与再分发条款见 [THIRD-PARTY.md](THIRD-PARTY.md)。
 
-本仓库大部分代码、文档和文字由 AI 辅助完成（Claude via Cherry Studio，模型 deepseek-flash v4.1）。
+本仓库绝大部分代码、文档和文字由 AI 辅助完成（Claude via Cherry Studio，模型 deepseek-flash v4.1）。
