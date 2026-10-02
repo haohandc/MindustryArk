@@ -216,6 +216,12 @@ def main():
             "shim": "libs/arm64-v8a/libcxxabi_shim.so",
             "sdl": "libs/arm64-v8a/libSDL3.so",
             "mainso": "libs/arm64-v8a/libmain.so",
+            # [A] 我们自己写的三个 NAPI 模块。⚠️ 2026-10-02 才发现它们一直【不在】
+            # 这份清单里 —— 也就是说闸门从来没检查过它们，而 CMake 改坏、它们没被编出来时，
+            # 构建照样 PASS。⭐ 清单是「必须存在」的清单，漏一项就等于漏一道闸门。
+            "shield": "libs/arm64-v8a/libshield.so",
+            "jarver": "libs/arm64-v8a/libjarver.so",
+            "savemeta": "libs/arm64-v8a/libsavemeta.so",
         }
         # libcxxabi_real.so 不再列在这里是故意的：手写的
         # shim 替换已于 2026-09-19 移除（见 CMakeLists.txt）。

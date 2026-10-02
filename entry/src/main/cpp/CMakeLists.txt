@@ -167,6 +167,11 @@ target_link_libraries(shield PUBLIC libace_napi.z.so dl)
 # flag rather than a vendored copy.
 add_library(jarver SHARED jarver.c)
 target_link_libraries(jarver PUBLIC libace_napi.z.so z)
+
+# [A] 读 .msav 的元数据。与 jarver 同款：要 zlib（存档是 zlib 压缩的），
+# 而 libz 由 NDK sysroot 提供，所以这是链接参数而不是自带副本。
+add_library(savemeta SHARED savemeta.c)
+target_link_libraries(savemeta PUBLIC libace_napi.z.so z)
 # libhilog_ndk.z.so: the launcher mirrors its diagnostics there, because a
 # RELEASE-signed build's sandbox log files cannot be read over hdc -- measured,
 # "Permission denied", and with no faultlog entry either. Without this the store
