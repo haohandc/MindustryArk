@@ -226,3 +226,181 @@ export function writeIsolationBridge(filesDir: string, granularity: string, key:
     hilog.warn(DOMAIN, TAG, 'isolation: writing the bridge failed (%{public}s)', err.message);
   }
 }
+
+/* ====================================================================
+ * 目录与迁移
+ * ==================================================================== */
+
+/* [A] ⚠️ 应用级目录的【字面路径】。
+ *
+ * ArkTS 拿不到它：`ctx.filesDir` 是 **HAP 级**的 `/data/storage/el2/base/haps/entry/files`，
+ * 而 native 与游戏共享的是**应用级**的 `/data/storage/el2/base/files`。两个目录长得很像，
+ * 但不可互换 —— 写错了的文件 native 永远看不见，而症状是「什么都没发生」。
+ *
+ * ⇒ 本项目一贯的处置是用字面量 + 在这里写明理由。同款：
+ *    `ExportDiagnostics.ets` 的 NATIVE_FILES、`Index.ets` 的 IME_*_FILE。
+ */
+const NATIVE_FILES: string = '/data/storage/el2/base/files';
+
+/* [A] 隔离根与游戏数据的那一层后缀 —— ⛔ **两个都必须与 launcher.c 里的宏逐字一致**：
+ *     ISOLATION_ROOT = DEST_ROOT "/instances"、ISOLATION_SET = "sets/default"，
+ *     而 ".local/share/Mindustry" 是 ARC 的 OS.getAppDataDirectoryString() 拼出来的。
+ * ⚠️ 三处里任何一处改了，另一处不会报错，只会让数据落到别处 —— 这是无声的。 */
+const INSTANCES_ROOT: string = NATIVE_FILES + '/instances';
+const SETS_SUFFIX: string = '/sets/default';
+const GAME_DATA_SUFFIX: string = '/.local/share/Mindustry';
+
+/** [B] 某个粒度键对应的游戏数据目录（= `user.home` + ARC 那一层）。 */
+export function isolatedGameDataDir(key: string): string {
+  return INSTANCES_ROOT + '/' + key + SETS_SUFFIX + GAME_DATA_SUFFIX;
+}
+
+/** [B] 隔离关着时游戏用的数据目录，也就是今天的位置。 */
+export function liveGameDataDir(): string {
+  return NATIVE_FILES + GAME_DATA_SUFFIX;
+}
+
+/** [B] 两个目录都存在吗。界面用它决定「复制」那一条要不要给。 */
+export function gameDataExists(dir: string): boolean {
+  try {
+    return fs.accessSync(dir);
+  } catch (e) {
+    return false;
+  }
+}
+
+/* [A]
+ * 一份数据里各有多少东西 —— 给**询问窗**用的。
+ *
+ * ⭐ 用户 2026-10-02 的要求：「缺少直接的例子和说明，用户必须选择确定后才能看到迁移成什么样」。
+ *    ⇒ 把结果先摆出来，用真实数量。
+ *
+ * ⛔⛔ 然后用户又说「40 个存档看着有歧义，应该是 40 个战役（区块）存档更合理」——
+ *    我去数了一遍，**那个 40 本身是错的，错三处**（同一台平板实测）：
+ *
+ *        总条目            40      ← 我原先数的就是它
+ *        -backup 文件      21      ⛔ 游戏自己的滚动备份，不是独立存档
+ *        非 .msav 文件      1      ⛔ steam_autocloud.vdf —— 根本不是存档
+ *        真存档            18
+ *          └ 战役区块      15      sector-serpulo-* / sector-erekir-*
+ *          └ 手动存档       3      0.msav / 1.msav / 2.msav
+ *
+ *    ⇒ ⭐ 教训不是「标签要写细一点」，而是**我把「目录里的条目数」当成了「存档数」**。
+ *      两者在同一台设备上差 22 个。⇒ 数法要跟着名字走，不能只 `ls | wc -l`。
+ */
+export interface GameDataCounts {
+  /** [B] 战役区块存档数（`sector-*.msav`），已排除 `-backup`。 */
+  sectorSaves: number;
+  /** [B] 玩家手动存的档（非 `sector-` 前缀），已排除 `-backup`。 */
+  manualSaves: number;
+  /** [B] `mods/` 里的条目数。 */
+  mods: number;
+  /** [B] `schematics/` 里的条目数。 */
+  schematics: number;
+}
+
+/** [B] 一个子目录里的【文件名】列表；目录不存在或读不出来 ⇒ 空数组。 */
+function namesIn(dir: string, sub: string): string[] {
+  try {
+    const p: string = dir + '/' + sub;
+    if (!fs.accessSync(p)) {
+      return [];
+    }
+    return fs.listFileSync(p);
+  } catch (e) {
+    return [];
+  }
+}
+
+/** [B] 是不是一个真存档：`.msav` 结尾，且不是游戏自动生成的 `-backup`。 */
+function isRealSave(n: string): boolean {
+  return n.endsWith('.msav') && !n.includes('-backup');
+}
+
+/** [B] 战役区块存档的判据 —— 文件名前缀，与 `Saves.getSectorFile()` 的命名一致。 */
+function isSectorSave(n: string): boolean {
+  return n.startsWith('sector-');
+}
+
+/** [B] 数一下某个数据目录里有什么。⚠️ 数法见 GameDataCounts 上方那段订正。 */
+export function countsOf(dir: string): GameDataCounts {
+  const saves: string[] = namesIn(dir, 'saves').filter(isRealSave);
+  return {
+    sectorSaves: saves.filter(isSectorSave).length,
+    manualSaves: saves.filter((n: string) => !isSectorSave(n)).length,
+    mods: namesIn(dir, 'mods').length,
+    schematics: namesIn(dir, 'schematics').length,
+  };
+}
+
+/** [A]
+ * 把数量说成一句人话，例如「15 个战役区块 · 3 个手动存档 · 2 个模组」。
+ *
+ * ⚠️ 为 0 的那一类**不写出来** —— 「0 个模组」在「这一份里有什么」这句话里是噪音。
+ * ⛔ 但全都为 0 时要说出来，那是「空的」这个结论本身。
+ */
+export function describeCounts(c: GameDataCounts): string {
+  const parts: string[] = [];
+  if (c.sectorSaves > 0) {
+    parts.push(c.sectorSaves + ' 个战役区块');
+  }
+  if (c.manualSaves > 0) {
+    parts.push(c.manualSaves + ' 个手动存档');
+  }
+  if (c.mods > 0) {
+    parts.push(c.mods + ' 个模组');
+  }
+  if (c.schematics > 0) {
+    parts.push(c.schematics + ' 个蓝图');
+  }
+  return parts.length === 0 ? '空的' : parts.join(' · ');
+}
+
+/* [A]
+ * 把**当前正在用的**游戏数据复制到某个粒度键下面。
+ *
+ * ⭐ **它是复制，不是移动** —— 源目录一个字都不动（用户 2026-10-02 定的「留一个当备份」）。
+ * ⇒ 因此它是**可逆**的：玩家把隔离关掉，看到的还是原来那一份。
+ *
+ * ⚠️ 为什么值得单独一个函数而不是就地写几行：它要建目录、要吞异常、要能在界面上报出
+ *    失败原因，而这三件事散在 UI 代码里会长成一团。
+ *
+ * 返回：'' 表示成功；否则是给玩家看的一句话。
+ */
+export function copyLiveDataInto(key: string): string {
+  const src: string = liveGameDataDir();
+  const dst: string = isolatedGameDataDir(key);
+
+  if (!gameDataExists(src)) {
+    /* ⭐ 没有旧数据可搬 —— 这不是失败。全新安装第一次就打开隔离，走的就是这条。 */
+    hilog.info(DOMAIN, TAG, 'isolation: nothing to copy (%{public}s does not exist)', src);
+    return '';
+  }
+
+  /* ⚠️ 目标【父目录】必须先存在：copyDir 不会替我们建中间的层级，
+   * 而 sets/default/ 这一层由 native 在启动时才建 —— 迁移发生在启动之前。
+   * ⇒ 这里自己 mkdir -p（第二参 true = 递归）。 */
+  const parent: string = NATIVE_FILES + '/instances/' + key + SETS_SUFFIX;
+  try {
+    if (!fs.accessSync(parent)) {
+      fs.mkdirSync(parent, true);
+    }
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.error(DOMAIN, TAG, 'isolation: cannot create %{public}s (%{public}s)', parent, err.message);
+    return '建不出目标文件夹：' + err.message;
+  }
+
+  try {
+    fs.copyDirSync(src, dst);
+    hilog.info(DOMAIN, TAG, 'isolation: copied %{public}s -> %{public}s', src, dst);
+    return '';
+  } catch (e) {
+    const err = e as BusinessError;
+    /* ⛔ 复制失败**不是**致命错误：隔离照旧可以打开，只是那一份新目录是空的，
+     * 而**原数据完好**（因为我们是复制而不是移动）⇒ 玩家丢不了东西。
+     * ⇒ 所以这里只回报一句话，不阻止流程。 */
+    hilog.error(DOMAIN, TAG, 'isolation: copy failed (%{public}s)', err.message);
+    return '复制失败：' + err.message;
+  }
+}

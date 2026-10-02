@@ -336,6 +336,23 @@ export function gameVersionParts(jarPath: string): GameVersionParts {
 }
 
 /** [A] 包内那份自带游戏的版本号；没有包内游戏、或读不出时是空串。 */
+/* [A]
+ * 包内那份自带游戏到底**在不在**。
+ *
+ * ⚠️⚠️ 为什么需要它：`resolveGame().source` 回答的是「这次会加载哪个**来源**」，
+ * 不是「内置那份在不在」。玩家一旦选中自己的 jar，`source` 就是 `'user'` ——
+ * 而内置那份**照样在**。
+ *
+ * ⛔ 这条我以前写错过：界面上用 `source === 'bundled'` 去判「内置游戏：有/无」，
+ *    于是玩家一选自己的 jar，那一行就会说「无」。**同一个词（source）指了两件事，
+ *    而我选了错的那件。**
+ *
+ * ⇒ 问「在不在」就直接问文件，别从「这次加载谁」的结论去反推。
+ */
+export function hasBundledGame(bundleCodeDir: string): boolean {
+  return isReadableJar(bundledGamePath(bundleCodeDir));
+}
+
 export function bundledGameVersion(bundleCodeDir: string): string {
   const p: string = bundledGamePath(bundleCodeDir);
   return p === '' ? '' : gameVersionOf(p);

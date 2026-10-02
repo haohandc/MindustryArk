@@ -38,15 +38,21 @@
  */
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
-import { uiMaterial } from '@kit.ArkUI';
+import { SymbolGlyphModifier, uiMaterial } from '@kit.ArkUI';
 import { GameJar, GameResolution, listGameJars, readSelection, writeSelection,
          resolveGame, gameJarDir, ensureGameJarDir,
-         bundledGameVersion } from '../games/GameLibrary';
+         bundledGameVersion, hasBundledGame } from '../games/GameLibrary';
 /* [A] 界面偏好（内容宽度）。单独一个文件，因为它不是「游戏知识」——
  * 理由见那个文件的开头。 */
 import { readWidthPct, writeWidthPct, WIDTH_PCT_MIN, WIDTH_PCT_MAX,
          WIDTH_PCT_DEFAULT, readLaunchMode, writeLaunchMode,
          LAUNCH_MODE_HOME, LAUNCH_MODE_GAME } from '../settings/LauncherPrefs';
+/* [A] 版本隔离：四档粒度、键的计算、以及打开时的那次复制。
+ * ⛔ 实际的 `-Duser.home=` 在 native 侧 —— 这里只负责【决定】并把结论写进桥。 */
+import { GRANULARITY_OFF, GRANULARITY_NUMBER, GRANULARITY_BUILD, GRANULARITY_PATCH,
+         computeKey, readGranularity, writeGranularity,
+         copyLiveDataInto, gameDataExists, liveGameDataDir,
+         GameDataCounts, countsOf, describeCounts } from '../settings/Isolation';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
@@ -262,11 +268,54 @@ export struct LauncherHome {
   /** [B] 「关于」那个窗口开着没有。由设置页那一行打开，右上角的 ✕ 关掉。 */
   @State showAbout: boolean = false;
 
+  /** [B] 玩家选的隔离粒度。改它要走 chooseGranularity()，别直接赋值。 */
+  @State granularity: string = GRANULARITY_OFF;
+
+  /* [A]
+   * ⭐ 打开隔离时的**询问窗**是否开着。
+   *
+   * 为什么必须问：打开隔离会让 `user.home` 换地方，玩家进游戏发现存档「没了」——
+   * 而他什么都没做。虽然我们做的是**复制**（原数据留着），但玩家不知道这一点。
+   *
+   * ⚠️ 只在「不隔离 → 某一档」时问。**关掉不问** —— 关掉只是回到原来那一份数据，
+   * 一个字节都不会动，多问一次反而让玩家以为关掉有风险。
+   */
+  @State showIsolationAsk: boolean = false;
+
+  /** [B] 询问里待确认的那一档；'' 表示没有待确认的切换。 */
+  @State pendingGranularity: string = '';
+
+  /** [B] 迁移出问题时要告诉玩家的一句话；'' 表示没有。⛔ 不是门，只提示。 */
+  @State isolationNote: string = '';
+
+  /* [A]
+   * 询问窗要摆出来的【现在有什么】。在打开询问窗那一刻读一次，不常驻。
+   *
+   * ⚠️ 每次打开都重读，刻意不缓存：玩家完全可能在两次打开之间删了一个存档或装了个模组，
+   * 而缓存会让那个数字停在旧值上 —— 界面上看不出来。
+   */
+  @State isolationCounts: GameDataCounts = { sectorSaves: 0, manualSaves: 0, mods: 0, schematics: 0 };
+
+  /* [A]
+   * 二次确认：`''` = 没有待确认的；`'copy'` / `'empty'` = 哪一个动作在等确认。
+   *
+   * ⚠️ 两个动作都要确认（用户 2026-10-02 要求），理由不一样：
+   *   · `empty` —— 真的会让人看不到存档，值得拦一道
+   *   · `copy`  —— 本身安全（源不动），但它是"切换数据位置"这个动作的一半，
+   *                而玩家在弹窗里点的第一下未必是他想好的那一个
+   */
+  @State isolationConfirm: string = '';
+
   /** [B] 下拉刷新是否在进行中。`$$` 双向绑定给 Refresh，由 onRefreshing 放回 false。 */
   @State isRefreshing: boolean = false;
 
   /** [A] 包内那份自带游戏的版本号；读不出时是 ''，界面显示成「未知版本」。 */
   @State bundledVer: string = '';
+
+  /* [A] 包内那份自带游戏**在不在**。
+   * ⛔ 别再从 `resolution.source` 反推 —— 那是「这次加载谁」，不是「在不在」。
+   * 详见 GameLibrary.hasBundledGame 上的说明。 */
+  @State hasBundled: boolean = false;
 
   /* [A]
    * 给**人**看的那个文件夹路径，例如 `Download/Mindustry Ark/games`。
@@ -310,8 +359,90 @@ export struct LauncherHome {
     this.contentPct = readWidthPct(this.filesDir);
     this.sliderPct = this.contentPct;
     this.launchMode = readLaunchMode(this.filesDir);
+    this.granularity = readGranularity(this.filesDir);
     this.appLabel = this.resolveAppLabel();
     this.refresh();
+  }
+
+  /* ====================================================================
+   * 版本隔离
+   * ==================================================================== */
+
+  /** [B] 某一档的一句话说明。四档的差别对玩家不是自明的，所以每档都要写清。 */
+  private granularityHint(g: string): string {
+    if (g === GRANULARITY_NUMBER) {
+      return 'v8 的所有版本共用一份；v9 出来之后才会分开';
+    }
+    if (g === GRANULARITY_BUILD) {
+      return '160.5 与 160.1 共用一份；160 与 159 分开。改动最大的界线在这里';
+    }
+    if (g === GRANULARITY_PATCH) {
+      return '每个小版本各一份（160.5 与 160.4 也分开）。切得最细，但要重建的东西也最多';
+    }
+    return '所有版本共用一份数据（默认）。换版本时看到的是同一批存档';
+  }
+
+  /* [A]
+   * 玩家点了某一档。
+   *
+   * ⭐ **关掉不问、打开才问** —— 差别不是省一次点击，而是两者的后果不同：
+   *   · 关掉 ⇒ `user.home` 回到原处，**一个字节都不动**，看到的是原来那一份
+   *   · 打开 ⇒ 换到一个新目录，里面要么是刚复制过去的、要么是空的
+   * ⚠️ 对着一个不会有后果的动作弹窗，会让玩家以为关掉也有风险。
+   */
+  private chooseGranularity(g: string): void {
+    if (g === this.granularity) {
+      return;
+    }
+    if (g === GRANULARITY_OFF) {
+      this.granularity = g;
+      writeGranularity(this.filesDir, g);
+      this.isolationNote = '';
+      return;
+    }
+    /* [B] 打开：先把「当前数据怎么办」问清楚。⛔ 这里【不】先落盘 ——
+     * 玩家取消的话，界面上那一档不该已经跳过去了。 */
+    this.pendingGranularity = g;
+    /* ⭐ 读一次「现在有什么」，好在玩家**选之前**把两个结果都写成数字。
+     * ⚠️ 在这里读、不常驻：玩家可能在两次打开之间删过存档或装过模组。 */
+    this.isolationCounts = countsOf(liveGameDataDir());
+    this.showIsolationAsk = true;
+  }
+
+  /* [A]
+   * 询问里选了「复制过去」。
+   *
+   * ⭐ 复制而不是移动 —— 源目录一个字都不动（用户 2026-10-02 定的「留一个当备份」）
+   * ⇒ **可逆**：把隔离关掉，看到的还是原来那一份。
+   *
+   * ⚠️ 复制失败**不阻止**打开隔离：那一份新目录只是空的，而**原数据完好**。
+   *   所以这里记一句话给玩家看，流程照走。
+   */
+  private applyIsolationCopy(): void {
+    const g: string = this.pendingGranularity;
+    const res: GameResolution = resolveGame(this.filesDir, this.bundleCodeDir);
+    const key: string = computeKey(g, res.source, res.path);
+    if (key === '') {
+      /* 一个可加载的游戏都没有 ⇒ 键是空的 ⇒ 隔离没有意义。不落盘、也不报错。 */
+      this.isolationNote = '现在没有可加载的游戏，先选一个游戏版本再开隔离';
+      this.showIsolationAsk = false;
+      this.pendingGranularity = '';
+      return;
+    }
+    this.granularity = g;
+    writeGranularity(this.filesDir, g);
+    this.isolationNote = copyLiveDataInto(key);
+    this.showIsolationAsk = false;
+    this.pendingGranularity = '';
+  }
+
+  /** [B] 询问里选了「从空开始」。原数据留在原处（关掉隔离还能看到），新目录是空的。 */
+  private applyIsolationEmpty(): void {
+    this.granularity = this.pendingGranularity;
+    writeGranularity(this.filesDir, this.granularity);
+    this.isolationNote = '';
+    this.showIsolationAsk = false;
+    this.pendingGranularity = '';
   }
 
   /* [A]
@@ -362,38 +493,46 @@ export struct LauncherHome {
     return Math.max(DIALOG_MIN_VP, this.winW * DIALOG_WIDTH_FRACTION);
   }
 
-  @Builder
-  TabItem(symbol: Resource, label: string, index: number) {
-    Column() {
-      /* [A]
-       * **系统符号，不是 emoji。**
-       *
-       * 之前用的是 🎮 / ⚙️ —— 那是**字符**，不是图标：它们由字体决定长相，
-       * 在有的设备上是彩色 emoji、有的是单色轮廓，而且**跟着系统字体漂移**。
-       * 用户的原话是「现在的是不是字符当成图标？有没有扁平化的UI」—— 是的，就是字符。
-       *
-       * `SymbolGlyph` + `$r('sys.symbol.*')` 是鸿蒙自己的矢量图标，扁平、随主题变色、
-       * **跟字体无关**。而且参考项目 AMCL 用的就是这一套
-       * （他们的 TabBar 是 `$r('sys.symbol.gearshape_fill')`），所以这正是「通用样式」。
-       *
-       * ⚠️ 名字不是记来的，是在 SDK 的资源索引里核过的：`house_fill` 与
-       * `gearshape_fill` 都在。而且**编译器会校验** —— 写错名字会报
-       * `Unknown resource name`，这一条对 `sys.color.*` 已经实测过一次。
-       */
-      SymbolGlyph(symbol)
-        .fontSize(24)
-        /* [A] 用品牌色/次要色，让选中态和文字同步 —— 两处各写一套颜色必然会漂。 */
-        .fontColor([this.currentTab === index
-                      ? $r('sys.color.brand')
-                      : $r('sys.color.font_secondary')])
-      Text(label)
-        .fontSize(11)
-        .fontColor(this.currentTab === index ? $r('sys.color.brand') : $r('sys.color.font_secondary'))
-        .margin({ top: 2 })
-    }
-    .justifyContent(FlexAlign.Center)
-    .height(52)
-    .width('100%')
+  /* [A]
+   * 一个页签项 —— 用【原生】`BottomTabBarStyle`，不是自定义的 `@Builder`。
+   *
+   * ⛔⛔ 这里有一段失败的历史，别重走：
+   *
+   *   1. 最初用的是自定义 @Builder（`Column { SymbolGlyph; Text }`）。图标能显示，
+   *      但**没有按下去的反馈** —— `tabBar()` 收到自定义 builder 时，系统就不再绘制
+   *      它自己的页签项，而那套按压高光与沉浸光感的交互**只存在于系统画的那一个里**。
+   *   2. 我于是自己补了 `stateStyles({ pressed: ... })`。**编译器内部崩过一次**
+   *      （`Node must have a real position` —— 状态对象要用点前缀语法），修好之后编译过了，
+   *      但效果是假的：那只是「一个半透明方块」，不是鸿蒙的沉浸光感。
+   *      用户原话：「按压效果不对，不是鸿蒙的沉浸光感。这个应该是要用鸿蒙的原生底栏
+   *      组件自带的效果。你自己应该搞不出来的。」
+   *
+   * ⇒ 正解：把**图标**交给 `TabBarSymbol`、把**页签项**交给 `BottomTabBarStyle`，
+   *   让系统去画它自己的页签 —— 按压、选中高亮、与 `barFloatingStyle` 里那层
+   *   沉浸光感的配合，就全都是原生的了。
+   *
+   * ⭐ 颜色并没有因此丢掉：`TabBarSymbol` 的 `normal` / `selected` 两个
+   *   `SymbolGlyphModifier` 正好接住原来那套「未选中用次要色 / 选中用品牌色」。
+   *
+   * ⚠️ 图标仍然是 `$r('sys.symbol.*')`（矢量、跟字体无关），这一点没变，见下面原注释。 */
+  private tabItem(symbol: Resource, label: string): BottomTabBarStyle {
+    /* [A] **系统符号，不是 emoji。**
+     *
+     * 之前用的是 🎮 / ⚙️ —— 那是**字符**，不是图标：它们由字体决定长相，
+     * 在有的设备上是彩色 emoji、有的是单色轮廓，而且**跟着系统字体漂移**。
+     * 用户的原话是「现在的是不是字符当成图标？有没有扁平化的UI」—— 是的，就是字符。
+     *
+     * `$r('sys.symbol.*')` 是鸿蒙自己的矢量图标，扁平、随主题变色、**跟字体无关**。
+     * 而且参考项目 AMCL 用的就是这一套，所以这正是「通用样式」。
+     *
+     * ⚠️ 名字不是记来的，是在 SDK 的资源索引里核过的：`house_fill` 与
+     * `gearshape_fill` 都在。而且**编译器会校验** —— 写错名字会报
+     * `Unknown resource name`，这一条对 `sys.color.*` 已经实测过一次。 */
+    const marks: TabBarSymbol = {
+      normal: new SymbolGlyphModifier(symbol).fontColor([$r('sys.color.font_secondary')]),
+      selected: new SymbolGlyphModifier(symbol).fontColor([$r('sys.color.brand')]),
+    };
+    return new BottomTabBarStyle(marks, label);
   }
 
   /** [B] 重新读一遍磁盘。文件夹在这里【再确认一次】存在，因为玩家可能刚把它删掉。 */
@@ -403,6 +542,7 @@ export struct LauncherHome {
     this.selected = readSelection(this.filesDir);
     this.resolution = resolveGame(this.filesDir, this.bundleCodeDir);
     this.bundledVer = bundledGameVersion(this.bundleCodeDir);
+    this.hasBundled = hasBundledGame(this.bundleCodeDir);
     this.jarDirHint = gameJarDir(this.filesDir);
     /* ⚠️ 父文件夹叫 `Download`（单数）—— 这是**磁盘上的名字**，不是英文惯用的
      * "Downloads"。判据：`user_dirs.txt` 里记的是
@@ -454,6 +594,10 @@ export struct LauncherHome {
     const want: number = this.winW * (this.contentPct / 100);
     return want > CONTENT_MIN_VP ? want : CONTENT_MIN_VP;
   }
+
+  /* ⛔ 这里曾有一个 `hasRightGap()`，用于「右侧非界面区」那套底色/分界线。
+   * 整套已回退（用户 2026-10-02：「还是去掉吧，背景就黑色就行了」），所以它没有用户了。
+   * 理由与两次失败的记录见 build() 里 Navigation 上方的那段注释。 */
 
   /** [A]
    * 栏左右各留多少。**同一个值给两边 ⇒ 栏必然居中**（见 BAR_MAX_VP 的注释）。
@@ -516,8 +660,30 @@ export struct LauncherHome {
            *   本项目为「门关上了却没有开的路径」付过代价（jvm_incomplete），不再犯。
            */
           Column() {
-            Text('没有找到游戏')
+            /* [A]
+             * ⚠️ 标题**据实**说，别一律说「没有找到游戏」。
+             *
+             * 这段的进入条件是 `games.length === 0`，而 `games` 是
+             * **`listGameJars()` 列出来的东西 —— 也就是【Download 文件夹里玩家自己放的 jar】**，
+             * 内置那份不在里面。
+             * ⇒ 内置在的时候，这一屏原来会写成「没有找到游戏」而下面又写「内置游戏：有」，
+             *    **自相矛盾**；更糟的是底下那个「启动游戏」按钮是**可用**的（它会去加载内置那份）。
+             * ⭐ 「没有找到游戏」只有在**内置也不在**时才是真的。
+             *
+             * ⚠️ 判据用 `hasBundled`（直接问文件在不在），不是 `resolution.source` ——
+             *    后者回答的是「这次加载谁」，玩家一选自己的 jar 它就变成 'user'，
+             *    与「内置在不在」无关。见 GameLibrary.hasBundledGame 上的说明。
+             */
+            Text(this.hasBundled ? '还没有导入其他游戏版本' : '没有找到游戏')
               .fontSize(18).fontColor($r('sys.color.font_primary'))
+            /* [B] 内置在的时候补一句「其实可以直接玩」，因为标题已经不再说「找不到」了，
+             * 得让玩家知道这一屏不是死路。 */
+            if (this.hasBundled) {
+              Text('内置的那一份可以直接玩，点下面的「启动游戏」就行')
+                .fontSize(13).fontColor($r('sys.color.font_secondary'))
+                .margin({ top: 8 })
+                .textAlign(TextAlign.Center)
+            }
             /* [B] 提示里给**两条**路。下拉是本页就能做的，而设置页那个按钮是备用的 ——
              * 两者都写，免得玩家以为只有一个办法。 */
             Text('把 Mindustry 的 .jar 放进下面这个文件夹，然后下拉刷新（或到「设置」里点「重新扫描」）：')
@@ -539,7 +705,7 @@ export struct LauncherHome {
               .margin({ top: 2 })
               .textAlign(TextAlign.Center)
               .copyOption(CopyOptions.LocalDevice)
-            Text('内置游戏：' + (this.resolution.source === 'bundled' ? '有' : '无'))
+            Text('内置游戏：' + (this.hasBundled ? '有' : '无'))
               .fontSize(12).fontColor($r('sys.color.font_secondary'))
               .margin({ top: 12 })
           }
@@ -881,6 +1047,83 @@ export struct LauncherHome {
       .padding({ left: 16, right: 16, top: 28 })
 
       /* [A]
+       * 数据隔离 —— 四档粒度，用户 2026-10-02 定。
+       *
+       * ⚠️ 四个写成**并列的一行**而不是下拉菜单：这是互斥的四选一，一眼看全比点开一层省事，
+       * 而且「当前是哪一档」不需要点开才看得见。
+       *
+       * ⚠️ 下面那行说明是**必需**的，不是装饰：四档的差别（尤其中间两档）对玩家不是自明的，
+       * 而选错的代价是「换个版本就看不到存档了」。
+       */
+      Column() {
+        Text('数据隔离')
+          .fontSize(14).fontColor($r('sys.color.font_secondary'))
+        Text('把不同游戏版本的存档、蓝图、模组、研究进度分开保存')
+          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+          .margin({ top: 4 })
+
+        Row() {
+          Text('不隔离')
+            .fontSize(13)
+            .fontColor(this.granularity === GRANULARITY_OFF
+                       ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
+            .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+            .borderRadius(9)
+            .backgroundColor(this.granularity === GRANULARITY_OFF
+                             ? $r('app.color.launcher_border') : $r('app.color.launcher_card'))
+            .onClick(() => { this.chooseGranularity(GRANULARITY_OFF); })
+          Text('大版本')
+            .fontSize(13)
+            .fontColor(this.granularity === GRANULARITY_NUMBER
+                       ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
+            .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+            .borderRadius(9)
+            .backgroundColor(this.granularity === GRANULARITY_NUMBER
+                             ? $r('app.color.launcher_border') : $r('app.color.launcher_card'))
+            .margin({ left: 8 })
+            .onClick(() => { this.chooseGranularity(GRANULARITY_NUMBER); })
+          Text('构建号')
+            .fontSize(13)
+            .fontColor(this.granularity === GRANULARITY_BUILD
+                       ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
+            .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+            .borderRadius(9)
+            .backgroundColor(this.granularity === GRANULARITY_BUILD
+                             ? $r('app.color.launcher_border') : $r('app.color.launcher_card'))
+            .margin({ left: 8 })
+            .onClick(() => { this.chooseGranularity(GRANULARITY_BUILD); })
+          Text('小版本')
+            .fontSize(13)
+            .fontColor(this.granularity === GRANULARITY_PATCH
+                       ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
+            .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+            .borderRadius(9)
+            .backgroundColor(this.granularity === GRANULARITY_PATCH
+                             ? $r('app.color.launcher_border') : $r('app.color.launcher_card'))
+            .margin({ left: 8 })
+            .onClick(() => { this.chooseGranularity(GRANULARITY_PATCH); })
+        }
+        .width('100%').margin({ top: 10 })
+
+        Text(this.granularityHint(this.granularity))
+          .fontSize(12).fontColor($r('sys.color.font_secondary'))
+          .margin({ top: 8 })
+
+        /* [B] 迁移出问题时的提示。⛔ 它不是门 —— 隔离照旧打开，只是新目录可能是空的，
+         * 而原数据完好（我们是复制）。 */
+        if (this.isolationNote !== '') {
+          Text(this.isolationNote)
+            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+            .margin({ top: 6 })
+        }
+      }
+      .width(this.contentWidthVp())
+      .animation({ duration: 300, curve: Curve.FastOutSlowIn })
+      .alignItems(HorizontalAlign.Start)
+      .padding({ left: 16, right: 16, top: 28 })
+      .padding({ left: 16, right: 16, top: 28 })
+
+      /* [A]
        * 关于 —— 现在是一个【入口】，点开才是内容。
        *
        * 用户 2026-10-01 的原话：「关于独立出来，点击出现一个有关闭按钮（右上角）的窗口
@@ -933,6 +1176,25 @@ export struct LauncherHome {
      * 一片空白 diff 里，审查时看不出来。代价只是这一块的缩进比它该有的少两级。
      */
     Stack() {
+    /* [A]
+     * ⛔⛔ 右侧「非界面区底色」那次尝试已**整体回退**（2026-10-02）。两次都失败了，
+     * 记在这里免得下次重走：
+     *
+     *   尝试 1：在 Navigation 【后面】加一层全屏底色 ⇒ 盖在界面上 ⇒ **UI 全部不见了**
+     *   尝试 2：移到 Navigation 【前面】（正确的层序）+ 把 Navigation 底色改透明
+     *           ⇒ UI 回来了，但**设置页的内容被推到屏幕右侧外并截断**
+     *
+     * ⚠️ 第二次的成因**没有查清**就回退了。可查的方向：
+     *   · Navigation 底色改透明是否影响了 Tabs 的尺寸计算
+     *   · Stack 里多一个 `position()` 的兄弟节点是否影响了 Navigation 的布局
+     *   · 那层空的 `Column().width('100%').height('100%')` 是否是元凶
+     *
+     * ⭐ 结论：**这条是纯观感改动，不值得在用户的实机上盲试。** 要再做，先用一个
+     *   最小页面（一个 Navigation + 一层底色）把层序和尺寸行为验证清楚，再动这里。
+     *   ⚠️ 而且「分成两块」这个方向本身可能就与 `barOverlap(true)` 的悬浮底栏冲突 ——
+     *   底栏居中在**整个窗口**宽度上，它必然横跨这两块的边界。
+     */
+
     Navigation() {
       /* [A]
        * 两条分支只差悬浮样式那一块，理由见 canFloat 的注释。
@@ -940,8 +1202,8 @@ export struct LauncherHome {
        */
       if (this.canFloat) {
         Tabs({ barPosition: BarPosition.End }) {
-          TabContent() { this.GamesTab() }.tabBar(this.TabItem($r('sys.symbol.house_fill'), '首页', 0))
-          TabContent() { this.SettingsTab() }.tabBar(this.TabItem($r('sys.symbol.gearshape_fill'), '设置', 1))
+          TabContent() { this.GamesTab() }.tabBar(this.tabItem($r('sys.symbol.house_fill'), '首页'))
+          TabContent() { this.SettingsTab() }.tabBar(this.tabItem($r('sys.symbol.gearshape_fill'), '设置'))
         }
         .barFloatingStyle({
           /* [A] 左右同一个留白 ⇒ 居中由构造保证。见 BAR_MAX_VP 的注释。 */
@@ -1010,8 +1272,8 @@ export struct LauncherHome {
          * 同一个做法见 AMCL 的 LauncherTabsStyle.ets。
          */
         Tabs({ barPosition: BarPosition.End }) {
-          TabContent() { this.GamesTab() }.tabBar(this.TabItem($r('sys.symbol.house_fill'), '首页', 0))
-          TabContent() { this.SettingsTab() }.tabBar(this.TabItem($r('sys.symbol.gearshape_fill'), '设置', 1))
+          TabContent() { this.GamesTab() }.tabBar(this.tabItem($r('sys.symbol.house_fill'), '首页'))
+          TabContent() { this.SettingsTab() }.tabBar(this.tabItem($r('sys.symbol.gearshape_fill'), '设置'))
         }
         .barOverlap(true)
         /* [A] 同上：显式给切换时长，与 AMCL 的写法对齐。 */
@@ -1091,6 +1353,156 @@ export struct LauncherHome {
      * 这个项目在别处踩过「门关上了却没有开的路径」，而一个只有内容没有出口的窗口
      * 就是同一类东西的界面版本。点遮罩也关（顺手），但出口以那个按钮为准。
      */
+    /* [A]
+     * 打开隔离时的询问 —— 用户 2026-10-02 定：「询问玩家，给出不同选择」。
+     *
+     * ⭐ 结构照抄「关于」那个窗口（同屏遮罩 + 卡片 + 点卡片不冒泡），理由也相同：
+     * 里面的按钮是**要点的**，冒泡上去就会把窗口关掉。
+     *
+     * ⚠️ 三个选项的顺序是刻意的：**先讲后果，再说动作**，而「复制过去」排第一 ——
+     * 它最安全（源数据不动 ⇒ 可逆），所以默认落在它身上。
+     * ⛔ 「从空开始」绝不能高亮成默认 —— 那等于把「看不到存档了」做成默认选项。
+     */
+    if (this.showIsolationAsk) {
+      Column() {
+        Column() {
+          Text('打开数据隔离')
+            .fontSize(18).fontColor($r('sys.color.font_primary'))
+          Text('之后，当前选中的版本的数据与其他版本隔离。你想怎么处理存档？')
+            .fontSize(13).fontColor($r('sys.color.font_secondary'))
+            .margin({ top: 12 })
+
+          /* [A] ⭐ 先摆出【现在有什么】，用真实数量 —— 让玩家在**选之前**就看到结果。 */
+          Text('当前数据：' + describeCounts(this.isolationCounts))
+            .fontSize(12).fontColor($r('sys.color.font_secondary'))
+            .width('100%').textAlign(TextAlign.Center)
+            .margin({ top: 10 })
+
+          /* [A] 每一块的顺序是【说明在上、按钮在下】（用户 2026-10-02 要的对调）。
+           *
+           * ⚠️ 「复制过去」**不配任何说明** —— 用户原话：「很直观了，根本不需要任何说明」。
+           *    ⛔ 不要在别处补一句解释回去，那正是被删掉的冗余。
+           *
+           * ⚠️ 「不复制」的说明**只有一句**：用户删掉了「这个版本会看到：…」（「正常人不需要」），
+           *    并把剩下那句改成「相当于新建一个存档，原存档保留」。
+           *
+           * ⭐⭐ 用真 `Button` 而不是给 `Text` 上色：设置页那个「重新扫描」是裸 `Button()`，
+           *    它的蓝色是**组件自带的默认主题色**。用它就自动与那一处一致，
+           *    ⛔ 不需要（也不该）自己去写一个蓝值 —— 那样两处迟早会分叉。
+           *    ⚠️ 宽度 `'50%'` 之后要 `alignSelf(ItemAlign.Center)`：父 Column 是
+           *    `alignItems(HorizontalAlign.Start)`，光给宽度会让按钮贴左边。
+           */
+
+          /* ============ 选项一：主操作（系统蓝） ============ */
+          Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
+          Button('复制过去')
+            .fontSize(15)
+            .width('40%').alignSelf(ItemAlign.Center)
+            .margin({ top: 14 })
+            /* [A] ⭐ 两步：先记下意图，由下面那个二次确认来真正执行。
+             * ⛔ 这里【不】直接调 applyIsolationCopy() —— 那会让二次确认变成摆设。 */
+            .onClick(() => { this.isolationConfirm = 'copy'; })
+
+          /* ============ 选项二 ============ */
+          Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
+          Text('相当于新建一个存档，原存档保留')
+            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+            .width('100%').textAlign(TextAlign.Center)
+            .margin({ top: 12 })
+          Button('不复制')
+            .fontSize(15)
+            .width('40%').alignSelf(ItemAlign.Center)
+            .margin({ top: 10 })
+            /* ⛔ 这里【曾经】写 `.backgroundColor(launcher_bg)` + `.fontColor(font_primary)`，
+             * 想做成「灰底次级按钮」。**实测是黑的** ——
+             * `launcher_bg` 在深色模式下是 #FF101010，而深色主题正是默认。
+             * ⇒ 用户 2026-10-02：「现在颜色是黑色的。也改成蓝色吧」
+             * ⭐ 于是三个按钮都不设底色，全部用 `Button` 的系统默认主题色 —— 一处颜色，
+             *   不给自己造的色值留分叉的机会。 */
+            .onClick(() => { this.isolationConfirm = 'empty'; })
+
+          /* ============ 取消：也是蓝底，但更窄 ============ */
+          Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
+          Button('取消')
+            .fontSize(14)
+            .width('20%').alignSelf(ItemAlign.Center)
+            .margin({ top: 12 })
+            .onClick(() => {
+              this.showIsolationAsk = false;
+              this.pendingGranularity = '';
+              this.isolationConfirm = '';
+            })
+        }
+        .width('100%')
+        .constraintSize({ maxWidth: this.dialogWidthVp() })
+        .padding(20)
+        .backgroundColor($r('app.color.launcher_card'))
+        .borderRadius(CARD_RADIUS_VP)
+        .alignItems(HorizontalAlign.Start)
+        /* [B] 吞掉落在卡片上的点击，别让它冒泡到遮罩把窗口关掉 —— 与「关于」同一处理由。 */
+        .onClick(() => {})
+      }
+      .width('100%').height('100%')
+      .backgroundColor('#80000000')
+      .justifyContent(FlexAlign.Center)
+      .padding({ left: 32, right: 32 })
+      /* ⚠️ 这里【不】让点遮罩等于取消：这个窗比「关于」重（它会改数据位置），
+       * 而一个手滑点空白就消失的确认框，比没有确认框更糟。出口只有「取消」。 */
+    }
+
+    /* [A]
+     * 二次确认。
+     *
+     * ⚠️ 它必须放在上面那个 `if` **之后** —— 在 Stack 里，后声明的孩子画在上面。
+     *   反过来写的话，确认框会被主弹窗盖住，而症状是「点了按钮什么都没发生」。
+     *
+     * ⚠️ 两条出口都要把 `isolationConfirm` 清回 `''`，否则下一次打开隔离会直接
+     *   弹在确认框上。
+     */
+    if (this.isolationConfirm !== '') {
+      Column() {
+        Column() {
+          Text('再确认一次')
+            .fontSize(17).fontColor($r('sys.color.font_primary'))
+          Text(this.isolationConfirm === 'copy'
+               ? '把当前数据复制一份到这个版本。原来那份不动。'
+               : '这个版本会是空的，相当于新建一个存档。')
+            .fontSize(13).fontColor($r('sys.color.font_secondary'))
+            .margin({ top: 10 })
+
+          Button('确定')
+            .fontSize(15)
+            .width('40%').alignSelf(ItemAlign.Center)
+            .margin({ top: 16 })
+            .onClick(() => {
+              const what: string = this.isolationConfirm;
+              this.isolationConfirm = '';
+              if (what === 'copy') {
+                this.applyIsolationCopy();
+              } else {
+                this.applyIsolationEmpty();
+              }
+            })
+          Button('取消')
+            .fontSize(14)
+            .width('20%').alignSelf(ItemAlign.Center)
+            .margin({ top: 12 })
+            .onClick(() => { this.isolationConfirm = ''; })
+        }
+        .width('100%')
+        .constraintSize({ maxWidth: this.dialogWidthVp() })
+        .padding(20)
+        .backgroundColor($r('app.color.launcher_card'))
+        .borderRadius(CARD_RADIUS_VP)
+        .alignItems(HorizontalAlign.Start)
+        .onClick(() => {})
+      }
+      .width('100%').height('100%')
+      .backgroundColor('#80000000')
+      .justifyContent(FlexAlign.Center)
+      .padding({ left: 32, right: 32 })
+    }
+
     if (this.showAbout) {
       Column() {
         Column() {
