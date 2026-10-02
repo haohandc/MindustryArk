@@ -380,6 +380,21 @@ const CARD_RADIUS_VP = 14;
  * 会不一样大 —— 用户在设置页看到的正是这个。 */
 const BUTTON_FONT_VP = 16;
 
+/* [A] 「按版本」那一屏存档行的三列宽度（vp）。
+ *
+ * ⭐ 用户 2026-10-02：「文字没有做对齐（文件名对齐，大小和时间单独再对齐）」。
+ *    ⇒ 文件名占剩下的全部，大小与时间**各占一列、右对齐**。
+ *
+ * ⚠️ 宽度必须写死：`Text` 默认按内容自适应，每行宽度不同 ⇒ 列就是歪的。
+ * ⭐ 而写死是安全的，因为这两个格式**定长**（见 formatSaveSize / formatSaveDate）：
+ *    大小 ≤ 7 个字符（`1.2 MB`），时间恒为 10 个字符（`2026-10-02`）。
+ * ⚠️ 手机窄屏上文件名只剩一百多 vp，靠 `TextOverflow.Ellipsis` 收尾 ——
+ *    比起让三列错开，截断是更小的代价。 */
+const SAVE_SIZE_COL_VP = 74;
+const SAVE_DATE_COL_VP = 92;
+/** [B] 选中那个 ✓ 也占定宽，否则「选中」会把后面几列推歪。 */
+const SAVE_TICK_COL_VP = 16;
+
 /* [A]
  * 失败弹窗里那块文字的高度上限（vp）。
  *
@@ -1448,6 +1463,13 @@ export struct LauncherHome {
       }
       v.saveCount = n;
       v.hasData = gameDataExists(v.dataDir);
+      /* [A] ⭐ 每个版本记一行：标签 / 版本号 / 隔离键 / 数据目录。
+       * ⭐ 这一行是「我换了版本怎么看不到存档了」的**第一手答案** ——
+       *    看一眼 key 就知道两个 jar 有没有落进同一个目录，
+       *    而这是**光看界面推不出来**的（界面上只写版本号，不写键）。
+       * ⚠️ 只在 refresh() 里跑，⛔ 不在渲染路径上。 */
+      hilog.info(DOMAIN, TAG, 'version: %{public}s | %{public}s | key=%{public}s | %{public}s',
+                 v.label, v.version === '' ? '(unknown)' : v.version, v.key, v.dataDir);
     }
     /* [A] ⭐ 记一行「有几个版本、几个**不同的**数据目录」。
      *
@@ -1497,21 +1519,44 @@ export struct LauncherHome {
         out.push(only);
       }
     }
-    /* [A] ⭐⭐ **空组只在它是「当前版本」时留着。**
+    /* [A] ⛔⛔ **订正（2026-10-02，用户报上来的）：空组不再丢掉。**
      *
-     * ⚠️ 实测：按构建号隔离时有 4 份独立目录，其中 3 份是空的（还没复制过）
-     *    ⇒ 全列出来一屏 5 组、3 组空，**噪音大过信息**。
-     * ⭐ 而空组里没有存档 ⇒ 不给任何存档「隐身」的机会，全丢掉也不丢数据。
-     * ✅ 只有**当前版本**那一个例外：它是游戏真正会读的那份，
-     *    「这里还没有数据」正是玩家换了粒度之后最需要看到的那句话。
-     */
-    const kept: SaveGroup[] = [];
+     * ⭐ 我原来在这里丢掉空组，理由是「一屏 5 组、3 组空，噪音大过信息」——
+     *    那是我自己的判断，**不是他的要求**，而它的代价他立刻就说出来了：
+     *    「我按最小粒度，只显示了内置游戏和159.7，**其他的消失了**」。
+     *
+     * ⭐⭐ 真正让那个判断站不住的是**后来加的东西**：每一组现在都是
+     *    「把未隔离的那份复制过来」的**去处**（见 `StaleCopyOffer`）。
+     *    ⇒ 一个空组**不是噪音，是一个还没填的槽位**；把它藏起来，
+     *      玩家就没法把数据放进那个版本 —— 而那正是他要做的事。
+     *
+     * ⚠️ 于是判据从「有没有存档」换成「**有没有版本**」：
+     *    有版本读的目录一律列出来，哪怕它现在是空的。
+     * ⛔ 而未隔离的那一份仍然只在真有存档时才补进来（见上）——
+     *    它不属于任何版本，空的时候确实没有意义。 */
     for (const g of out) {
-      if (g.saves.length > 0 || g.versions.some((v: VersionEntry) => v.isCurrent)) {
-        kept.push(g);
-      }
+      hilog.info(DOMAIN, TAG, 'save group: %{public}d save(s), %{public}d version(s), %{public}s',
+                 g.saves.length, g.versions.length, g.dir);
     }
-    return kept;
+    return out;
+  }
+
+  /* [A] ⭐⭐ 一个版本的**显示名**：标签，外加括号里的版本号 —— 但**只在标签里看不出版本时**。
+   *
+   * ⭐ 用户 2026-10-02：「内置游戏这里，应该加上标注（**动态标注**），括号里面写明版本」。
+   *    ⛔ 而「动态」是这个要求的重点：版本号要**读出来**（`bundledGameVersion`），
+   *    不能写死 —— 我们换内置 jar 时它会变，写死的那个立刻就是错的。
+   *
+   * ⚠️ 为什么要有「标签里已经含版本就不加」这一条：
+   *    玩家自建的 jar 标签就是文件名（`Mindustry160.5`），而它**自带版本** ⇒
+   *    无条件追加会得到 `Mindustry160.5（160.5）`，那是纯噪音。
+   * ⭐ 判据是 `includes` 而不是相等：文件名里版本常带着额外的后缀
+   *    （`Mindustry160.5-b2`），那也已经在标签里看得见了。 */
+  private versionLabelOf(v: VersionEntry): string {
+    if (v.version === '' || v.label.includes(v.version)) {
+      return v.label;
+    }
+    return v.label + '（' + v.version + '）';
   }
 
   /** [B] 一组的标题：共用这份数据的版本名。空数组 = 没有版本读它（未隔离的那一份）。 */
@@ -1521,7 +1566,7 @@ export struct LauncherHome {
     }
     const names: string[] = [];
     for (const v of g.versions) {
-      names.push(v.label);
+      names.push(this.versionLabelOf(v));
     }
     return names.join('  ·  ');
   }
@@ -2724,22 +2769,49 @@ export struct LauncherHome {
                 .fontSize(12).fontColor($r('sys.color.font_secondary'))
                 .margin({ top: 8 })
             }
+            /* [A] ⭐⭐ 用户 2026-10-02 对这一段提了三件事，一起改掉：
+             *    ① 「字体过小了」—— 原来整行统一 12fp，名字和元数据**一样大**，
+             *       于是没有主次、也看不清。⇒ 名字 14、元数据 12。
+             *    ② 「文字没有做对齐（文件名对齐，大小和时间单独再对齐）」
+             *       —— 原来是一整句 `名字 · 大小 · 日期` 拼出来的，每行宽度随手，
+             *       三列全歪。⇒ 改成**三列**：名字吃剩余宽度，大小与时间各占定宽右对齐。
+             *    ③ 「选择版本存档很不方便」—— 原来一行只有 `margin(top:8)`，
+             *       热区**只有文字那么高**，在平板上很难点中。
+             *       ⇒ 补上内边距、圆角与底色，热区变成一整块（与左边版本列表同一形状）。
+             *
+             * ⚠️ ✓ 用 `visibility` 而不是 `if` 来显示/隐藏：`if` 会让未选中的行**少一个节点**
+             *    ⇒ 选中与未选中两种行的列宽不一样 ⇒ 点一下整列就跳。
+             *    `Visibility.Hidden` 照样占位，列不会动。 */
             ForEach(this.versionSaves, (sv: SaveEntry) => {
               Row() {
-                Text(sv.label + '   ·   ' + formatSaveSize(sv.bytes)
-                     + '   ·   ' + formatSaveDate(sv.mtime))
-                  .fontSize(12)
+                Text(sv.label)
+                  .fontSize(14)
                   .fontColor(this.selectedSave === this.saveKey(this.versionSavesDir(), sv.id)
-                             ? $r('sys.color.brand') : $r('sys.color.font_secondary'))
+                             ? $r('sys.color.brand') : $r('sys.color.font_primary'))
                   .layoutWeight(1)
                   .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
 
-                if (this.selectedSave === this.saveKey(this.versionSavesDir(), sv.id)) {
-                  Text('✓').fontSize(14).fontColor($r('sys.color.brand'))
-                }
+                Text(formatSaveSize(sv.bytes))
+                  .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                  .width(SAVE_SIZE_COL_VP).textAlign(TextAlign.End)
+
+                Text(formatSaveDate(sv.mtime))
+                  .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                  .width(SAVE_DATE_COL_VP).textAlign(TextAlign.End)
+                  .margin({ left: 10 })
+
+                Text('✓')
+                  .fontSize(14).fontColor($r('sys.color.brand'))
+                  .width(SAVE_TICK_COL_VP).textAlign(TextAlign.End)
+                  .margin({ left: 6 })
+                  .visibility(this.selectedSave === this.saveKey(this.versionSavesDir(), sv.id)
+                              ? Visibility.Visible : Visibility.Hidden)
               }
               .width('100%')
-              .margin({ top: 8 })
+              .padding({ left: 12, right: 12, top: 11, bottom: 11 })
+              .borderRadius(CARD_RADIUS_VP)
+              .backgroundColor($r('app.color.launcher_card'))
+              .margin({ top: 6 })
               .onClick(() => {
                 this.selectedSave = this.saveKey(this.versionSavesDir(), sv.id);
               })
