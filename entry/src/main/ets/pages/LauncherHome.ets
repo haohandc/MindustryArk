@@ -78,6 +78,60 @@ function formatMsDateTime(ms: number): string {
 }
 
 /* [A]
+ * 游戏内时长：毫秒 -> 给人看的一句话。
+ *
+ * ⛔⛔ **单位是【毫秒】。这一条我原先弄错了，是查出来的，不是推的。**
+ *
+ * 我原来写的是「60 tick/秒」，于是除以 `60*60` 当 tick 换算 —— **错的**，
+ * 分钟数被放大 **16.67 倍**。改的起因是用户 2026-10-02 说
+ * 「超过 60 分钟后要开始显示小时 + xx 分钟」，我去核单位时才发现除数本身就错了。
+ *
+ * 两条**互相独立**的证据（都是 2026-10-02 取的）：
+ *
+ *   1. 【本项目源码，游戏 jar 的字节码】
+ *      `mindustry.game.Saves.update()`：
+ *          totalPlaytime += Time.timeSinceMillis(lastTimestamp)
+ *      ⇒ 累加的增量来自 `Arc` 的 **timeSinceMillis**，单位毫秒。
+ *      同一处 `lastTimestamp = Time.millis()`，也印证这一对是「毫秒时间戳 + 毫秒差」。
+ *
+ *      而 `arc.util.Strings.formatMillis(long)` 用 `3_600_000` 取小时、`60_000` 取分钟，
+ *      再 `SaveSlot.getPlayTime()` = `Strings.formatMillis(meta.timePlayed)`
+ *      ⇒ 游戏自己也是把这个值**当毫秒**格式化的（它显示成 `H:MM:SS`）。
+ *
+ *   2. 【实测，平板上的真存档】四个真实值，按毫秒解释才合理：
+ *          `0.msav`                    59_932  ->  1.0 分钟
+ *          `sector-erekir-10.msav`  1_991_130  -> 33.2 分钟
+ *          `sector-serpulo-133.msav` 3_378_122 -> 56.3 分钟
+ *          `sector-serpulo-142.msav` 36_202_317 -> 603.4 分钟 = 10.1 小时
+ *      ⚠️ 最后一个是决定性的：同一个战役区块存档，按毫秒是 **10.1 小时**（合理），
+ *      按 tick 是 **10056 分钟 = 167 小时**（不可能）。
+ *
+ * ⚠️ 两条证据是**独立**的（一条读字节码、一条读设备上的文件），而且互相吻合 ——
+ *    这正是本项目要的那种对照；单靠其中一条我不会下结论。
+ *
+ * 分档（用户 2026-10-02 要的形状：「超过 60 分钟后要开始显示小时 + xx 分钟」）：
+ *
+ *      < 1 分钟   不足 1 分钟          ← ⚠️ 真会碰到：上面 `0.msav` 就是
+ *      < 60 分钟  约 N 分钟
+ *      >= 60 分钟 约 H 小时 M 分钟      ← ⛔ **M 为 0 也照写**（「约 2 小时 0 分钟」）。
+ *                                        用户说的就是「小时 + xx 分钟」，两截都在位，
+ *                                        行宽也不会随余数跳动。
+ *
+ * ⚠️ 一律 **floor**，不是四舍五入 —— 报少一点比报多一点诚实，而且「约」字已经说明它不精确。
+ * ⛔ 不显示原始数字：它现在是毫秒，对玩家没有意义；而旧的写法把它标成 `tick`，那个标签**是错的**。
+ */
+function formatPlaytime(ms: number): string {
+  const totalMin: number = Math.floor(ms / 60000);
+  if (totalMin < 1) {
+    return '不足 1 分钟';
+  }
+  if (totalMin < 60) {
+    return '约 ' + String(totalMin) + ' 分钟';
+  }
+  return '约 ' + String(Math.floor(totalMin / 60)) + ' 小时 ' + String(totalMin % 60) + ' 分钟';
+}
+
+/* [A]
  * 把 native 读出来的元数据排成给玩家看的几行。
  *
  * ⭐ 三条口径，都是有意的：
@@ -117,10 +171,8 @@ function metaRowsOf(m: SaveMeta, sv: SaveEntry): MetaRow[] {
     add('保存时间', formatMsDateTime(Number(m.saved)));
   }
   if (m.playtime !== '') {
-    const ticks: number = Number(m.playtime);
-    /* [B] 60 tick/秒（Mindustry 的固定步长）。给到分钟够用，再细就是假精度。 */
-    const mins: number = Math.floor(ticks / 60 / 60);
-    add('游戏内时长', String(ticks) + ' tick（约 ' + String(mins) + ' 分钟）');
+    /* ⛔ 单位是**毫秒**，单位说明与两条证据见 `formatPlaytime`。 */
+    add('游戏内时长', formatPlaytime(Number(m.playtime)));
   }
   add('模组', m.mods);
   return rows;

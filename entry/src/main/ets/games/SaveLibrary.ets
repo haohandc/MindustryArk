@@ -238,7 +238,11 @@ export interface SaveMeta {
   playerteam: string;
   /** [B] 区块预置名（如 `onset`）—— 只有 sector 存档有。 */
   sectorPreset: string;
-  /** [B] 游戏内 tick 数（字符串）。 */
+  /* [A] 游戏内时长，单位是**毫秒**（字符串）。
+   * ⛔ 这里原先写的是「tick 数」—— **错的**，2026-10-02 核单位时订正。
+   *    依据（两条独立证据）见 `LauncherHome.formatPlaytime` 的注释：
+   *    游戏自己在 `Saves.update()` 里按 `Time.timeSinceMillis()` 累加，
+   *    并交给 `Strings.formatMillis()` 显示；平板真存档的取值也只有按毫秒才合理。 */
   playtime: string;
   /** [B] 这个字段来自哪个文件 —— 一个 sector 存档有很多 msav，必须说清读的是哪一个。 */
   fromFile: string;
