@@ -1,31 +1,10 @@
-/* [A]
- * 存档垃圾站 —— 删除**不是**抹掉，是搬到一个游戏看不见的地方。
- *
- * 用户 2026-10-02 定的形态：
- *   「删除加上垃圾站，防止误删除，可以找回。然后可以自选保留时间（3天/7天/1个月）
- *     还可以加上归档，存档归档。」
- *
- * ⭐⭐ **存放位置是整个设计的关键**：`DEST_ROOT/save-vault/` ——
- *    **在游戏那棵树【外面】**（`…/files/.local/share/Mindustry/` 之外）。
- *
- *    ⛔ 若放在游戏的数据目录里（比如 `saves/` 旁边），两件事会同时坏：
- *      ① 游戏会把它当成自己的数据去扫（`Saves` 会把 `.msav` 都列出来）；
- *      ② 隔离一开，`user.home` 一换，垃圾站就**跟着版本走**了 ——
- *         而玩家的预期显然是「我删掉的东西在同一个地方找回来」。
- *    ⇒ 放在 level-2 的应用目录下，它**天然跨版本共享**，也不需要任何隔离逻辑。
- *
- * 目录布局：
- *
- *     <DEST_ROOT>/save-vault/
- *       <条目 id>/
- *         meta.txt        ← 人可读的说明（键值对，与 isolation.txt 同一套约定）
- *         files/          ← 原样搬过来的 msav（含 `-backup`。⛔ 不筛，见下）
- *
- * ⚠️ id 用 `<时间戳>-<安全化的标签>`：时间戳保证唯一，标签保证**人能认出是哪个**。
- *    标签里的非法字符会被替换 —— 它会进路径，而路径是从**玩家给的存档名**派生出来的。
- *
- * ⛔ **不挑文件**：一组存档的 `files[]` 原样全搬（含 `-backup`）。
- *    筛掉备份会让「放回去」得到一个**与删除前不同**的存档，而玩家要的是撤销。
+/* 存档垃圾站 —— 删除**不是**抹掉，是搬到一个游戏看不见的地方（用户 2026-10-02 定的形态）。
+ * ⭐⭐ **存放位置是关键**：`DEST_ROOT/save-vault/`，**在游戏那棵树【外面】**（`…/files/.local/share/Mindustry/` 之外）。
+ * ⛔ 放在游戏数据目录里会同时坏两件事：① 游戏把它当自己的数据扫（`Saves` 会列出所有 `.msav`）；② 隔离一开
+ * `user.home` 一换，垃圾站就**跟着版本走** ⇒ 放在 level-2 应用目录下，天然跨版本共享。
+ * 布局：`<DEST_ROOT>/save-vault/<条目 id>/{meta.txt, files/}`；⚠️ id = `<时间戳>-<安全化标签>`（时间戳保唯一、
+ * 标签保人能认出）—— 标签进路径而来源是**玩家给的存档名**。⛔ **不挑文件**：`files[]` 原样全搬（含 `-backup`），
+ * 筛掉备份会让「放回去」得到**与删除前不同**的存档。
  */
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -37,57 +16,51 @@ import { copyTreeInto, removeTree, newTreeStat, TreeStat, listFiles, sizeOf, pat
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
 
-/* [A] 垃圾站的根。⭐ `NATIVE_FILES` 与 `Isolation.ets` 里那个是同一个值 ——
- * 都必须是 native 侧的应用级目录（`launcher.c` 的 `DEST_ROOT`），
+/* 垃圾站的根。⭐ `NATIVE_FILES` 与 `Isolation.ets` 里那个是同一个值（`launcher.c` 的 `DEST_ROOT`），
  * ⛔ 不是 ArkTS 的 `ctx.filesDir`（那是 HAP 级目录，两处不通用）。 */
 const NATIVE_FILES: string = '/data/storage/el2/base/files';
 export const VAULT_ROOT: string = NATIVE_FILES + '/save-vault';
 
-/** [B] 一个条目里的元数据文件名。 */
+/** 一个条目里的元数据文件名。 */
 const META_NAME = 'meta.txt';
-/** [B] 搬过来的存档文件放这一层 —— 与 meta.txt 分开，读目录时不会把 meta 当存档。 */
+/** 搬过来的存档文件放这一层 —— 与 meta.txt 分开，读目录时不会把 meta 当存档。 */
 const FILES_DIR = 'files';
 
-/** [B] 保留期的选项（天）。用户点名要的三档。 */
+/** 保留期的选项（天）。用户点名要的三档。 */
 export const VAULT_DAYS_CHOICES: number[] = [3, 7, 30];
-/** [B] 出厂值 7 天 —— 中间那档，也是三档里最不容易让人后悔的。 */
+/** 出厂值 7 天 —— 中间那档，也是三档里最不容易让人后悔的。 */
 export const VAULT_DAYS_DEFAULT: number = 7;
 
 const DAY_MS: number = 24 * 60 * 60 * 1000;
 
-/** [B] 保留期存哪。与别的跨启动状态一样，一个纯文本文件。 */
+/** 保留期存哪。与别的跨启动状态一样，一个纯文本文件。 */
 const DAYS_FILE_NAME = 'save_vault_days.txt';
 
-/** [B] 垃圾站里的一个条目。 */
+/** 垃圾站里的一个条目。 */
 export interface VaultEntry {
-  /** [B] 目录名，同时是它的稳定标识。 */
+  /** 目录名，同时是它的稳定标识。 */
   id: string;
-  /** [B] 它原来是哪个存档（给玩家看的名字）。 */
+  /** 它原来是哪个存档（给玩家看的名字）。 */
   label: string;
-  /** [B] 原来那个 `saves/` 目录 —— 「放回」会放回**这里**。 */
+  /** 原来那个 `saves/` 目录 —— 「放回」会放回**这里**。 */
   from: string;
-  /* [A] ⭐⭐ **它原来属于哪个（些）版本** —— 用户 2026-10-02 报的：
-   *    「细分后，放到垃圾站区分不出来原来那个存档属于哪个版本」。
-   *
-   * ⚠️ 这一条是**删除那一刻的快照**，不是现在现算的。两个理由：
-   *    ① 玩家可能早就把那个 jar 删了 —— 现算只会得到空，而记录本身忘不掉；
-   *    ② 「我删的是哪个版本的东西」是关于**那一刻**的问题。
-   * ⭐ `owner` 是给人看的（「内置游戏（v8 Build 160.5）」），`key` 是给排查用的
-   *    （`b160.5`）—— 与 `versionEntryOf` 那两行的口径一致。 */
+  /* ⭐⭐ **它原来属于哪个（些）版本** —— 用户 2026-10-02 报「细分后，放到垃圾站区分不出来原来那个存档
+   * 属于哪个版本」。⚠️ 这是**删除那一刻的快照**不是现算（玩家可能早把那个 jar 删了）：⭐ `owner` 给人看
+   * （「内置游戏（v8 Build 160.5）」），`key` 给排查用（`b160.5`）。 */
   owner: string;
-  /** [B] 删除那一刻的隔离键；'' = 未隔离（或老条目没记）。 */
+  /** 删除那一刻的隔离键；'' = 未隔离（或老条目没记）。 */
   key: string;
-  /** [B] 删除时刻（Unix 毫秒）。 */
+  /** 删除时刻（Unix 毫秒）。 */
   deletedMs: number;
-  /** [B] 到期时刻（Unix 毫秒）；**0 表示归档，永不过期**。 */
+  /** 到期时刻（Unix 毫秒）；**0 表示归档，永不过期**。 */
   expiresMs: number;
-  /** [B] 是不是归档 —— 归档不参与自动清理，只能手动删或放回。 */
+  /** 是不是归档 —— 归档不参与自动清理，只能手动删或放回。 */
   archived: boolean;
-  /** [B] 搬进来时有多少个文件。 */
+  /** 搬进来时有多少个文件。 */
   count: number;
-  /** [B] 现在的大小（字节）。 */
+  /** 现在的大小（字节）。 */
   bytes: number;
-  /** [B] `files/` 里现在有哪些文件（放回时要按它来）。 */
+  /** `files/` 里现在有哪些文件（放回时要按它来）。 */
   files: string[];
 }
 
@@ -95,7 +68,7 @@ export interface VaultEntry {
  * 保留期（一个全局设置）
  * ==================================================================== */
 
-/** [B] 读保留天数。文件不在/读不出/不在选项里 ⇒ 出厂值。⛔ 静默失败，不打断任何流程。 */
+/** 读保留天数。文件不在/读不出/不在选项里 ⇒ 出厂值。⛔ 静默失败，不打断任何流程。 */
 export function readVaultDays(filesDir: string): number {
   const path: string = filesDir + '/' + DAYS_FILE_NAME;
   try {
@@ -117,7 +90,7 @@ export function readVaultDays(filesDir: string): number {
   }
 }
 
-/** [B] 记下保留天数。只接受三档之一。 */
+/** 记下保留天数。只接受三档之一。 */
 export function writeVaultDays(filesDir: string, days: number): void {
   if (VAULT_DAYS_CHOICES.indexOf(days) < 0) {
     hilog.error(DOMAIN, TAG, 'vault: refusing to write an unknown retention "%{public}d"', days);
@@ -142,19 +115,14 @@ export function writeVaultDays(filesDir: string, days: number): void {
  * meta.txt —— 与 isolation.txt / user_dirs.txt 同一套键值约定
  * ==================================================================== */
 
-/* [A]
- * 一个键一行、`key=value`。
- *
- * ⚠️ 值里**不能有换行** —— 存档名完全可能带空格，但换行会破坏这个格式。
- *    所以写的时候把 `\r`/`\n` 换成空格（见 `sanitizeValue`）。
- * ⛔ 而**不**做转义：读的那一侧（`readMeta`）刻意保持最笨的解析，
- *    因为这是**给我们自己看的**文件，不是要兼容的格式。
- */
+/* 一个键一行、`key=value`。⚠️ 值里**不能有换行**（存档名可能带空格，但换行会破坏格式），
+ * 所以写时把 `\r`/`\n` 换成空格（见 `sanitizeValue`）。
+ * ⛔ 而**不**做转义：读的那侧（`readMeta`）刻意保持最笨的解析 —— 这是**给我们自己看的**文件。 */
 function sanitizeValue(v: string): string {
   return v.replace(/[\r\n]+/g, ' ');
 }
 
-/** [A] 只取第一个 `=` 切分：值里可能有 `=`（路径、名字都可能有），键里不会有。 */
+/** 只取第一个 `=` 切分：值里可能有 `=`（路径、名字都可能有），键里不会有。 */
 function metaOf(text: string, key: string): string {
   const prefix: string = key + '=';
   const lines: string[] = text.split(String.fromCharCode(10));
@@ -168,10 +136,10 @@ function metaOf(text: string, key: string): string {
   return '';
 }
 
-/** [A] 把标签变成能进路径的样子。⛔ 它会成为目录名，而来源是**玩家给的存档名**。 */
+/** 把标签变成能进路径的样子。⛔ 它会成为目录名，而来源是**玩家给的存档名**。 */
 function slug(label: string): string {
   let s: string = label.replace(/[^A-Za-z0-9._-]/g, '-');
-  /* [B] 连续的分隔符压成一个，两端也不留 —— 目录名好看一点，也更短。 */
+  /* 连续的分隔符压成一个，两端也不留 —— 目录名好看一点，也更短。 */
   s = s.replace(/-+/g, '-').replace(/^-|-$/g, '');
   if (s === '') {
     s = 'save';
@@ -183,13 +151,10 @@ function slug(label: string): string {
  * 删除 / 放回 / 彻底删 / 归档
  * ==================================================================== */
 
-/* [A]
- * 把 `save` 这一组文件**搬进**垃圾站。返回 '' 表示成功，否则是一句给玩家看的话。
- *
- * ⚠️ 是**搬**（复制成功后删源），不是纯复制 —— 玩家的意思是「删掉它」，
- *    留一份在 `saves/` 里就等于没删。⚠️ 但顺序必须是**先复制、成功了再删源**：
- *    反过来做，一旦复制失败，那些文件就**只存在于垃圾站**（数据没丢，但存档列表里没了）。
- */
+/* 把 `save` 这一组文件**搬进**垃圾站。返回 '' 表示成功，否则是一句给玩家看的话。
+ * ⚠️ 是**搬**（复制成功后删源）不是纯复制 —— 玩家的意思是「删掉它」，留一份在 `saves/` 等于没删。
+ * ⚠️ 顺序必须**先复制、成功了再删源**：反过来一旦复制失败，那些文件就只存在于垃圾站
+ *    （数据没丢，但存档列表里没了）。 */
 export function vaultDelete(save: SaveEntry, savesDir: string, days: number, nowMs: number,
                            owner: string, key: string): string {
   if (save.files.length === 0) {
@@ -199,7 +164,7 @@ export function vaultDelete(save: SaveEntry, savesDir: string, days: number, now
   const dir: string = VAULT_ROOT + '/' + id;
   const filesDst: string = dir + '/' + FILES_DIR;
 
-  /* [B] 同毫秒重名（理论上可能：连点两次）⇒ 直接拒绝，别覆盖别人的条目。 */
+  /* 同毫秒重名（理论上可能：连点两次）⇒ 直接拒绝，别覆盖别人的条目。 */
   if (pathExists(dir)) {
     return '垃圾站里已经有同名的条目，请稍后再试。';
   }
@@ -265,7 +230,7 @@ export function vaultDelete(save: SaveEntry, savesDir: string, days: number, now
   return '';
 }
 
-/** [A] 单个文件从 `src` 复制到 `dst`（必要时建 `dst` 的父目录）。 */
+/** 单个文件从 `src` 复制到 `dst`（必要时建 `dst` 的父目录）。 */
 function copyOneFile(src: string, dst: string, acc: TreeStat): void {
   const slash: number = dst.lastIndexOf('/');
   const parent: string = slash > 0 ? dst.substring(0, slash) : dst;
@@ -284,10 +249,8 @@ function copyOneFile(src: string, dst: string, acc: TreeStat): void {
   }
 }
 
-/* [A]
- * 写一个纯文本文件。成功返回 ''，失败返回一句给玩家看的话。
- * ⚠️ 与项目里别的写盘一样：**失败不抛**，调用方决定要不要当回事。
- */
+/* 写一个纯文本文件。成功返回 ''，失败返回一句给玩家看的话。
+ * ⚠️ 与项目里别的写盘一样：**失败不抛**，调用方决定要不要当回事。 */
 function writeText(path: string, body: string): string {
   try {
     const f: fs.File = fs.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
@@ -303,7 +266,7 @@ function writeText(path: string, body: string): string {
   }
 }
 
-/** [B] 列出垃圾站里所有条目，新的在前。目录不在 ⇒ 空数组（不是错误）。 */
+/** 列出垃圾站里所有条目，新的在前。目录不在 ⇒ 空数组（不是错误）。 */
 export function listVault(): VaultEntry[] {
   const out: VaultEntry[] = [];
   for (const id of listFiles(VAULT_ROOT)) {
@@ -315,7 +278,7 @@ export function listVault(): VaultEntry[] {
     try {
       text = fs.readTextSync(dir + '/' + META_NAME);
     } catch (e) {
-      /* [B] 没有 meta 的目录**不当成条目** —— 那是垃圾站弄坏了的残留，
+      /* 没有 meta 的目录**不当成条目** —— 那是垃圾站弄坏了的残留，
        * 列出来会让玩家以为里面还有东西，而「放回」根本不知道往哪放。 */
       hilog.warn(DOMAIN, TAG, 'vault: %{public}s has no meta, skipped', id);
       continue;
@@ -344,13 +307,13 @@ export function listVault(): VaultEntry[] {
   return out;
 }
 
-/** [B] 解析一个可能是空串/垃圾的数字。⛔ 不抛 —— meta.txt 是玩家能碰到的文件。 */
+/** 解析一个可能是空串/垃圾的数字。⛔ 不抛 —— meta.txt 是玩家能碰到的文件。 */
 function numberOrZero(s: string): number {
   const v: number = Number.parseInt(s, 10);
   return Number.isNaN(v) ? 0 : v;
 }
 
-/** [B] 名字是个目录吗。 */
+/** 名字是个目录吗。 */
 function isDirName(path: string): boolean {
   try {
     return fs.statSync(path).isDirectory();
@@ -359,19 +322,14 @@ function isDirName(path: string): boolean {
   }
 }
 
-/* [A]
- * 把一个条目**放回**它来的那个 `saves/` 目录。返回 '' 或一句给玩家看的话。
- *
- * ⛔⛔ **目标已有同名文件就整体拒绝**，不覆盖、也不跳过那一个。
- *    理由：放回的目的是**撤销一次删除**。若目标里已经有同名文件，
- *    那说明玩家在那之后又玩过（游戏自己存了新档）—— 覆盖它等于**又删了一次东西**，
- *    而这次是他没要求删的。跳过那个文件则会得到一个**半个存档**，更难看出来。
- *    ⇒ 拒绝，并把**撞上的文件名**报出来，让玩家自己决定。
- */
+/* 把一个条目**放回**它来的那个 `saves/` 目录。返回 '' 或一句给玩家看的话。
+ * ⛔⛔ **目标已有同名文件就整体拒绝**，不覆盖也不跳过那一个：放回的目的是**撤销一次删除**，
+ * 目标已有同名文件说明玩家之后又玩过（游戏自己存了新档）—— 覆盖等于**又删了一次东西**，
+ * 而跳过那个文件则会得到一个**半个存档**。⇒ 拒绝并把**撞上的文件名**报出来，让玩家自己决定。 */
 export function vaultRestore(entry: VaultEntry, fallbackDir: string): string {
   const dir: string = VAULT_ROOT + '/' + entry.id;
-  /* [B] meta 里记着它原来在哪个目录；记着那个目录已经不在了（比如整个版本被删了），
-   * 就退到调用方给的当前版本目录 —— 总比放不回去强，但要在界面里说出来。 */
+  /* meta 里记着它原来在哪个目录；那个目录已经不在了（比如整个版本被删了）就退到调用方给的
+   * 当前版本目录 —— 总比放不回去强，但要在界面里说出来。 */
   let dst: string = entry.from;
   if (!pathExists(dst)) {
     dst = fallbackDir;
@@ -412,7 +370,7 @@ export function vaultRestore(entry: VaultEntry, fallbackDir: string): string {
     return '没能放回：' + cp.firstError;
   }
 
-  /* [B] 放回成功后**把条目本身删掉** —— 否则它会一直在垃圾站里，
+  /* 放回成功后**把条目本身删掉** —— 否则它会一直在垃圾站里，
    * 直到到期再「删」一份已经不在那儿的数据（无害，但会让垃圾站里的数字骗人）。 */
   const rm: TreeStat = newTreeStat();
   removeTree(dir, 0, rm);
@@ -421,7 +379,7 @@ export function vaultRestore(entry: VaultEntry, fallbackDir: string): string {
   return '';
 }
 
-/** [B] 彻底删掉一个条目。返回 '' 或一句话。 */
+/** 彻底删掉一个条目。返回 '' 或一句话。 */
 export function vaultPurge(entryId: string): string {
   const dir: string = VAULT_ROOT + '/' + entryId;
   if (!pathExists(dir)) {
@@ -437,15 +395,10 @@ export function vaultPurge(entryId: string): string {
   return '';
 }
 
-/* [A]
- * 归档 / 取消归档。
- *
- * ⭐ 归档的含义（用户 2026-10-02 定）：**不自动清理**，只能手动删或放回。
- *    ⇒ 实现上就是把 `archived` 置 1、并把 `expires` 写成 **0**。
- *    ⚠️ 取消归档时**重新起算**保留期（而不是恢复原来的到期时刻）——
- *      那个时刻可能早就过去了，恢复它等于一取消就被清掉。
- *      ⚠️ 需要调用方把「现在」和「保留天数」传进来，因为这个模块不读设置。
- */
+/* 归档 / 取消归档。⭐ 归档的含义（用户 2026-10-02 定）：**不自动清理**，只能手动删或放回
+ * ⇒ 实现上就是把 `archived` 置 1、把 `expires` 写成 **0**。
+ * ⚠️ 取消归档时**重新起算**保留期（而非恢复原到期时刻）—— 那个时刻可能早就过去了。
+ * ⚠️ 需要调用方把「现在」和「保留天数」传进来，因为这个模块不读设置。 */
 export function vaultSetArchived(entryId: string, archived: boolean, days: number,
                                  nowMs: number): string {
   const dir: string = VAULT_ROOT + '/' + entryId;
@@ -476,13 +429,9 @@ export function vaultSetArchived(entryId: string, archived: boolean, days: numbe
   return '';
 }
 
-/* [A]
- * 清掉到期的条目。返回**清掉几个**。
- *
- * ⚠️ 在哪里调：打开垃圾站时、以及每次 `refresh()`。⛔ 它不该在渲染路径上跑 ——
- *    那会每帧都去扫一遍目录。
- * ⭐ 归档的（`archived=1`，或 `expires=0`）**永不**在这里被清掉。
- */
+/* 清掉到期的条目。返回**清掉几个**。
+ * ⚠️ 在哪里调：打开垃圾站时、以及每次 `refresh()`。⛔ 它不该在渲染路径上跑 —— 那会每帧都扫目录。
+ * ⭐ 归档的（`archived=1`，或 `expires=0`）**永不**在这里被清掉。 */
 export function purgeExpired(nowMs: number): number {
   let n: number = 0;
   for (const e of listVault()) {
@@ -508,7 +457,7 @@ export function purgeExpired(nowMs: number): number {
  * 给界面用的格式化
  * ==================================================================== */
 
-/** [B] 「还有 N 天到期」/「已归档，不会自动清理」。 */
+/** 「还有 N 天到期」/「已归档，不会自动清理」。 */
 export function describeExpiry(e: VaultEntry, nowMs: number): string {
   if (e.archived || e.expiresMs === 0) {
     return '已归档，不会自动清理';
@@ -521,7 +470,7 @@ export function describeExpiry(e: VaultEntry, nowMs: number): string {
   return days <= 1 ? '不到 1 天后清理' : ('还有 ' + String(days) + ' 天清理');
 }
 
-/** [B] Unix 毫秒 -> `YYYY-MM-DD HH:MM`。 */
+/** Unix 毫秒 -> `YYYY-MM-DD HH:MM`。 */
 export function formatMs(ms: number): string {
   const d: Date = new Date(ms);
   const p = (n: number): string => n < 10 ? '0' + String(n) : String(n);

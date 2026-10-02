@@ -1,28 +1,11 @@
-/* [A]
- * 读出一个 Mindustry jar 自带的版本号，给启动器的列表显示。
- *
- * 为什么需要一个 native 模块，而不是在 ArkTS 里用 @ohos.zlib
- *   版本号在 jar 根目录的 `version.properties` 里，而它在 ZIP 里是 **raw deflate**
- *   存的。【实测】@ohos.zlib 暴露的是 `inflateInit`（zlib 格式：2 字节头 + adler32），
- *   而 ZIP 条目是**没有那层头**的裸流 —— 而且在 ArkTS 侧没有 `inflateInit2(-15)`。
- *   硬凑要么改那 127 个字节（脏），要么自己写 deflate 解码器（不值得）。
- *
- *   ⭐ 而 NDK 的 sysroot 里**就有 libz**：
- *       openharmony/native/sysroot/usr/lib/aarch64-linux-ohos/libz.so
- *   ⇒ 用真正的 zlib，`inflateInit2(-MAX_WBITS)` 一行就够，毫秒级，且**不写任何临时文件**。
- *   （另一条路是整包解压 85 MB 再从里面挑一个文件 —— 一次几秒、还要来回搬 170 MB。
- *     不做。）
- *
- * ⚠️⚠️ 这里解析的是【玩家自己下载的文件】，属于不可信输入。
- *    每一个从文件里读出来的偏移和长度，都必须先对着文件大小校验过再使用。
- *    一份损坏或刻意构造的 jar 绝不能造成越界读 —— 宁可返回空串。
- *
- * ⚠️ 失败一律返回【空串】，不抛、不崩。「读不出这是哪个版本」是信息缺失，
- *    不是错误：那个 jar 照样能被选中、照样能启动。
- *
- * 为什么不用 Java 的 java.util.zip.ZipFile（它显然是干这个的标准工具）
- *   那一刻 JVM 还没建起来 —— 启动器界面是【在】游戏树之前显示的，而版本号正是
- *   要在那时显示出来。JVM 起来之后的权威答案由另一条路补（见路线图短期 18 的 C 路线）。
+/* 读出一个 Mindustry jar 自带的版本号，给启动器的列表显示。
+ * 版本号在 jar 的 `version.properties` 里，ZIP 中为 **raw deflate**：@ohos.zlib 只有
+ * `inflateInit`（zlib 头 + adler32），ArkTS 侧没有 `inflateInit2(-15)`；而 NDK sysroot 里就有
+ * libz（openharmony/native/sysroot/usr/lib/aarch64-linux-ohos/libz.so）⇒ 用真 zlib 的
+ * `inflateInit2(-MAX_WBITS)` 一行搞定，毫秒级、不写任何临时文件。
+ * 不用 java.util.zip.ZipFile：那一刻 JVM 还没建起来，而版本号要在启动器界面（游戏树之前）显示。
+ * ⚠️ 输入是【玩家自己下载的文件】：每个从文件读出的偏移和长度都要先对文件大小校验过再使用；
+ *    失败一律返回【空串】，不抛不崩 —— 那个 jar 照样能被选中、照样能启动。
  */
 
 #include <stdio.h>
@@ -44,16 +27,10 @@
 
 #define WANT_ENTRY    "version.properties"
 
-/* [A]
- * 单个条目允许的最大压缩长度。
- *
- * ⚠️ 这是一个【安全】上限，不是性能优化：csize 是从文件里读出来的 32 位字段，
- *    一份刻意构造的 jar 可以声称某个条目有 4 GB。没有这条限制，下面那次 malloc
- *    就会被那份文件牵着走 —— 在设备上表现为整机卡住，而不是干净地失败。
- *
- * ⚠️ 真值远小于它：version.properties 实测压缩后 127 字节。64 KB 是「任何合理的
- *    版本文件都放得下、但撑不出任何伤害」的量级。
- */
+/* 单个条目允许的最大压缩长度。
+ * ⚠️ 【安全】上限，不是性能优化：csize 是从文件里读出的 32 位字段，构造的 jar 可声称
+ *    某个条目有 4 GB，没有它下面那次 malloc 会被文件牵着走（整机卡住，而非干净失败）。
+ * ⚠️ 真值远小于它：version.properties 实测压缩后 127 字节。 */
 #define MAX_ENTRY     65536
 
 static uint16_t rd16(const unsigned char *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
@@ -71,18 +48,12 @@ static int read_at(FILE *f, long off, void *buf, size_t n)
     return fread(buf, 1, n, f) == n;
 }
 
-/* [A]
- * 这一层**不解析**，只把 version.properties 的原文交出去。
- *
- * ⚠️ 拼装（`v8 Build 160.5`）留给 ArkTS：显示格式是会变的，而改显示不该需要动 C
- *    再重新编译一个 .so。这里唯一的职责是「把字节从 ZIP 里拿出来」。
- *
- * ⚠️ 交给 ArkTS 之后，解析那一侧有个坑要记住：文件里同时有 `build=` 和 `buildDate=`。
- *    用「这一行是否以 build= 开头」判断才不会先命中 buildDate —— 见 GameLibrary.ets。
- */
+/* 这一层**不解析**，只把 version.properties 的原文交给 ArkTS：显示格式会变，
+ * 而改显示不该需要动 C 再重编译一个 .so。
+ * ⚠️ 解析那侧有个坑：文件里同时有 `build=` 和 `buildDate=`，
+ *    得用「这一行是否以 build= 开头」判断才不会先命中 buildDate —— 见 GameLibrary.ets。 */
 
-/* [A] 在中央目录里找 version.properties，返回它的（压缩方式, 压缩长度, 本地头偏移）。
- *     找到返回 1，否则 0。 */
+/* 在中央目录里找 version.properties，返回（压缩方式, 压缩长度, 本地头偏移）；找到返回 1，否则 0。 */
 static int find_entry(FILE *f, long cd_off, long cd_size, long file_size,
                       size_t *method, size_t *csize, long *lho)
 {
@@ -119,7 +90,7 @@ static int find_entry(FILE *f, long cd_off, long cd_size, long file_size,
     return 0;
 }
 
-/* [A] 返回 1 且把文本写进 out；任何一步不对就返回 0。 */
+/* 返回 1 且把文本写进 out；任何一步不对就返回 0。 */
 static int read_entry_text(FILE *f, long file_size, size_t method, size_t csize,
                            long lho, char *out, size_t outsz)
 {
@@ -136,15 +107,9 @@ static int read_entry_text(FILE *f, long file_size, size_t method, size_t csize,
     size_t lext  = rd16(lf + 28);
     long data = lho + LF_FIXED + (long)lname + (long)lext;
 
-    /* [A]
-     * ⚠️⚠️ 这里【必须】分成两个条件写，不能写成 `(size_t)(file_size - data) < csize`。
-     *
-     *    那个写法有一个只在畸形文件上出现的洞：data 是 long，若它大于 file_size，
-     *    `file_size - data` 是**负数**，转成 size_t 会变成一个极大的正数，
-     *    于是那个看似严格的比较**恰好放行**了最该拦下的情况，紧接着就是一次越界读。
-     *
-     *    ⇒ 先证明 data 落在文件内，再谈它后面还剩多少。
-     */
+    /* ⚠️⚠️ 【必须】分成两个条件写，不能写成 `(size_t)(file_size - data) < csize`：
+     *    data 是 long，若大于 file_size，`file_size - data` 是负数，转 size_t 变成极大正数 ⇒
+     *    那个看似严格的比较恰好放行最该拦下的情况，紧接着就是一次越界读。 */
     if (data <= 0 || data > file_size) return 0;
     if ((long)csize > file_size - data) return 0;
 
@@ -186,7 +151,7 @@ static int read_entry_text(FILE *f, long file_size, size_t method, size_t csize,
     return ok;
 }
 
-/* [A] 入口。path 是 jar 的绝对路径；读不出返回空串。 */
+/* 入口。path 是 jar 的绝对路径；读不出返回空串。 */
 static char *jar_version_text(const char *path)
 {
     static char result[1024];
@@ -222,7 +187,7 @@ static char *jar_version_text(const char *path)
     char text[1024];
     if (find_entry(f, cd_off, cd_size, file_size, &method, &csize, &lho)
         && read_entry_text(f, file_size, method, csize, lho, text, sizeof(text))) {
-        /* [B] 已经用 '\0' 结尾过；strncpy 会把结尾丢掉，所以逐字节限长拷。 */
+        /* 已经用 '\0' 结尾过；strncpy 会把结尾丢掉，所以逐字节限长拷。 */
         memcpy(result, text, sizeof(result) - 1);
         result[sizeof(result) - 1] = '\0';
     }

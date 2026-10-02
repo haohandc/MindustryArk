@@ -1,23 +1,9 @@
-/* [A]
- * 把一组存档在**版本之间**搬，或在**同一个版本里**复制一份。
+/* 把一组存档在**版本之间**搬，或在**同一个版本里**复制一份。
  *
- * 用户 2026-10-02：复制与移动**两者都要**。
- *
- * ⛔⛔ **一条硬约束决定了「同版本复制」只对【手动存档】开放。**
- *
- *   存档的归属是靠**文件名**推的（`sector-<星球>-<区块 id>.msav`），而游戏自己
- *   还按**内容**里的 `rules.sector` 认归属。同一份区块文件出现两次时，游戏有这句：
- *
- *       `-Sector @ has two corresponding saves: @ and @`
- *       （反编译 `mindustry.game.Saves` 的字符串常量，见路线图 §19.3）
- *
- *   ⇒ 把 `sector-serpulo-142.msav` 复制成 `sector-serpulo-142-copy.msav`，
- *     就是**亲手造出**那句警告描述的状态：一个区块两份存档。
- *     ⚠️ 而手动存档（`0.msav` 这种）没有这个牵连 —— 它不绑定任何区块，
- *     多一个就是多一个手动存档。
- *
- *   ⭐ 所以界面上的规则是：**同版本复制只给手动存档**；战役存档只能跨版本搬
- *     （那边不产生「同一版本里两份」）。⛔ 这不是省事，是让游戏别踩它自己的断言。
+ * ⛔ 同版本复制只给**手动存档**：战役存档按文件名（`sector-<星球>-<区块>.msav`）
+ *    和内容里的 `rules.sector` 认归属，复制一份就造出了游戏自己那句警告
+ *    `-Sector @ has two corresponding saves: @ and @`（反编译 `mindustry.game.Saves`）。
+ *    手动存档不绑定区块，多一个就是多一个。
  */
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -28,27 +14,23 @@ import { removeTree, newTreeStat, TreeStat, pathExists, listFiles } from '../uti
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
 
-/** [B] 同版本复制时新名字的后缀。`0` -> `0-copy`（被占就 `0-copy2`…）。 */
+/** 同版本复制的新名字后缀：`0` -> `0-copy`（被占就 `0-copy2`…）。 */
 const COPY_SUFFIX = '-copy';
 
-/** [B] 一次转移的结果：'' 表示成功，否则是一句给玩家看的话。 */
+/** 一次转移的结果：'' 成功，否则是一句给玩家看的话。 */
 export function transferNote(err: string): string {
   return err;
 }
 
-/** [B] 某组的文件里，除了基名之外剩下的那截（`.msav` / `.msav-backup.msav`）。 */
+/** 文件名里除基名外剩下的那截（`.msav` / `.msav-backup.msav`）。 */
 function suffixOf(n: string): string {
   const base: string = saveBaseName(n);
   return n.length > base.length ? n.substring(base.length) : '';
 }
 
-/* [A]
- * 在 `savesDir` 里挑一个没被占用的基名：`<base>-copy`、`<base>-copy2`、`<base>-copy3`…
- *
- * ⚠️ 只检查**本体**会不会撞（`<候选>.msav` 和它的 `-backup`）。
- *    万一某个 `-backup` 单独存在（本体没了），这里会选到一个已有备份的名字 ——
- *    那种目录本身就是坏的，而复制进去只会让它更坏。⇒ 调用方另有冲突检查兜底。
- */
+/* 挑一个没被占的基名：`<base>-copy`、`-copy2`…（本体与它的 `-backup` 都查）。
+ * ⚠️ 单独存在的 `-backup` 会让这里选到一个已占的名字 —— 那种目录本身就是坏的，
+ *    调用方另有冲突检查兜底。 */
 export function uniqueCopyBase(savesDir: string, base: string): string {
   for (let i = 1; i < 100; i++) {
     const cand: string = base + COPY_SUFFIX + (i === 1 ? '' : String(i));
@@ -57,18 +39,13 @@ export function uniqueCopyBase(savesDir: string, base: string): string {
       return cand;
     }
   }
-  /* [B] 一百个副本都没位置了 —— 不是现实情况，但总要给个结果。 */
+  /* 一百个副本都没位置了 —— 不是现实情况，但总要给个结果。 */
   return base + COPY_SUFFIX + String(Date.now());
 }
 
-/* [A]
- * 复制一组文件。`names` 是**源目录里的文件名**，`rename` 给出目标文件名（同版本复制用）。
- *
- * ⚠️ 任何一个目标名已存在 ⇒ **整体拒绝**并报出名字，⛔ 不覆盖也不跳过：
- *    · 覆盖 = 把目标那边已有的进度删掉，而玩家没说删
- *    · 跳过 = 得到一个**半个存档**，比覆盖更难发现
- *    （同一条理由在垃圾站的「放回」上也用着。）
- */
+/* 复制一组文件；`rename` 时目标名由 uniqueCopyBase 给。
+ * ⚠️ 任一目标名已存在 ⇒ **整体拒绝**并报出名字，⛔ 不覆盖也不跳过
+ *    （覆盖 = 删掉玩家没说删的东西；跳过 = 半个存档，更难发现）。 */
 function copyGroup(srcDir: string, dstDir: string, names: string[],
                    rename: boolean, savesDirForNames: string): string {
   const pairs: string[][] = [];
@@ -81,14 +58,11 @@ function copyGroup(srcDir: string, dstDir: string, names: string[],
     }
   }
   if (conflicts.length > 0) {
-    /* [A] ⚠️ 结尾**不带**「没有动任何东西」这类话（用户 2026-10-02：「这个删了不要」）。
-     * ⭐ 理由：那一句是**我们的辩解**，不是玩家要的信息 —— 他要的是「哪几个文件名撞了」。
-     *    而且「没动任何东西」这件事**已经由行为本身表达了**：一次都没成功的复制
-     *    本来就不会改任何东西；写出来只会让一句话变成两句。
-     * ⛔ 同理别再往这类消息后面补「所以你可以放心」之类的解释。 */
+    /* ⚠️ 结尾不写「没有动任何东西」这类话 —— 那是我们的辩解，不是玩家要的信息
+     * （他要的是哪几个名字撞了），而且行为本身已经表达了它。 */
     return '目标里已经有同名的文件（' + conflicts.join('、') + '）';
   }
-  /* [B] 目标目录可能整棵都不在（那个版本从没启动过）⇒ 自己建。 */
+  /* 目标目录可能整棵都不在（那个版本从没启动过）⇒ 自己建。 */
   try {
     if (!pathExists(dstDir)) {
       fs.mkdirSync(dstDir, true);
@@ -105,7 +79,7 @@ function copyGroup(srcDir: string, dstDir: string, names: string[],
       done += 1;
     } catch (e) {
       const err = e as BusinessError;
-      /* [A] 复制到一半失败 ⇒ **回滚**已复制过去的那几个，再把话说明白。
+      /* 复制到一半失败 ⇒ 回滚，再把话说明白。
        * ⛔ 留一半在目标里是最坏的结果：玩家会以为搬成功了。 */
       for (const q of pairs) {
         if (pathExists(dstDir + '/' + q[1])) {
@@ -121,7 +95,7 @@ function copyGroup(srcDir: string, dstDir: string, names: string[],
   return '';
 }
 
-/** [A] 复制（**源不动**）。`names` 用源目录里的名字，目标用同样的名字。 */
+/** 复制，源不动。 */
 export function copySaveTo(save: SaveEntry, fromDir: string, toDir: string): string {
   if (fromDir === toDir) {
     return '源和目标在同一个目录，没东西可搬。';
@@ -134,7 +108,7 @@ export function copySaveTo(save: SaveEntry, fromDir: string, toDir: string): str
   return r;
 }
 
-/** [A] 移动 = 复制成功后**删源**。⚠️ 顺序不能反，见 copyGroup 的说明。 */
+/** 移动 = 复制成功后删源。⚠️ 顺序不能反，见 copyGroup。 */
 export function moveSaveTo(save: SaveEntry, fromDir: string, toDir: string): string {
   if (fromDir === toDir) {
     return '源和目标在同一个目录，没东西可搬。';
@@ -164,17 +138,11 @@ export function moveSaveTo(save: SaveEntry, fromDir: string, toDir: string): str
   return '';
 }
 
-/* [A]
- * **同一个版本里**再复制一份（改名）。
+/* **同一个版本里**再复制一份（改名）。只允许手动存档（理由见文件头）。
  *
- * ⛔ 只允许**手动存档** —— 理由见本文件开头那条硬约束（战役存档会造出
- *    「一个区块两份存档」）。这里再挡一次：⛔ 界面挡、模块也挡，两层都要有。
- *
- * ⚠️⚠️ **一个必须告诉玩家的后果**：游戏的存档显示名**不在文件里**，而在
- *    `settings.bin` 的 `save-<索引>-name` 键上，而索引就是**文件名**。
- *    ⇒ 复制出来的那一份，游戏里会显示成 **`untitled`**，直到玩家在游戏里给它改名。
- *    ⭐ 这不是我们能修的（要从 ArkTS 写游戏的设置文件，很脆）——
- *      所以**界面必须说出来**，不能让他自己发现。
+ * ⚠️ 必须告诉玩家的后果：存档显示名不在文件里，而在 `settings.bin` 的
+ *    `save-<索引>-name` 上，索引就是**文件名** ⇒ 复制出来那份在游戏里显示成
+ *    **`untitled`**。这不是我们能修的，所以界面必须说出来。
  */
 export function duplicateSave(save: SaveEntry, savesDir: string): string {
   if (save.kind !== 'manual') {
@@ -189,10 +157,8 @@ export function duplicateSave(save: SaveEntry, savesDir: string): string {
   return r;
 }
 
-/* [A]
- * 目标版本那个 `saves/` 目录里现在有几个存档 —— 给界面写「目标会变成什么样」用。
- * ⚠️ 只数文件名（不解压），与列表那一步同一套口径。
- */
+/* 某个 `saves/` 里有几个存档 —— 给界面写「目标会变成什么样」用。
+ * ⚠️ 只数文件名、不解压，与列表那一步同一套口径。 */
 export function countSavesIn(savesDir: string): number {
   let n: number = 0;
   for (const f of listFiles(savesDir)) {
