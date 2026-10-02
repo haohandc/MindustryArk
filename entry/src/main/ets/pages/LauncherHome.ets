@@ -26,7 +26,7 @@
  *              不会触发自动反色）。
  *   · 表面色 -> $r('app.color.launcher_*')，在 resources/base 与 resources/dark 两处定义。
  *
- * ⭐⭐ 两条踩过的坑，改这个文件前先读：
+ * ⭐⭐⭐ 三条踩过的坑，改这个文件前先读：
  *   1. `.barOverlap(false)` 会让底部栏**不再悬浮** —— 悬浮观感就是靠它。
  *      官方示例 reference 项目 AMCL 也是 `barOverlap(true)`，并且他们的注释明说
  *      「旧 API 仍覆盖在全屏内容上，不退回挤占 TabContent 高度的布局」。
@@ -35,13 +35,31 @@
  *      之后，`this.selected` 变化**不会让那个 @Builder 重新执行** —— 结果是点击
  *      其实成功了（文件也写了、native 也读到了），但 ✓ 不动，看起来像「点了没反应」。
  *      ⇒ 列表项**内联**写，不要抽 @Builder。
+ *   3. ⛔⛔ **删掉一个 `import` 却漏了调用点，报出来的错会指向【完全无关的地方】。**
+ *      实测（2026-10-02）：我把 `computeKey` 从 import 里换成了 `resolveGameDirAndKey`，
+ *      却漏了 `applyIsolationCopy()` 里那一处调用，`computeKey` 就成了未定义的名字。
+ *      ArkTS 报的是 **177 处**错误，绝大多数是
+ *          「UI component 'Column'/'Text'/'Slider' cannot be used in this place」
+ *          「`this.SettingsTab()` does not meet UI component syntax」
+ *      指向的却是**几百行之外**、一个字都没改过的 `SettingsTab`。
+ *      ⭐ **真正的那条**只有一句、排在【整张表的最后】：
+ *          `Cannot find name 'computeKey'. Did you mean 'Computed'?`
+ *
+ *      ⇒ ⭐⭐ **判据：一个未解析的名字会让【整个文件】的语法分析失败**，
+ *        于是所有 UI 组件都「用错了地方」。**先看列表最后那几条**，别从第一条读起；
+ *        而「UI component 用错地方」这种话本身不构成任何线索，别去追它。
+ *
+ *      ⚠️ 另一半陷阱在**日志文件**里：`.hvigor/outputs/build-logs/build.log`
+ *         **是追加的**，里面混着**历次**构建的错误。按它去数错误会数到早就修好的旧错
+ *        （例如那个 `SaveLibrary.ets:265 Unterminated string literal`）。
+ *        ⇒ 判断「这一次」只信**命令当场打印的那几行**。
  */
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { SymbolGlyphModifier, uiMaterial } from '@kit.ArkUI';
 import { GameJar, GameResolution, listGameJars, readSelection, writeSelection,
          resolveGame, gameJarDir, ensureGameJarDir,
-         bundledGameVersion, hasBundledGame } from '../games/GameLibrary';
+         bundledGameVersion, hasBundledGame, bundledGamePath } from '../games/GameLibrary';
 /* [A] 界面偏好（内容宽度）。单独一个文件，因为它不是「游戏知识」——
  * 理由见那个文件的开头。 */
 import { readWidthPct, writeWidthPct, WIDTH_PCT_MIN, WIDTH_PCT_MAX,
@@ -53,10 +71,10 @@ import { readWidthPct, writeWidthPct, WIDTH_PCT_MIN, WIDTH_PCT_MAX,
 import { SaveEntry, listSaves, formatSaveSize, formatSaveDate,
          SaveMeta, readSaveMeta, newestFileOf } from '../games/SaveLibrary';
 import { GRANULARITY_OFF, GRANULARITY_NUMBER, GRANULARITY_BUILD, GRANULARITY_PATCH,
-         computeKey, readGranularity, writeGranularity,
+         readGranularity, writeGranularity,
          copyLiveDataInto, gameDataExists, liveGameDataDir,
          GameDataCounts, countsOf, describeCounts,
-         resolveGameDataDir } from '../settings/Isolation';
+         resolveGameDataDir, resolveGameDirAndKey, GameDirForKey } from '../settings/Isolation';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
@@ -67,6 +85,42 @@ const TAG = 'MindustryLauncher';
 interface MetaRow {
   label: string;
   value: string;
+}
+
+/** [B] 存档页的两种视图。 */
+const SAVES_VIEW_SAVE: string = 'save';
+const SAVES_VIEW_VERSION: string = 'version';
+
+/* [A]
+ * 「按版本」视图里的一项 —— 一个**可启动的游戏版本**。
+ *
+ * ⛔ 这里有个必须想清楚的区别：**「版本」不是「版本号」**。
+ *    两个 jar 完全可以是同一个版本号（用户 2026-10-02 就提过「同一个版本放两个 jar」
+ *    这种情形，我们当时决定不建议、但也不禁止）。⇒ 标识必须是 **jar 的路径**，
+ *    ⛔ 不能是版本号 —— 否则同一个版本号的两个 jar 会互相顶掉，列表里只剩一个。
+ *
+ * ⚠️ 也不要拿 `GameJar.version` 当身份：它是**给眼睛看的显示串**（`v8 Build 160.5`），
+ *    读不出来时还是空串。身份用 path，显示用 version —— 两者不许互换。
+ */
+interface VersionEntry {
+  /** [B] jar 的绝对路径。**同时是这一项的稳定标识**。 */
+  path: string;
+  /** [B] `'user'` 或 `'bundled'`。 */
+  source: string;
+  /** [B] 给玩家看的名字（内置那份是「内置游戏」，其余是文件名）。 */
+  label: string;
+  /** [B] 版本显示串，如 `v8 Build 160.5`；读不出时是空串。 */
+  version: string;
+  /** [B] 隔离键；`''` 表示不隔离 —— ⭐ 那意味着它和**所有**别的版本共用一份数据。 */
+  key: string;
+  /** [B] 这个版本启动时游戏会去读的数据目录。 */
+  dataDir: string;
+  /** [B] 是不是当前选中的那个版本。 */
+  isCurrent: boolean;
+  /** [B] 该目录下的存档个数（只数文件名，不解压）。 */
+  saveCount: number;
+  /** [B] 该目录**存在**吗。与「有几个存档」是两件事：不复制地打开隔离就是一个空目录。 */
+  hasData: boolean;
 }
 
 /** [B] Unix 毫秒 -> `YYYY-MM-DD HH:MM`。存档里的 `saved` 是毫秒，而列表用的 `mtime` 是秒。 */
@@ -401,8 +455,25 @@ export struct LauncherHome {
    *    `loadSelectedMeta()`：换目录/换页签后 id 常常没变，但那份存档已经换了。 */
   @State @Watch('onSaveSelected') selectedSave: string = '';
 
+
   /** [B] 这一屏读的是哪个 saves 目录 —— 显示出来，因为隔离会换目录。 */
   @State savesDirShown: string = '';
+
+  /* [A] 存档页当前是哪种视图。默认「按存档」——
+   * 那是玩家真正要操作的那一屏（删除/复制/移动/看数据都在这儿），
+   * 而「按版本」是拿来**理解隔离在干什么**的（哪个版本共用哪份数据）。
+   * ⚠️ 别把默认改成按版本：那样每次进存档页都得先切一次才够得着操作。 */
+  @State savesView: string = SAVES_VIEW_SAVE;
+
+  /* [B] 「按版本」视图里选中的那个版本的 **jar 路径**（'' 表示没选）。
+   * ⚠️ 带 `@Watch` —— 切版本要换右边那份存档名单（`versionSaves`）。 */
+  @State @Watch('onVersionSelected') selectedVersion: string = '';
+
+  /** [B] 已安装的版本（内置 ＋ 玩家导入的）。在 refresh() 里算一次，渲染只用它。 */
+  @State versions: VersionEntry[] = [];
+
+  /** [B] 选中的那个版本的数据目录里有哪些存档。切版本时读一次。 */
+  @State versionSaves: SaveEntry[] = [];
 
   /* [A]
    * 选中那个存档的元数据。
@@ -573,7 +644,9 @@ export struct LauncherHome {
   private applyIsolationCopy(): void {
     const g: string = this.pendingGranularity;
     const res: GameResolution = resolveGame(this.filesDir, this.bundleCodeDir);
-    const key: string = computeKey(g, res.source, res.path);
+    /* ⚠️ 用成对的那个函数，只取 `key` —— 目录这次用不上，但 `computeKey` 要读 jar，
+     * 分开调两次就会读两遍。见 Isolation.resolveGameDirAndKey 上的说明。 */
+    const key: string = resolveGameDirAndKey(g, res.source, res.path).key;
     if (key === '') {
       /* 一个可加载的游戏都没有 ⇒ 键是空的 ⇒ 隔离没有意义。不落盘、也不报错。 */
       this.isolationNote = '现在没有可加载的游戏，先选一个游戏版本再开隔离';
@@ -708,6 +781,22 @@ export struct LauncherHome {
     if (this.selectedSave !== '' && !this.saves.some((x: SaveEntry) => x.id === this.selectedSave)) {
       this.selectedSave = '';
     }
+    /* [A] ⚠️ 版本列表要在 `resolution` / `hasBundled` / `games` **都算好之后**才能建 ——
+     * 它三样都用（判定谁是「当前版本」、内置那份在不在、有哪些玩家 jar）。
+     * 而建它的那一步会**读每个 jar**（见 versionEntryOf 上的说明），所以整轮 refresh
+     * 只建一次，渲染只用结果。
+     *
+     * ⚠️ 顺序：必须在上面那个「清掉失效的 selectedSave」之后 —— 它可能把 selectedSave
+     * 清成 ''，而接着 loadSelectedMeta 要按最新的值去读。 */
+    this.versions = this.buildVersions();
+    /* [B] 选中的版本没了（jar 被删了）⇒ 退回当前版本，别让右边空着。
+     * ⚠️ 「当前版本」一定在这一批里（它要么是内置的、要么来自 games），所以这个兜底是可靠的。 */
+    if (this.selectedVersion === ''
+        || !this.versions.some((v: VersionEntry) => v.path === this.selectedVersion)) {
+      const cur: VersionEntry | undefined = this.versions.find((v: VersionEntry) => v.isCurrent);
+      this.selectedVersion = cur === undefined ? '' : cur.path;
+    }
+    this.loadVersionSaves();
     /* [A] ⚠️ 必须显式再读一次。`@Watch` 只在 id **真的变了**时才触发，而这里的
      * 常见情形恰恰是「id 没变、那份存档换了」—— 例如改了隔离粒度再回来：列表整份换掉，
      * 但选中的那个如果两边同名，id 就一模一样。那时右侧栏会**显示上一个目录的元数据**，
@@ -773,6 +862,248 @@ export struct LauncherHome {
   /** [A] `@Watch` 的落点。选中变了 ⇒ 去读那个存档的元数据。 */
   private onSaveSelected(): void {
     this.loadSelectedMeta();
+  }
+
+  /* ==================================================================
+   * 「按版本」视图
+   * ================================================================== */
+
+  /* [A]
+   * 造一个版本项。
+   *
+   * ⚠️ 它**读 jar**（`resolveGameDirAndKey` 里的 `computeKey` 最终会读
+   *    `version.properties`），所以只能从 `buildVersions()` 里调 ——
+   *    ⛔ 绝不能在渲染路径上调。渲染每帧都会跑，而这里每帧都会去开一次 jar。
+   */
+  private versionEntryOf(path: string, source: string,
+                         label: string, version: string): VersionEntry {
+    const rk: GameDirForKey = resolveGameDirAndKey(this.granularity, source, path);
+    return {
+      path: path,
+      source: source,
+      label: label,
+      version: version,
+      key: rk.key,
+      dataDir: rk.dir,
+      isCurrent: false,
+      saveCount: 0,
+      hasData: false,
+    };
+  }
+
+  /* [A]
+   * 列出已装的版本：**内置的排最前**，然后是玩家导入的。
+   *
+   * ⭐ 为什么内置第一：它永远在（我们跟着包一起发的），而且是「玩家什么都没选」时的落点。
+   *    放在最前，玩家扫一眼就知道「不折腾的话就是这一份」。
+   *
+   * ⚠️ 数存档那一步**按目录去重** —— 隔离关着时每个版本算出来的都是同一个目录，
+   *    不去重就会把同一个目录列 N 遍（N = 版本个数）。
+   */
+  private buildVersions(): VersionEntry[] {
+    const out: VersionEntry[] = [];
+    if (this.hasBundled) {
+      out.push(this.versionEntryOf(bundledGamePath(this.bundleCodeDir), 'bundled',
+                                   '内置游戏', this.bundledVer));
+    }
+    for (const g of this.games) {
+      out.push(this.versionEntryOf(g.path, 'user', g.name, g.version));
+    }
+    for (const v of out) {
+      v.isCurrent = (v.source === this.resolution.source && v.path === this.resolution.path);
+    }
+
+    /* [B] 一个目录只列一次。`Map` 而不是对象字面量 —— ArkTS 拒绝无类型对象字面量。 */
+    const counted: Map<string, number> = new Map<string, number>();
+    for (const v of out) {
+      let n: number | undefined = counted.get(v.dataDir);
+      if (n === undefined) {
+        n = listSaves(v.dataDir + '/saves').length;
+        counted.set(v.dataDir, n);
+      }
+      v.saveCount = n;
+      v.hasData = gameDataExists(v.dataDir);
+    }
+    /* [A] ⭐ 记一行「有几个版本、几个**不同的**数据目录」。
+     *
+     * ⭐ `distinct` 这个数是这一屏的**核心诊断**：它 > 1 才说明隔离真的把它们分开了，
+     *    = 1 就是「所有版本共用一份」（隔离关着，或者粒度太粗）。
+     * ⚠️ 玩家问「我换了版本怎么看不到存档了」时，第一个要看的就是这个数 ——
+     *    而它**不是** UI 上那个「N 个版本」（那个只数版本，说不出有没有分开）。
+     * ⚠️ 它只在 refresh() 里跑，不在渲染路径上 ⇒ 不会刷屏。 */
+    hilog.info(DOMAIN, TAG, 'saves: %{public}d version(s), %{public}d distinct data dir(s)',
+               out.length, counted.size);
+    return out;
+  }
+
+  /** [B] 当前选中的那个版本项；没选或它已经不在（jar 被删了）时 `undefined`。 */
+  private selectedVersionEntry(): VersionEntry | undefined {
+    if (this.selectedVersion === '') {
+      return undefined;
+    }
+    return this.versions.find((v: VersionEntry) => v.path === this.selectedVersion);
+  }
+
+  /* [A]
+   * 读选中版本的数据目录里有哪些存档。
+   *
+   * ⚠️ 这里**只列文件名**（`listSaves` 不读内容、不解压），所以它很便宜 ——
+   *    与选中存档时那次解压完全不是一回事。
+   *
+   * ⚠️⚠️ 它读的是**那个版本自己的**目录，而 `savesDirShown` 是**当前版本**的目录。
+   *    两者在「看的是别的版本」时**不一样**，所以这里绝不能借 `savesDirShown`。
+   *    同理，这个列表里**不做**任何元数据读取 —— `loadSelectedMeta()` 只认
+   *    `savesDirShown`，混着用就会读到另一个目录的元数据，而界面上看不出不对。
+   */
+  private loadVersionSaves(): void {
+    const v: VersionEntry | undefined = this.selectedVersionEntry();
+    if (v === undefined) {
+      this.versionSaves = [];
+      return;
+    }
+    this.versionSaves = listSaves(v.dataDir + '/saves');
+  }
+
+  /** [A] `@Watch` 的落点。切版本 ⇒ 换那一份存档名单。 */
+  private onVersionSelected(): void {
+    this.loadVersionSaves();
+  }
+
+  /** [B] 还有哪些版本**和它共用同一个数据目录**（不含它自己）。 */
+  private versionsSharingDir(dir: string, exceptPath: string): VersionEntry[] {
+    return this.versions.filter((v: VersionEntry) =>
+      v.dataDir === dir && v.path !== exceptPath);
+  }
+
+  /* [A]
+   * 「哪些版本能看到【当前这个存档】」。
+   *
+   * ⭐ 判据是**目录相等**，⛔ 不是比较版本号或存档里的 `build`。
+   *    理由：游戏按 `user.home` 选数据目录，而 `user.home` 由隔离键算出来
+   *    ⇒ **「谁看得到」是一个目录问题，不是兼容性问题。** 这是能确切回答的那个问题。
+   *    ⚠️ 而「这个存档能不能被某个版本**读**」是另一件事（要看模组与版本规则），
+   *    我们答不了，所以不在这儿答。
+   *
+   * ⚠️ 隔离关着时所有版本都指向同一个目录 ⇒ 这里自然是「全部」。那是**对的**，
+   *    不是 bug —— 它正是「不隔离」的含义。
+   */
+  private savesSeenByText(): string {
+    if (this.savesDirShown === '' || this.versions.length === 0) {
+      return '';
+    }
+    const seen: VersionEntry[] = this.versions.filter((v: VersionEntry) =>
+      (v.dataDir + '/saves') === this.savesDirShown);
+    if (seen.length === 0) {
+      /* [B] 理论上不该发生（当前版本必然指向这个目录）。真发生了就说出来，
+       * ⛔ 不要悄悄显示成「没有」—— 那会把一个内部矛盾伪装成一个正常结论。 */
+      return '没有版本指向这个目录（异常）';
+    }
+    if (seen.length === this.versions.length) {
+      return '全部 ' + String(seen.length) + ' 个版本';
+    }
+    const names: string[] = [];
+    for (const v of seen) {
+      names.push(v.label);
+    }
+    return names.join('、');
+  }
+
+  /** [B] 头部那一行：视图不同，它要说的事情不同。 */
+  private savesHeaderLine(): string {
+    if (this.savesView === SAVES_VIEW_VERSION) {
+      return this.versions.length === 0 ? '（没有可用的版本）'
+                                        : (String(this.versions.length) + ' 个版本');
+    }
+    return this.savesDirShown === '' ? '（还没读到目录）' : this.savesDirShown;
+  }
+
+  /* [A] 下面这些是给「按版本」那一屏的取值函数。
+   * ⚠️ 做成方法而**不是**在 `build()` 里声明局部变量 —— ArkUI 的 `build()` / `@Builder`
+   *    里不许声明本地变量，那些语句会被当成 UI 描述解析，编译报的是语法错。 */
+
+  /** [B] 版本列表项第二行里那截「N 个存档」。 */
+  private versionSavesLine(v: VersionEntry): string {
+    if (!v.hasData) {
+      return '还没有数据';
+    }
+    return v.saveCount === 0 ? '目录在，没有存档' : (String(v.saveCount) + ' 个存档');
+  }
+
+  /** [B] 选中版本的显示名；没选时空串。 */
+  private selectedVersionLabel(): string {
+    const v: VersionEntry | undefined = this.selectedVersionEntry();
+    return v === undefined ? '' : v.label;
+  }
+
+  /** [B] 选中版本的版本号行。 */
+  private selectedVersionLine(): string {
+    const v: VersionEntry | undefined = this.selectedVersionEntry();
+    if (v === undefined) {
+      return '';
+    }
+    const ver: string = v.version === '' ? '未知版本' : v.version;
+    return this.selectedVersionIsCurrent() ? (ver + '  ·  当前版本') : ver;
+  }
+
+  /** [B] 选中版本是不是当前正在使用的那个。 */
+  private selectedVersionIsCurrent(): boolean {
+    const v: VersionEntry | undefined = this.selectedVersionEntry();
+    return v === undefined ? false : v.isCurrent;
+  }
+
+  /** [B] 「这个目录里有 N 个存档」。 */
+  private selectedVersionDataLine(): string {
+    const v: VersionEntry | undefined = this.selectedVersionEntry();
+    if (v === undefined) {
+      return '';
+    }
+    if (!v.hasData) {
+      return '这个版本还没有数据目录 —— 启动过一次之后才会建出来。';
+    }
+    return v.saveCount === 0 ? '数据目录在，但里面还没有存档。'
+                             : ('这个目录里有 ' + String(v.saveCount) + ' 个存档。');
+  }
+
+  /** [B] 空名单时那句话：目录不在与目录空是两件事。 */
+  private selectedVersionHasDataText(): string {
+    const v: VersionEntry | undefined = this.selectedVersionEntry();
+    if (v === undefined || !v.hasData) {
+      return '还没有数据目录。';
+    }
+    return '还没有存档。';
+  }
+
+  /** [B] 选中版本的数据目录。 */
+  private selectedVersionDir(): string {
+    const v: VersionEntry | undefined = this.selectedVersionEntry();
+    return v === undefined ? '' : (v.dataDir + '/saves');
+  }
+
+  /* [A]
+   * 「还有谁共用这一份数据」。
+   *
+   * ⭐ 隔离**关着**时全部版本都会落进这一条（它们指向同一个目录）——
+   *    那不是缺陷，那正是「不隔离」的定义。所以措辞要**陈述**，不是警告。
+   * ⚠️ 隔离开着时也可能共用：粒度选「大版本」而两个 jar 是同一个大版本、
+   *    或者粒度选「构建号」而两个 jar 只是小版本不同 —— 这两句都要能自然读通。
+   */
+  private selectedVersionSharedText(): string {
+    const v: VersionEntry | undefined = this.selectedVersionEntry();
+    if (v === undefined) {
+      return '';
+    }
+    const shared: VersionEntry[] = this.versionsSharingDir(v.dataDir, v.path);
+    if (shared.length === 0) {
+      return '';
+    }
+    if (shared.length === this.versions.length - 1) {
+      return '它和其余 ' + String(shared.length) + ' 个版本共用同一份数据 —— 数据没有隔离。';
+    }
+    const names: string[] = [];
+    for (const s of shared) {
+      names.push(s.label);
+    }
+    return '它和这些版本共用同一份数据：' + names.join('、');
   }
 
   /* [A]
@@ -1157,48 +1488,121 @@ export struct LauncherHome {
           Text('存档')
             .fontSize(18).fontColor($r('sys.color.font_primary'))
           /* [B] 明确写出**在数哪个目录**。隔离一开一关，这个路径就换了 ——
-           * 而不写出来的话，玩家会以为存档丢了。 */
-          Text(this.savesDirShown === '' ? '（还没读到目录）' : this.savesDirShown)
+           * 而不写出来的话，玩家会以为存档丢了。
+           * ⚠️ 「按版本」视图下这一行改成版本个数：那时左边根本不是某一份存档目录，
+           *    继续写当前版本的 saves 路径会与屏幕上的内容对不上。 */
+          Text(this.savesHeaderLine())
             .fontSize(11).fontColor($r('sys.color.font_tertiary'))
             .margin({ top: 4 })
             .copyOption(CopyOptions.LocalDevice)
         }
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
+
+        /* [A]
+         * 视图切换：按存档 / 按版本。
+         *
+         * ⚠️ 形状**照抄设置页那组粒度选择**（一排 `Text` ＋ 切底色），⛔ 不新造组件。
+         *    理由有两条：一是项目里已经有一处这样写的，两处长得一样读起来才顺；
+         *    二是「分段控件」这种自带主题的组件，本项目为它付过代价 ——
+         *    `stateStyles` 那次编译期崩（`Node must have a real position`），
+         *    HdsTabs 那次发现 UI Design Kit 只在中国境内可用。⇒ 用最朴素的写法。
+         *
+         * ⚠️ 选中态用 `launcher_border` 做底（那是灰），文字换成 `font_primary`。
+         *    与设置页一致：**不给它一个手搓的强调色** —— 那两处迟早会分叉。
+         */
+        Row() {
+          Text('按存档')
+            .fontSize(13)
+            .fontColor(this.savesView === SAVES_VIEW_SAVE
+                       ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
+            .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+            .borderRadius(9)
+            .backgroundColor(this.savesView === SAVES_VIEW_SAVE
+                             ? $r('app.color.launcher_border') : $r('app.color.launcher_card'))
+            .onClick(() => { this.savesView = SAVES_VIEW_SAVE; })
+          Text('按版本')
+            .fontSize(13)
+            .fontColor(this.savesView === SAVES_VIEW_VERSION
+                       ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
+            .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+            .borderRadius(9)
+            .backgroundColor(this.savesView === SAVES_VIEW_VERSION
+                             ? $r('app.color.launcher_border') : $r('app.color.launcher_card'))
+            .margin({ left: 8 })
+            .onClick(() => { this.savesView = SAVES_VIEW_VERSION; })
+        }
+        .alignItems(VerticalAlign.Center)
+        .margin({ left: 12 })
       }
       .width(this.contentWidthVp())
       .padding({ left: 16, right: 16, top: 20 })
 
-      if (this.saves.length === 0) {
-        Column() {
-          Text('没有存档')
-            .fontSize(15).fontColor($r('sys.color.font_secondary'))
-          Text('进游戏玩一局，存档会出现在这里')
-            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-            .margin({ top: 8 })
-        }
-        .width(this.contentWidthVp())
-        .padding({ left: 16, right: 16, top: 40 })
-        .alignItems(HorizontalAlign.Start)
-      } else {
-        /* [A]
-         * 左列表 + 右详情。用户 2026-10-02 的布局：「左侧列表选择存档/版本，
-         * 右侧可以看到存档生效于哪个版本」，并要求左右**对称** —— 不管左边选的是什么，
-         * 右边永远是同一套「详情 + 对它可做的事」。
-         *
-         * ⚠️ 这一版右边只有一个动作「查看存档数据」。复制/移动/删除是后面几步，
-         *    它们加进同一处，⛔ **不需要动这里的左右分栏**。
-         *
-         * ⚠️ 两栏**等宽**（各 `layoutWeight(1)`），不按内容分：左边是存档名（短），
-         *    右边是版本/地图（也短），按内容分会让两栏随选中项不停挪位置。
-         *    等宽由**结构**保证，不需要给某个拍出来的数。
-         */
-        Row() {
-          Scroll() {
-            Row() {
-              Column() {
-                /* ⚠️ 列表项**内联**写，不抽 @Builder —— 那个坑见文件开头（@Builder 按值传递，
-                 *    `selected` 变了不会重跑，于是点上去看着像「没反应」）。 */
+      /* [A]
+       * 左列表 + 右详情。用户 2026-10-02 的布局：「左侧列表选择存档/版本，
+       * 右侧可以看到存档生效于哪个版本」，并要求左右**对称** —— 不管左边选的是什么，
+       * 右边永远是同一套「详情 + 对它可做的事」。
+       *
+       * ⚠️ 右边现在只有「查看存档数据」一个动作。复制/移动/删除是后面几步，
+       *    它们加进同一处，⛔ **不需要动这里的左右分栏**。
+       *
+       * ⚠️ 两栏**等宽**（各 `layoutWeight(1)`），不按内容分：左边是存档名（短），
+       *    右边是版本/地图（也短），按内容分会让两栏随选中项不停挪位置。
+       *    等宽由**结构**保证，不需要给某个拍出来的数。
+       *
+       * ⚠️ 两种视图共用这**同一个** `Row`，分支只在两栏**各自内部** ——
+       *    ⛔ 不要为了「按版本」再抄一份 Row 骨架：那样骨架的每一处修饰符
+       *    （`height` / `alignItems` / `layoutWeight`）都得改两遍，而漏掉任何一处，
+       *    症状都只在某一个视图下出现（列表居中那条就是这种错）。
+       */
+      Row() {
+        Scroll() {
+          Row() {
+            Column() {
+              if (this.savesView === SAVES_VIEW_VERSION) {
+                /* [A] 版本列表。⚠️ 列表项同样**内联**写 —— 见文件开头 @Builder 按值传递那条。 */
+                if (this.versions.length === 0) {
+                  Text('没有可用的游戏版本')
+                    .fontSize(14).fontColor($r('sys.color.font_secondary'))
+                    .margin({ top: 20 })
+                }
+                ForEach(this.versions, (v: VersionEntry) => {
+                  Row() {
+                    Column() {
+                      Text(v.label)
+                        .fontSize(15)
+                        .fontColor(this.selectedVersion === v.path
+                                   ? $r('sys.color.brand') : $r('sys.color.font_primary'))
+                        .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                      Text((v.version === '' ? '未知版本' : v.version)
+                           + '  ·  ' + this.versionSavesLine(v))
+                        .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                        .margin({ top: 4 })
+                        .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                    }
+                    .alignItems(HorizontalAlign.Start)
+                    .layoutWeight(1)
+
+                    if (this.selectedVersion === v.path) {
+                      Text('✓')
+                        .fontSize(16).fontColor($r('sys.color.brand'))
+                    }
+                  }
+                  .width('100%')
+                  .padding(14)
+                  .borderRadius(CARD_RADIUS_VP)
+                  .backgroundColor($r('app.color.launcher_card'))
+                  .margin({ bottom: 8 })
+                  .onClick(() => { this.selectedVersion = v.path; })
+                }, (v: VersionEntry) => v.path)
+              } else if (this.saves.length === 0) {
+                Text('没有存档')
+                  .fontSize(15).fontColor($r('sys.color.font_secondary'))
+                  .margin({ top: 20 })
+                Text('进游戏玩一局，存档会出现在这里')
+                  .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                  .margin({ top: 8 })
+              } else {
                 ForEach(this.saves, (sv: SaveEntry) => {
                   Row() {
                     Column() {
@@ -1228,96 +1632,190 @@ export struct LauncherHome {
                   .onClick(() => { this.selectedSave = sv.id; })
                 }, (sv: SaveEntry) => sv.id)
               }
-              .width('100%')
-              .padding({ left: 16, right: 8, top: 12 })
             }
-            /* [A] ⭐⭐ 这两行是「列表贴着顶部」的全部原因，而它们是从 GamesTab
-             * **抄过来的** —— 我第一版漏了，于是列表在竖直方向**居中**。
-             *
-             * ⚠️ 关键的是 `alignItems(VerticalAlign.Top)`：Row 的交叉轴默认是
-             *    `VerticalAlign.Center`，而 `height('100%')` 让它有整个视口那么高
-             *    ⇒ 内容就被摆在**中间**了。
-             * ⛔ 少了 height 则 Row 只是内容高，`VerticalAlign` 看不出差别 ——
-             *    **两行缺一不可**，而症状只在有 height 时才出现。 */
             .width('100%')
-            .height('100%')
-            .justifyContent(FlexAlign.Start)
-            .alignItems(VerticalAlign.Top)
+            .padding({ left: 16, right: 8, top: 12 })
           }
-          .layoutWeight(1)
+          /* [A] ⭐⭐ 这两行是「列表贴着顶部」的全部原因，而它们是从 GamesTab
+           * **抄过来的** —— 我第一版漏了，于是列表在竖直方向**居中**。
+           *
+           * ⚠️ 关键的是 `alignItems(VerticalAlign.Top)`：Row 的交叉轴默认是
+           *    `VerticalAlign.Center`，而 `height('100%')` 让它有整个视口那么高
+           *    ⇒ 内容就被摆在**中间**了。
+           * ⛔ 少了 height 则 Row 只是内容高，`VerticalAlign` 看不出差别 ——
+           *    **两行缺一不可**，而症状只在有 height 时才出现。 */
+          .width('100%')
           .height('100%')
-          .scrollBar(BarState.Off)
+          .justifyContent(FlexAlign.Start)
+          .alignItems(VerticalAlign.Top)
+        }
+        .layoutWeight(1)
+        .height('100%')
+        .scrollBar(BarState.Off)
 
-          /* [A]
-           * 右侧：这个存档的详情，以及**对它可做的事**。
-           *
-           * ⭐ 这里只放**选完就该看见**的几项（版本、地图、时间）；
-           *    完整的字段在「查看存档数据」弹窗里。两处**刻意不重复** ——
-           *    重复的话，将来加一个字段要改两个地方，而它们迟早会分叉。
-           *
-           * ⚠️ 读失败时（`selMetaNote` 非空）**只显示那句话**，不显示半截数据 ——
-           *    ⛔ 一个「读不出来」的存档如果看起来和正常存档一样（只是字段空着），
-           *    玩家会以为存档本身是空的。
-           */
-          Column() {
-            if (this.selectedSave === '') {
-              Text('从左边选一个存档')
+        /* [A]
+         * 右侧：详情，以及**对它可做的事**。
+         *
+         * ⭐ 「按存档」这边只放**选完就该看见**的几项（版本、地图、时间）；
+         *    完整的字段在「查看存档数据」弹窗里。两处**刻意不重复** ——
+         *    重复的话，将来加一个字段要改两个地方，而它们迟早会分叉。
+         *
+         * ⚠️ 读失败时（`selMetaNote` 非空）**只显示那句话**，不显示半截数据 ——
+         *    ⛔ 一个「读不出来」的存档如果看起来和正常存档一样（只是字段空着），
+         *    玩家会以为存档本身是空的。
+         *
+         * ⚠️ 「按版本」那边是**纯信息**，没有动作 —— 用户 2026-10-02 的规格里，
+         *    删除/复制/移动/查看数据这四个都挂在「点击存档」上，也就是「按存档」那一侧。
+         *    ⛔ 别在版本侧也放一份动作：那样同一个操作会有两个入口，
+         *    而它们对「操作的是哪个版本的哪份数据」的默认理解迟早会分叉。
+         */
+        Column() {
+          if (this.savesView === SAVES_VIEW_VERSION) {
+            if (this.selectedVersionEntry() === undefined) {
+              Text('从左边选一个版本')
                 .fontSize(13).fontColor($r('sys.color.font_tertiary'))
             } else {
-              Text(this.selectedSaveLabel())
+              Text(this.selectedVersionLabel())
                 .fontSize(16).fontColor($r('sys.color.font_primary'))
                 .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
-              Text(this.selectedSaveSummary())
+              Text(this.selectedVersionLine())
                 .fontSize(12).fontColor($r('sys.color.font_tertiary'))
                 .margin({ top: 6 })
-              Text(this.selectedSaveUpdated())
-                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-                .margin({ top: 4 })
 
               Divider()
                 .strokeWidth(1).color($r('app.color.launcher_border'))
                 .margin({ top: 14, bottom: 14 })
 
-              if (this.selMetaNote !== '') {
-                Text(this.selMetaNote)
-                  .fontSize(12).fontColor($r('sys.color.font_secondary'))
-              } else {
-                Text('写入时的游戏构建号')
-                  .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-                Text(rowValue(this.selMetaRows, '写入时的构建号') === ''
-                     ? '—' : rowValue(this.selMetaRows, '写入时的构建号'))
-                  .fontSize(22).fontColor($r('sys.color.font_primary'))
-                  .margin({ top: 2 })
+              Text(this.selectedVersionDataLine())
+                .fontSize(12).fontColor($r('sys.color.font_secondary'))
+              /* [B] 数据目录写出来 —— 这一屏的意义就是让「谁读哪一份数据」变得看得见。 */
+              Text(this.selectedVersionDir())
+                .fontSize(11).fontColor($r('sys.color.font_tertiary'))
+                .margin({ top: 4 })
+                .copyOption(CopyOptions.LocalDevice)
 
-                if (rowValue(this.selMetaRows, '地图') !== '') {
-                  Text('地图  ' + rowValue(this.selMetaRows, '地图'))
-                    .fontSize(12).fontColor($r('sys.color.font_secondary'))
-                    .margin({ top: 10 })
-                }
-                if (rowValue(this.selMetaRows, '保存时间') !== '') {
-                  Text('保存于  ' + rowValue(this.selMetaRows, '保存时间'))
-                    .fontSize(12).fontColor($r('sys.color.font_secondary'))
-                    .margin({ top: 4 })
-                }
+              /* [A] ⭐⭐ **这一句是「按版本」这一屏真正的价值。**
+               *   用户 2026-10-02 问的「哪个版本可以用这个存档」，在机制上的真答案是
+               *   「谁的 `user.home` 指向同一个目录，谁就看得见」。
+               *   ⚠️ 隔离**关着**时全部版本指向同一份 ⇒ 这句话会写成「全部 N 个版本」，
+               *   而那不是 bug，那正是「不隔离」的含义 —— 说出来，玩家才看得懂隔离在干什么。 */
+              if (this.selectedVersionSharedText() !== '') {
+                Text(this.selectedVersionSharedText())
+                  .fontSize(11).fontColor($r('sys.color.font_tertiary'))
+                  .margin({ top: 10 })
               }
 
-              Button('查看存档数据')
-                .fontSize(14)
-                .width('60%').alignSelf(ItemAlign.Start)
-                .margin({ top: 18 })
-                .onClick(() => { this.openSaveMeta(); })
+              if (!this.selectedVersionIsCurrent()) {
+                /* [B] 说的是**怎么去操作**，不是「不行」—— 门要能开。
+                 * 存档页的四个动作只作用于**当前版本**的数据（那是游戏实际会读的那份）。 */
+                Text('这还不是当前版本。要操作这份数据，先在「首页」把它切过去。')
+                  .fontSize(11).fontColor($r('sys.color.font_tertiary'))
+                  .margin({ top: 10 })
+              }
+
+              Divider()
+                .strokeWidth(1).color($r('app.color.launcher_border'))
+                .margin({ top: 14, bottom: 14 })
+
+              Text('这个目录里的存档')
+                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+
+              Scroll() {
+                Column() {
+                  if (this.versionSaves.length === 0) {
+                    Text(this.selectedVersionHasDataText())
+                      .fontSize(12).fontColor($r('sys.color.font_secondary'))
+                      .margin({ top: 8 })
+                  }
+                  ForEach(this.versionSaves, (sv: SaveEntry) => {
+                    Text(sv.label + '   ·   ' + formatSaveSize(sv.bytes)
+                         + '   ·   ' + formatSaveDate(sv.mtime))
+                      .fontSize(12).fontColor($r('sys.color.font_secondary'))
+                      .width('100%')
+                      .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                      .margin({ top: 6 })
+                  }, (sv: SaveEntry) => sv.id)
+                }
+                .width('100%')
+              }
+              .width('100%')
+              .layoutWeight(1)
+              .align(Alignment.TopStart)
+              .scrollBar(BarState.Off)
             }
+          } else if (this.selectedSave === '') {
+            Text(this.saves.length === 0 ? '还没有存档' : '从左边选一个存档')
+              .fontSize(13).fontColor($r('sys.color.font_tertiary'))
+          } else {
+            Text(this.selectedSaveLabel())
+              .fontSize(16).fontColor($r('sys.color.font_primary'))
+              .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
+            Text(this.selectedSaveSummary())
+              .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+              .margin({ top: 6 })
+            Text(this.selectedSaveUpdated())
+              .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+              .margin({ top: 4 })
+
+            Divider()
+              .strokeWidth(1).color($r('app.color.launcher_border'))
+              .margin({ top: 14, bottom: 14 })
+
+            if (this.selMetaNote !== '') {
+              Text(this.selMetaNote)
+                .fontSize(12).fontColor($r('sys.color.font_secondary'))
+            } else {
+              Text('写入时的游戏构建号')
+                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+              Text(rowValue(this.selMetaRows, '写入时的构建号') === ''
+                   ? '—' : rowValue(this.selMetaRows, '写入时的构建号'))
+                .fontSize(22).fontColor($r('sys.color.font_primary'))
+                .margin({ top: 2 })
+
+              if (rowValue(this.selMetaRows, '地图') !== '') {
+                Text('地图  ' + rowValue(this.selMetaRows, '地图'))
+                  .fontSize(12).fontColor($r('sys.color.font_secondary'))
+                  .margin({ top: 10 })
+              }
+              if (rowValue(this.selMetaRows, '保存时间') !== '') {
+                Text('保存于  ' + rowValue(this.selMetaRows, '保存时间'))
+                  .fontSize(12).fontColor($r('sys.color.font_secondary'))
+                  .margin({ top: 4 })
+              }
+            }
+
+            /* [A] ⭐ 用户 2026-10-02 要的就是这一行：「右侧可以看到存档生效于哪个版本
+             * （哪个版本可以用这个存档）」。
+             *
+             * ⭐ 答的是**目录**层面的问题（谁的 user.home 指向这里），
+             *    那是能确切回答的那个；⛔ 不是「这个存档能被哪些版本读」——
+             *    那个还要看模组与版本迁移规则，我们答不了，所以不在这儿答。
+             *    存档自己的 `build` 就在上面那行，两件事分开摆着。 */
+            if (this.savesSeenByText() !== '') {
+              Text('这个存档对哪些版本可见')
+                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                .margin({ top: 12 })
+              Text(this.savesSeenByText())
+                .fontSize(12).fontColor($r('sys.color.font_secondary'))
+                .margin({ top: 2 })
+            }
+
+            Button('查看存档数据')
+              .fontSize(14)
+              .width('60%').alignSelf(ItemAlign.Start)
+              .margin({ top: 18 })
+              .onClick(() => { this.openSaveMeta(); })
           }
-          .layoutWeight(1)
-          .height('100%')
-          .padding({ left: 8, right: 16, top: 12 })
-          .alignItems(HorizontalAlign.Start)
         }
-        .width(this.contentWidthVp())
-        .height('100%')
         .layoutWeight(1)
-        .alignItems(VerticalAlign.Top)
+        .height('100%')
+        .padding({ left: 8, right: 16, top: 12 })
+        .alignItems(HorizontalAlign.Start)
       }
+      .width(this.contentWidthVp())
+      .height('100%')
+      .layoutWeight(1)
+      .alignItems(VerticalAlign.Top)
 
       /* [B] 与悬浮底栏之间的留白。见 BAR_CLEARANCE_VP。 */
       Blank().height(BAR_CLEARANCE_VP)

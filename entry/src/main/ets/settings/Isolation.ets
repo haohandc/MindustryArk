@@ -272,8 +272,36 @@ export function liveGameDataDir(): string {
  *    ⇒ 调用方（存档页）要把这件事说清楚，或者在切换粒度后提示需要重启。
  */
 export function resolveGameDataDir(granularity: string, source: string, jarPath: string): string {
+  return resolveGameDirAndKey(granularity, source, jarPath).dir;
+}
+
+/** [B] 一次解析的结果：隔离键，以及它指向的数据目录。 */
+export interface GameDirForKey {
+  /** [B] 隔离键；'' 表示不隔离（用公开的那一份数据）。 */
+  key: string;
+  /** [B] 该键指向的游戏数据目录。 */
+  dir: string;
+}
+
+/* [A]
+ * 一次算出**键**和**目录**。
+ *
+ * ⚠️⚠️ 为什么必须成对返回，而不是让调用方分别调 `computeKey()` 与 `resolveGameDataDir()`：
+ *    `computeKey()` 最终会走 `gameVersionParts()`，而那个函数**没有缓存** ——
+ *    每调一次就真读一次 jar（`isReadableJar` + native 的 `jarVersionText`）。
+ *    分开调两次，等于把每个 jar 读两遍。
+ *
+ * ⭐ 而「按版本」那一屏要为**每一个**已装版本算目录 ⇒ 那个开销是乘个数的。
+ *    更要紧的是：那一屏是**渲染**出来的，如果哪天有人在渲染路径里调它，
+ *    每帧都会去读一遍 jar —— 那才是真正会卡住界面的写法。
+ *    ⇒ 所以形状上就让它一次给全，用的人不需要知道里面有多贵。
+ *
+ * ⭐ `resolveGameDataDir()` 就是它取 `dir` 的薄包装 —— 判据只有一套，不会分叉。
+ */
+export function resolveGameDirAndKey(granularity: string, source: string,
+                                     jarPath: string): GameDirForKey {
   const key: string = computeKey(granularity, source, jarPath);
-  return key === '' ? liveGameDataDir() : isolatedGameDataDir(key);
+  return { key: key, dir: key === '' ? liveGameDataDir() : isolatedGameDataDir(key) };
 }
 
 /** [B] 两个目录都存在吗。界面用它决定「复制」那一条要不要给。 */
