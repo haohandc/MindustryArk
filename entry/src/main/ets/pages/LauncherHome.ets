@@ -77,7 +77,7 @@ import { VaultEntry, vaultDelete, listVault, vaultRestore, vaultPurge,
 import { copySaveTo, moveSaveTo, duplicateSave, countSavesIn } from '../games/SaveTransfer';
 import { GRANULARITY_OFF, GRANULARITY_NUMBER, GRANULARITY_BUILD, GRANULARITY_PATCH,
          readGranularity, writeGranularity,
-         copyLiveDataInto, gameDataExists, liveGameDataDir,
+         copyLiveDataInto, gameDataExists, liveGameDataDir, isolatedGameDataDir,
          GameDataCounts, countsOf, describeCounts,
          resolveGameDataDir, resolveGameDirAndKey, GameDirForKey } from '../settings/Isolation';
 
@@ -96,6 +96,17 @@ interface MetaRow {
  * ⚠️ 它不是一个真的版本，所以不能拿任何一个 `VersionEntry.path` 来当它 ——
  * 拼一个绝不会与真实路径相撞的串（真实路径都是绝对路径，以 `/` 开头）。 */
 const DUP_KEY: string = '#dup-same-version';
+
+/* [A] ⚠️ 换行用 `String.fromCharCode()` 取，**不在源码里写字面转义**。
+ * ⛔ 因为写文件的工具会把 `
+`（反斜杠 + n）当成**真实换行**写进去 ——
+ *    报错是「Unterminated string literal」，而看代码时那一行「看起来是对的」
+ *    （它确实显示成一个换行，而人眼不会觉得那有什么问题）。
+ * ⭐ 同一族的坑在 `SaveLibrary.ets` 里也记着（那次是把 `
+` 写进了 TS 字符串）。
+ * ⚠️ 另一种更省事的写法是在这里直接打字面量 —— 但任何一次「用脚本改这个文件」
+ *    都会把它再弄坏一次，所以用这个拼起来就坏不了的写法。 */
+const NL: string = String.fromCharCode(10);
 
 /* [A]
  * 「按存档」列表里的一行 —— ⭐ **必须带上它在哪个目录**。
@@ -917,14 +928,51 @@ export struct LauncherHome {
      * ⚠️ 这样还顺带保住了**可重试**：开关留在原处，玩家可以再打开一次
      *    （铁律：门关上了也要有开它的路）。
      */
-    const note: string = copyLiveDataInto(key);
-    if (note !== '') {
-      this.isolationNote = note + '。隔离没有打开，你的数据还在原来的位置。';
-      this.showIsolationAsk = false;
-      this.pendingGranularity = '';
-      this.refresh();
-      return;
+    /* [A] ⭐⭐ **「复制过去」要给每个版本都补一份，不只当前那一个。**
+     *
+     * ⛔⛔ 用户 2026-10-02 报「粒度的复制似乎是不起作用的」。设备日志说那次复制
+     *    **成功了**（`copied 14 dir(s) / 188 file(s)`）—— 但它复制到
+     *    `instances/bundled`（他当时选的是内置那份），而那个目录**本来就有数据**
+     *    ⇒ 结果与「什么都没做」**在界面上完全一样**。
+     *
+     *    ⭐ 而「粒度」这个词的含义本该是：**这一档下的每一个版本各有一份**。
+     *      只填当前那一个的话，玩家切到另一个版本，那边永远是空的 ——
+     *      于是「复制过去」看起来就没起作用。
+     *
+     * ⚠️ 只补**还没有数据**的那些（`gameDataExists` 判），⛔ 不覆盖已有的：
+     *    已有的那份可能装着玩家后来玩的进度，覆盖它等于**又删了一次**。
+     *    ⇒ 这个动作的语义是「给每个版本一份起步数据」，不是「同步成一样」。
+     *
+     * ⚠️ 当前版本那一份**必须成功**（下面仍然要挡），其余尽力而为 ——
+     *    它们只是顺带补的，失败了不该毁掉整个开关。
+     */
+  const note: string = copyLiveDataInto(key);
+  if (note !== '') {
+    this.isolationNote = note + '。隔离没有打开，你的数据还在原来的位置。';
+    this.showIsolationAsk = false;
+    this.pendingGranularity = '';
+    this.refresh();
+    return;
+  }
+  /* [B] 其余版本**尽力而为**：补的是「它还没有数据」的那些，失败了不阻止开隔离。 */
+  const extraFails: string[] = [];
+  for (const v of this.versions) {
+    const k: string = resolveGameDirAndKey(g, v.source, v.path).key;
+    if (k === '' || k === key) {
+      continue;
     }
+    if (gameDataExists(isolatedGameDataDir(k))) {
+      continue;
+    }
+    const e: string = copyLiveDataInto(k);
+    if (e !== '') {
+      extraFails.push(v.label + '：' + e);
+    }
+  }
+  if (extraFails.length > 0) {
+    this.isolationNote = '隔离已经打开，但有几个版本没能拿到这份数据：'
+                       + NL + extraFails.join(NL);
+  }
 
     this.granularity = g;
     writeGranularity(this.filesDir, g);
@@ -3824,11 +3872,12 @@ export struct LauncherHome {
             .onClick(() => { this.isolationConfirm = 'copy'; })
 
           /* ============ 选项二 ============ */
+          /* [A] ⛔ **这个选项【没有】说明文字** —— 用户 2026-10-02：
+           *    「'不复制'的说明去掉吧，这个不用解释了。」
+           * ⚠️ 而且它与上面那个「复制过去」是**对称**的：一个的动作就是「复制」，
+           *    另一个就是「不复制」，两个词本身已经把结果说完了。
+           * ⛔ 别再补「相当于新建一个存档」之类 —— 那是解释，不是信息。 */
           Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
-          Text('相当于新建一个存档，原存档保留')
-            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-            .width('100%').textAlign(TextAlign.Center)
-            .margin({ top: 12 })
           Button('不复制')
             .fontSize(15)
             .width('40%').alignSelf(ItemAlign.Center)
