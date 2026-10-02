@@ -54,8 +54,9 @@
 **普通使用不需要碰它** —— 用游戏内的导入 / 导出功能，走「下载」目录往返。
 那条路走系统的**选择器**，**不需要任何权限**（本应用是零文件权限），两台设备都实测可用。
 
-⚠️ **仍未验证**的是另一件事：**游戏自带的文件浏览器**能不能读那个路径 ——
-它走 libc 用路径，而应用的授权是按 URI 持有的。详见[已知限制](LIMITATIONS.md)。
+⭐ **游戏自带的文件浏览器**读同一个路径也**已实测可用**。
+⚠️ 这里原先记的是一条**相反**的推断（它走 libc 用路径，而应用的授权是按 URI 持有的，
+所以应当读不到）—— **实测否证了那条推断**。详见[已知限制](LIMITATIONS.md)。
 
 ## DevEco 的稳定性测试报了一堆 `cppcrash`，是我装坏了吗？
 
@@ -145,8 +146,9 @@ gives you a mobile UI driven by desktop input.)
 your Downloads folder. That route uses the system **picker** and needs **no permission at
 all** (this app holds zero file permissions); it is measured working on both devices.
 
-⚠️ What is **still unverified** is a different thing: whether the **game's own file browser**
-can read that path — it goes through libc with a path, while the app's grant is held per URI.
+⭐ The **game's own file browser** reads that same path too — **measured**.
+⚠️ What stood here was the **opposite** inference (it goes through libc with a path while the
+app's grant is held per URI, so it should not be able to) — **the measurement disproved it**.
 See [limitations](LIMITATIONS.md).
 
 ## DevEco's stability test reports a pile of `cppcrash`. Did I install it wrong?
