@@ -135,11 +135,20 @@ export function readStartupLogTail(maxBytes: number): string {
   return readTail(NATIVE_FILES + '/stderr.log', maxBytes);
 }
 
+/* 报告抬头。⭐ 应用名由调用方传进来 —— 本文件不持有 UI 上下文，见 `utils/AppLabel`。
+ * ⚠️ 拿不到时**不编一个名字**：这份报告是给人看的，抬头写错应用名比写 unknown 更糟
+ * （正文里本来就有 `bundle :`，那一条是无歧义的）。
+ * ⛔ 报告正文那些未翻译的英文段落另有原因，不要顺手改 —— 见文件头。 */
+function banner(appName: string, what: string): string {
+  const who: string = appName === '' ? 'unknown app' : appName;
+  return who + ' -- ' + what + '\n' + '========================================\n';
+}
+
 /** 支持包：我们会向用户索要的一切，按需写出。
  * 为什么在自动路径之外：自动导出只在【确实有】崩溃时触发，而最难处理的是根本没崩的（「它起不来」「行为怪异」），
  * 且发布签名安装下也无法从外部读 stderr.log / stdout.log。⚠️ 日志属于【当前】会话（launcher 每次启动截断）。
  * 它【不是】幂等的：刻意的按下应每次都产出文件，所以名字里带着按下的那一刻。返回写入路径，写不出返回 ''。 */
-export function exportNow(modFolder: string, filesDir: string): string {
+export function exportNow(appName: string, modFolder: string, filesDir: string): string {
   try {
     if (modFolder === '') {
       hilog.error(DOMAIN, TAG, 'cannot export diagnostics: the Downloads folder is not known');
@@ -157,7 +166,7 @@ export function exportNow(modFolder: string, filesDir: string): string {
     const hasStash: boolean = fs.accessSync(stashPath);
 
     const report: string =
-      'Mindustry Ark -- diagnostics bundle\n' +
+      banner(appName, 'diagnostics bundle') +
       '========================================\n' +
       envLines().join('\n') + '\n' +
       'collected at : ' + new Date(now).toString() + '\n' +
@@ -208,7 +217,7 @@ function readCrashedAt(stash: string): number {
 /** 第 2 步 —— 把暂存复制进玩家可见的 Download 文件夹。
  * modFolder 是【路径】形式（modFolderPath() 返回的就是路径；URI 在这里不可用）。
  * 在 ensureModFolder() 完成之后从页面上调用它 —— 见文件头。 */
-export function publish(modFolder: string, filesDir: string): void {
+export function publish(modFolder: string, filesDir: string, appName: string): void {
   try {
     if (modFolder === '') {
       return;  // 文件夹还不知道在哪儿；下次启动会再试
@@ -238,7 +247,7 @@ export function publish(modFolder: string, filesDir: string): void {
     }
 
     const report: string =
-      'Mindustry Ark -- crash report\n' +
+      banner(appName, 'crash report') +
       '========================================\n' +
       envLines().join('\n') + '\n' +
       'crashed at   : ' + new Date(crashedAt).toString() + '\n' +

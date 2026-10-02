@@ -346,6 +346,11 @@ struct Index {
 
   aboutToAppear(): void {
     const ctx = getContext(this) as common.UIAbilityContext;
+    /* 应用名在这里读，**不是**打开 About 时才读：`appLabel()` 只是一次同步的资源查表，
+     * 而下面 publishCrash() 在启动阶段就要用它（崩溃报告的抬头），那时 About 还没被打开过。
+     * ⚠️ 版本号不同 —— 那个要发一次异步包查询，所以仍留在 openAbout() 里按需读。
+     * 拿不到就留空串，各处调用点自己兜底。 */
+    this.appName = appLabel(ctx);
     /* 权限请求走的是普通窗口，所以沉浸式切换【串】在它后面而不是并行：requestPerms() 是异步的，
      * 首条语句 await getBundleInfoForSelf()，下面的一切都在那次 await 期间运行 —— 而系统权限
      * 对话框属于普通窗口，不属于刚变成全屏、没有栏的窗口。
@@ -374,7 +379,7 @@ struct Index {
         /* 崩溃报告导出的后半段。崩溃本身在 ability 的 onCreate 里捕获（必须赶在原生 unlink 之前），
          * 但那时无法写入 Downloads（手机要靠 DOWNLOAD 模式 picker 的授权，而 picker 需要窗口）。
          * 所以：尽早捕获，等文件夹确认可用后再发布；发布幂等，没有崩溃时什么都不做。 */
-        publishCrash(modFolderPath(ctx.filesDir + '/mod_folder'), ctx.filesDir);
+        publishCrash(modFolderPath(ctx.filesDir + '/mod_folder'), ctx.filesDir, this.appName);
         /* 文件夹这件事到此为止，通知启动器界面可以读。⚠️ 放在这个 .then() 的最末尾而不是开头：
          * 它读的是上面 writeUserDirs 刚写的桥接文件。⚠️ 这里不判断 showLauncher —— 界面可能还没
          * 创建（用初值 true）、也可能已在屏幕上（触发 @Watch 重读），两种情况都对。 */
@@ -664,7 +669,7 @@ struct Index {
   exportDiagnostics(): void {
     try {
       const ctx = getContext(this) as common.UIAbilityContext;
-      const where: string = exportDiagnosticsNow(
+      const where: string = exportDiagnosticsNow(this.appName,
         modFolderPath(ctx.filesDir + '/mod_folder'), ctx.filesDir);
       if (where === '') {
         this.toast('导出失败：下载文件夹不可用');
@@ -720,9 +725,6 @@ struct Index {
   openAbout(): void {
     this.ballMenu = false;
     this.showAbout = true;
-    /* ⚠️ 与版本号同一个时机：它也是一次包查询，而在此之前没人需要它。
-     * 拿不到就留空串，下面两处调用点各自有兜底。 */
-    this.appName = appLabel(getContext(this) as common.Context);
     try {
       bundleManager.getBundleInfoForSelf(bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT)
         .then((info: bundleManager.BundleInfo) => {
