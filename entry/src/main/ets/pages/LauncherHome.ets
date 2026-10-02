@@ -92,6 +92,11 @@ interface MetaRow {
   value: string;
 }
 
+/* [B] 「在同一个版本里再存一份」在目标列表里的**伪路径**。
+ * ⚠️ 它不是一个真的版本，所以不能拿任何一个 `VersionEntry.path` 来当它 ——
+ * 拼一个绝不会与真实路径相撞的串（真实路径都是绝对路径，以 `/` 开头）。 */
+const DUP_KEY: string = '#dup-same-version';
+
 /** [B] 存档页的两种视图。 */
 const SAVES_VIEW_SAVE: string = 'save';
 const SAVES_VIEW_VERSION: string = 'version';
@@ -548,6 +553,11 @@ export struct LauncherHome {
   @State transferOp: string = '';
   /** [B] 目标选择框里的提示（''=没有）。⛔ 只是一句话，不是门。 */
   @State transferNote: string = '';
+
+  /* [A] ⭐ 已选中的目标（`v.path` 或 `DUP_KEY`）。⭐ **先选、再按确定** ——
+   * 见 TransferDialog 里那段说明。
+   * ⚠️ 复制可以多选；移动**只会有一个**（在 `toggleTransferPick` 里强制）。 */
+  @State transferPicked: string[] = [];
 
   /* [A]
    * 选中那个存档的元数据。
@@ -1559,6 +1569,43 @@ export struct LauncherHome {
     }
     this.transferOp = op;
     this.transferNote = '';
+    /* [B] 每次打开都从**空选择**开始 —— 上一次的选择留在那儿会让玩家以为已经选好了。 */
+    this.transferPicked = [];
+  }
+
+  private closeTransferDialog(): void {
+    this.transferOp = '';
+    this.transferNote = '';
+    this.transferPicked = [];
+  }
+
+  /** [B] 这一项选中了吗。 */
+  private isTransferPicked(key: string): boolean {
+    return this.transferPicked.indexOf(key) >= 0;
+  }
+
+  /* [A] 点一项 —— **只改选择，不执行任何动作**（用户要的「先多选再确定」）。
+   *
+   * ⚠️⚠️ **必须赋一个【新数组】**。`push`/`splice` 改的是同一个对象，
+   *    而 ArkUI 观测的是「这个 @State 被重新赋值了吗」——⛔ 原地改内容**不保证**触发重绘，
+   *    症状就是「点了没反应」。（与刚刚那个 `ForEach` key 的问题同一族：
+   *    变的是内容、而 UI 认的是引用。）
+   */
+  private toggleTransferPick(key: string): void {
+    const i: number = this.transferPicked.indexOf(key);
+    if (this.transferOp === 'move') {
+      /* [B] 移动**单选**：再点已选的就取消，点别 的就换成它。
+       * ⚠️ 理由见 TransferDialog 里那段 —— 搬走之后源就没了，第二个目标无从谈起。 */
+      this.transferPicked = (i >= 0) ? [] : [key];
+      return;
+    }
+    if (i >= 0) {
+      const out: string[] = this.transferPicked.slice();
+      out.splice(i, 1);
+      this.transferPicked = out;
+    } else {
+      this.transferPicked = this.transferPicked.concat([key]);
+    }
   }
 
   /* [A]
@@ -1584,32 +1631,68 @@ export struct LauncherHome {
     return head + '；复制一份过去，两边都有。';
   }
 
-  /** [B] 复制/移动到某个 `saves/` 目录。 */
-  private doTransferTo(toDir: string): void {
+  /* [A]
+   * 按下「确定」——**这才是真正动手的地方**。
+   *
+   * ⚠️ 多个目标时**逐个执行**，并把失败的那几个**列出来**（不是遇到第一个失败就停）：
+   *    停下来的话，玩家会以为后面那些也没做，而其实前面已经成功了 ——
+   *    那种「状态不明」比失败本身更难受。
+   * ⇒ 所以：成功的照做，失败的汇总成一句话，并且**照旧刷新**（部分成功也要反映出来）。
+   */
+  private confirmTransfer(): void {
     const sv: SaveEntry | undefined = this.selectedSaveEntry();
-    if (sv === undefined) {
+    if (sv === undefined || this.transferPicked.length === 0) {
       return;
     }
-    const err: string = this.transferOp === 'move'
-      ? moveSaveTo(sv, this.savesDirShown, toDir)
-      : copySaveTo(sv, this.savesDirShown, toDir);
-    this.transferNote = err;
-    if (err === '') {
-      this.transferOp = '';
-    }
-    this.refresh();
-  }
+    const fails: string[] = [];
+    let okCount: number = 0;
 
-  /** [B] 同版本再存一份（改名复制）。 */
-  private doDuplicate(): void {
-    const sv: SaveEntry | undefined = this.selectedSaveEntry();
-    if (sv === undefined) {
-      return;
+    if (this.transferOp === 'move') {
+      const v: VersionEntry | undefined =
+        this.transferTargets().find((x: VersionEntry) => x.path === this.transferPicked[0]);
+      if (v === undefined) {
+        fails.push('选中的目标已经不在了');
+      } else {
+        const e: string = moveSaveTo(sv, this.savesDirShown, v.dataDir + '/saves');
+        if (e === '') {
+          okCount += 1;
+        } else {
+          fails.push(v.label + '：' + e);
+        }
+      }
+    } else {
+      for (const key of this.transferPicked) {
+        if (key === DUP_KEY) {
+          const e: string = duplicateSave(sv, this.savesDirShown);
+          if (e === '') {
+            okCount += 1;
+          } else {
+            fails.push('再存一份：' + e);
+          }
+        } else {
+          const v: VersionEntry | undefined =
+            this.transferTargets().find((x: VersionEntry) => x.path === key);
+          if (v === undefined) {
+            fails.push('有个选中的目标已经不在了');
+            continue;
+          }
+          const e: string = copySaveTo(sv, this.savesDirShown, v.dataDir + '/saves');
+          if (e === '') {
+            okCount += 1;
+          } else {
+            fails.push(v.label + '：' + e);
+          }
+        }
+      }
     }
-    const err: string = duplicateSave(sv, this.savesDirShown);
-    this.transferNote = err;
-    if (err === '') {
-      this.transferOp = '';
+
+    if (fails.length === 0) {
+      this.closeTransferDialog();
+    } else {
+      this.transferNote = (okCount > 0 ? ('成功了 ' + String(okCount) + ' 个；') : '')
+                        + '没成功：' + fails.join('；');
+      /* [B] 只把**没成功**的那几个从选择里去掉 —— 成功的再点一次会撞同名而报错。 */
+      this.transferPicked = [];
     }
     this.refresh();
   }
@@ -2115,7 +2198,13 @@ export struct LauncherHome {
             .margin({ left: 8 })
             .onClick(() => { this.askDelete(); })
         }
+        /* [A] ⭐ **靠右**（用户 2026-10-02：「复制、移动、删除按钮应该在界面最右边，
+         * 这样更符合人点击习惯」）。
+         * ⚠️ 用 `justifyContent(FlexAlign.End)` 而不是塞一个 `Blank()` 占位 ——
+         *    靠右由**布局**保证，不需要多一个节点。
+         * ⚠️ 拇指在右侧：动作放右、内容放左，是平板/手机上的通行摆法。 */
         .width('100%')
+        .justifyContent(FlexAlign.End)
         .alignItems(VerticalAlign.Center)
       }
     }
@@ -2258,34 +2347,60 @@ export struct LauncherHome {
           .width('100%').textAlign(TextAlign.Center)
 
         Text(this.transferOp === 'move'
-             ? '原版本会看不到它。'
-             : '原来那一份不动，目标版本多一份。')
+             ? '原版本会看不到它。选一个目标。'
+             : '原来那一份不动。可以选多个目标。')
           .fontSize(13).fontColor($r('sys.color.font_secondary'))
           .width('100%').textAlign(TextAlign.Center)
           .margin({ top: 10 })
 
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
 
+        /* [A]
+         * ⭐⭐ **先多选、再确定**（用户 2026-10-02）：
+         *   「复制那里，我认为是先多选再确定，而不是现在点了就尝试复制。」
+         *
+         * ⛔ 原来的写法是「点一行 = 立刻复制」，于是复制到三个版本要来回三趟，
+         *    而且**没有后悔的机会** —— 点下去就已经发生了。
+         * ⭐ 现在点只是**选中**，动作统一由底下的「确定」执行。
+         *
+         * ⚠️ **移动是单选** —— 它没有「多选」的语义：第一次搬走之后源就没了，
+         *    第二个目标会搬一个不存在的东西。⛔ 所以这里按操作分：复制可多选、移动单选。
+         *    把这条差别做进**交互**（而不是做进报错）才是对的 ——
+         *    让玩家选不出一个做不到的组合，比事后告诉他「不行」好。
+         *
+         * ⚠️ 选中的样子**复用本项目已有的那套**（文字变 `brand` 色 + 右侧 ✓），
+         *    ⛔ 不引入 `Checkbox`：它有自己的一套主题与获焦行为，本项目在焦点上栽过；
+         *    而这一页别处的选中态（存档列表、版本列表）就是长这样的，一致比新奇重要。
+         */
         Scroll() {
           Column() {
             /* ---- 同版本再存一份（只有复制 + 只有手动存档）---- */
             if (this.transferOp === 'copy' && this.selectedSaveEntry() !== undefined
                 && this.selectedSaveEntry()!.kind === 'manual') {
-              Column() {
-                Text('在这个版本里再复制一份')
-                  .fontSize(15).fontColor($r('sys.color.font_primary'))
-                  .width('100%')
-                Text('会多出一个 `-copy`。⚠️ 游戏里它显示成「untitled」——'
-                     + '存档名存在游戏设置里，改名要进游戏做。')
-                  .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-                  .width('100%').margin({ top: 4 })
+              Row() {
+                Column() {
+                  Text('在这个版本里再复制一份')
+                    .fontSize(15)
+                    .fontColor(this.isTransferPicked(DUP_KEY)
+                               ? $r('sys.color.brand') : $r('sys.color.font_primary'))
+                    .width('100%')
+                  Text('会多出一个 `-copy`。⚠️ 游戏里它显示成「untitled」——'
+                       + '存档名存在游戏设置里，改名要进游戏做。')
+                    .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                    .width('100%').margin({ top: 4 })
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+
+                if (this.isTransferPicked(DUP_KEY)) {
+                  Text('✓').fontSize(16).fontColor($r('sys.color.brand'))
+                }
               }
               .width('100%').padding(14)
               .borderRadius(CARD_RADIUS_VP)
               .backgroundColor($r('app.color.launcher_bg'))
               .margin({ bottom: 8 })
-              .alignItems(HorizontalAlign.Start)
-              .onClick(() => { this.doDuplicate(); })
+              .onClick(() => { this.toggleTransferPick(DUP_KEY); })
             }
 
             /* ---- 战役存档说明为什么没有上面那一项 ---- */
@@ -2299,25 +2414,36 @@ export struct LauncherHome {
 
             /* ---- 别的版本 ---- */
             ForEach(this.transferTargets(), (v: VersionEntry) => {
-              Column() {
-                Text(v.label)
-                  .fontSize(15).fontColor($r('sys.color.font_primary'))
-                  .width('100%')
-                  .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-                Text(this.transferTargetNote(v))
-                  .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-                  .width('100%').margin({ top: 4 })
+              Row() {
+                Column() {
+                  Text(v.label)
+                    .fontSize(15)
+                    .fontColor(this.isTransferPicked(v.path)
+                               ? $r('sys.color.brand') : $r('sys.color.font_primary'))
+                    .width('100%')
+                    .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                  Text(this.transferTargetNote(v))
+                    .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                    .width('100%').margin({ top: 4 })
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+
+                if (this.isTransferPicked(v.path)) {
+                  Text('✓').fontSize(16).fontColor($r('sys.color.brand'))
+                }
               }
               .width('100%').padding(14)
               .borderRadius(CARD_RADIUS_VP)
               .backgroundColor($r('app.color.launcher_bg'))
               .margin({ bottom: 8 })
-              .alignItems(HorizontalAlign.Start)
-              .onClick(() => { this.doTransferTo(v.dataDir + '/saves'); })
+              .onClick(() => { this.toggleTransferPick(v.path); })
             }, (v: VersionEntry) => v.path)
 
-            if (this.transferTargets().length === 0) {
-              Text('没有别的版本可以选 —— 先在「首页」导入另一个游戏版本。')
+            if (this.transferTargets().length === 0
+                && !(this.transferOp === 'copy' && this.selectedSaveEntry() !== undefined
+                     && this.selectedSaveEntry()!.kind === 'manual')) {
+              Text('没有可以选的目标 —— 先在「首页」导入另一个游戏版本。')
                 .fontSize(12).fontColor($r('sys.color.font_tertiary'))
                 .width('100%').margin({ top: 8 })
             }
@@ -2329,6 +2455,7 @@ export struct LauncherHome {
         .align(Alignment.TopStart)
         .margin({ top: 12 })
 
+        /* [B] 上一次「确定」的结果。⛔ 只是一句话，不是门 —— 没成功的会列在这儿。 */
         if (this.transferNote !== '') {
           Text(this.transferNote)
             .fontSize(12).fontColor($r('sys.color.warning'))
@@ -2336,11 +2463,23 @@ export struct LauncherHome {
         }
 
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 8 })
-        Button('取消')
-          .fontSize(14)
-          .width('25%').alignSelf(ItemAlign.Center)
-          .margin({ top: 12 })
-          .onClick(() => { this.transferOp = ''; this.transferNote = ''; })
+        Row() {
+          /* [B] 选不出目标时**禁用**是对的：它不是逃生门，是这次动作本身。
+           * ⚠️ 本项目对「别禁用逃生门」有明确结论 —— 那条针对的是**出路**，
+           * 而这里按下去必须得有个已选的目标，否则无事可做。 */
+          Button(this.transferOp === 'move' ? '确定移动' : '确定复制')
+            .fontSize(15)
+            .layoutWeight(1)
+            .enabled(this.transferPicked.length > 0)
+            .onClick(() => { this.confirmTransfer(); })
+          Button('取消')
+            .fontSize(14)
+            .layoutWeight(1)
+            .margin({ left: 12 })
+            .onClick(() => { this.closeTransferDialog(); })
+        }
+        .width('100%')
+        .margin({ top: 14 })
       }
       .width('100%')
       .constraintSize({ maxWidth: this.dialogWidthVp() })
