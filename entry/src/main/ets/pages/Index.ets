@@ -575,6 +575,11 @@ struct Index {
    */
   @State showLauncher: boolean = false;
 
+  /* [A] 启动器界面注册进来的「返回一层」处理器。
+   * ⛔ 默认返回 `false` —— 没注册时（启动器还没渲染过）就照旧走下面那条 ESC。
+   * 见 LauncherHome.registerBack 的说明。 */
+  private launcherBack: () => boolean = () => false;
+
   /* [A]
    * Download 那个文件夹【确认可用】之后翻成 true，传给启动器界面。
    *
@@ -1634,6 +1639,20 @@ struct Index {
    *   —— 系统的回桌面手势和最近任务菜单都没动，本项目里任何地方都没有屏蔽它们。
    */
   onBackPress(): boolean {
+    /* [A] ⭐⭐ **先问启动器界面** —— 用户 2026-10-02 报「没做侧边侧滑返回」。
+     *
+     * ⛔ 原来这里**无条件**把返回转成 ESC 发给游戏。而启动器界面（首页/存档/设置）
+     *    底下**根本没有游戏** ⇒ 那条 ESC 发进虚空，玩家看到的是「滑了/按了没反应」。
+     *    ⚠️ 手势本身是好的：**系统的手势侧滑与返回键是同一个事件**，都到这里。
+     *    缺的是「谁在启动器界面里消费它」。
+     *
+     * ⭐ 于是顺序变成：启动器界面开着 ⇒ 先让它关掉最上面那一层（弹窗 → 垃圾站 →
+     *    手机子页）；它说「我这里没东西可关」⇒ 才轮到游戏那条 ESC。
+     */
+    if (this.showLauncher && this.launcherBack()) {
+      hilog.info(DOMAIN, TAG, 'back: consumed by the launcher screen (one level up)');
+      return true;
+    }
     /* [A] 'E' 就是整个 ESC 命令；原生侧按整行消费，所以那个换行是命令的一部分，不是
      * 装饰。 */
     this.appendCmd('E\n');
@@ -2054,6 +2073,9 @@ struct Index {
          * 三个来源（真的没有 / 我把路径算错了 / 那台设备上建不出文件夹），而其中两个
          * 是我的问题。没有它，一次判断失误就把应用变成永远打不开游戏的启动器。 */
         onForceLaunch: () => { this.startGame(''); },
+        /* [A] ⭐ 启动器把「返回一层」注册上来：垃圾站、手机子页、以及那几个弹窗
+         * 都要靠它。见 LauncherHome.registerBack 的说明。 */
+        registerBack: (fn: () => boolean): void => { this.launcherBack = fn; },
       })
     } else {
     Row() {

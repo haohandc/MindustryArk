@@ -471,6 +471,42 @@ export struct LauncherHome {
    * ⭐ 带 `@Watch` —— 一选中就去读它的元数据（右侧栏要显示「哪个版本写的」）。
    * ⚠️ `@Watch` **只在值真的变化时触发**，所以 `refresh()` 里还要显式调一次
    *    `loadSelectedMeta()`：换目录/换页签后 id 常常没变，但那份存档已经换了。 */
+  /* [A] ⭐ 由宿主页（`Index.ets`）注入的回调 —— 它收到**系统返回**时先问这里。
+   *
+   * ⛔⛔ 为什么必须这样绕：本组件是 `@Component`，而 `onBackPress` 是**页面级**回调
+   *    （只有 `@Entry` 有）⇒ 返回事件**到不了这里**，只能由页面转发。
+   *
+   * ⭐⭐ 而**系统的手势侧滑（全面屏手势）走的就是同一个事件** ——
+   *    用户 2026-10-02 报的「没做侧边侧滑返回」，真正的缺口不是手势本身没开，
+   *    而是没人**处理**那个返回：`Index.ets` 原来无条件把它转成 ESC 发给游戏，
+   *    而启动器界面里根本没有游戏 ⇒ 看起来「滑了没反应」。
+   *    ⇒ 补上这一条，返回键与侧滑手势**一起**就通了。
+   *    ⚠️ 这与「ESC 被系统当返回」那条老坑是同一族：路径通不通，要看**谁在消费**它。 */
+  registerBack: (fn: () => boolean) => void = () => {};
+
+  /* [A]
+   * 返回一层。**从最上层往里关**。
+   * ⛔ 返回 `false` 表示「我这里没东西可关了」，交给宿主页（在游戏里那会转成 ESC）。
+   */
+  handleBack(): boolean {
+    if (this.showDeleteAsk) { this.showDeleteAsk = false; return true; }
+    if (this.transferOp !== '') { this.transferOp = ''; this.transferNote = ''; return true; }
+    if (this.isolationConfirm !== '') { this.isolationConfirm = ''; return true; }
+    if (this.showIsolationAsk) {
+      /* [B] 与那个窗自己的「取消」同义 —— 它本来就只有这一个出口。
+       * ⚠️ 所以这里**不是**「返回把窗关了」的越权，而是那个窗唯一的动作。 */
+      this.showIsolationAsk = false;
+      this.pendingGranularity = '';
+      this.isolationConfirm = '';
+      return true;
+    }
+    if (this.launchFault !== '' && !this.faultAck) { this.faultAck = true; return true; }
+    if (this.showAbout) { this.showAbout = false; return true; }
+    if (this.showVault) { this.closeVault(); return true; }
+    if (this.panelOpen) { this.panelOpen = false; return true; }
+    return false;
+  }
+
   @State @Watch('onSaveSelected') selectedSave: string = '';
 
 
@@ -670,6 +706,8 @@ export struct LauncherHome {
     this.launchMode = readLaunchMode(this.filesDir);
     this.granularity = readGranularity(this.filesDir);
     this.appLabel = this.resolveAppLabel();
+    /* [B] 把「返回一层」交给宿主页 —— 见 registerBack 的说明。 */
+    this.registerBack(() => this.handleBack());
     this.refresh();
   }
 
@@ -1004,8 +1042,7 @@ export struct LauncherHome {
     /* [A] 垃圾站：**清掉到期的**，再读一遍名单。
      * ⚠️ 放在 `refresh()` 里（而不是渲染里）—— 它要扫目录、还要真删文件，
      *    ⛔ 每帧跑一次是不可接受的。`refresh()` 只在切页签/切版本/改设置/操作完之后跑。 */
-    this.vaultPurgedLast = purgeExpired(Date.now());
-    this.vaultEntries = listVault();
+    this.reloadVault();
     this.vaultDays = readVaultDays(this.filesDir);
     /* [A] ⚠️ 必须显式再读一次。`@Watch` 只在 id **真的变了**时才触发，而这里的
      * 常见情形恰恰是「id 没变、那份存档换了」—— 例如改了隔离粒度再回来：列表整份换掉，
@@ -1392,6 +1429,19 @@ export struct LauncherHome {
    * 垃圾站
    * ================================================================== */
 
+  /* [A] ⭐ 垃圾站**只碰自己那点数据**的重新读盘，单独一条路。
+   *
+   * ⚠️ 为什么不靠 `refresh()`：那是**整页**重算（读每个 jar、扫三个目录），
+   *    其中任何一步抛了，后面那些 `@State` 就一个都不会被赋值 ——
+   *    而玩家看到的正是「点了没反应」。
+   *    ⇒ 垃圾站的动作先走这条**短**路，界面立刻是对的；`refresh()` 再去做剩下的。
+   *    （用户 2026-10-02 报的「取消归档和放回点了 UI 不刷新」，除开 ForEach 的 key，
+   *      有一半是这个形状：磁盘上确实发生了，而界面没跟上。） */
+  private reloadVault(): void {
+    this.vaultPurgedLast = purgeExpired(Date.now());
+    this.vaultEntries = listVault();
+  }
+
   private openVault(): void {
     this.showVault = true;
     this.vaultNote = '';
@@ -1459,18 +1509,22 @@ export struct LauncherHome {
   /** [B] 放回。刷新后存档列表当场出现它。 */
   private doVaultRestore(e: VaultEntry): void {
     this.vaultNote = vaultRestore(e, this.savesDirShown);
+    /* ⚠️ 先短后长：垃圾站自己的名单立刻更新，`refresh()` 再去更新存档列表。 */
+    this.reloadVault();
     this.refresh();
   }
 
   /** [B] 彻底删掉（不可撤销）。 */
   private doVaultPurge(e: VaultEntry): void {
     this.vaultNote = vaultPurge(e.id);
+    this.reloadVault();
     this.refresh();
   }
 
   /** [B] 归档 / 取消归档。取消时**重新起算**保留期，见 SaveVault.vaultSetArchived。 */
   private doVaultToggleArchive(e: VaultEntry): void {
     this.vaultNote = vaultSetArchived(e.id, !e.archived, this.vaultDays, Date.now());
+    this.reloadVault();
     this.refresh();
   }
 
@@ -1481,9 +1535,15 @@ export struct LauncherHome {
     this.refresh();
   }
 
-  /** [B] 「保留到 YYYY-MM-DD HH:MM」—— 确认框里给玩家看的**具体时刻**。 */
+  /** [B] 「保留到 YYYY-MM-DD HH:MM」。⚠️ 现在只在按钮上用到「日期」那一半。 */
   private deleteExpiryText(): string {
     return formatMs(Date.now() + this.vaultDays * 24 * 60 * 60 * 1000);
+  }
+
+  /* [B] 只要日期那一段（`YYYY-MM-DD`）。
+   * ⚠️ 按钮标签上写时分是噪音 —— 保留期是 3/7/30 天那个尺度，几点几分不影响决定。 */
+  private deleteExpiryDate(): string {
+    return this.deleteExpiryText().substring(0, 10);
   }
 
   /** [B] 保留期那一档的按钮文案。 */
@@ -2198,8 +2258,8 @@ export struct LauncherHome {
           .width('100%').textAlign(TextAlign.Center)
 
         Text(this.transferOp === 'move'
-             ? '原版本会看不到它了 —— 等于把它交给另一个版本。'
-             : '原来那一份不动，目标版本会多出一份。')
+             ? '原版本会看不到它。'
+             : '原来那一份不动，目标版本多一份。')
           .fontSize(13).fontColor($r('sys.color.font_secondary'))
           .width('100%').textAlign(TextAlign.Center)
           .margin({ top: 10 })
@@ -2215,8 +2275,8 @@ export struct LauncherHome {
                 Text('在这个版本里再复制一份')
                   .fontSize(15).fontColor($r('sys.color.font_primary'))
                   .width('100%')
-                Text('会多出一个 `-copy` 的存档。⚠️ 游戏里它会显示成「untitled」——'
-                     + '存档名字存在游戏的设置里，改名要在游戏内做。')
+                Text('会多出一个 `-copy`。⚠️ 游戏里它显示成「untitled」——'
+                     + '存档名存在游戏设置里，改名要进游戏做。')
                   .fontSize(12).fontColor($r('sys.color.font_tertiary'))
                   .width('100%').margin({ top: 4 })
               }
@@ -2301,9 +2361,13 @@ export struct LauncherHome {
   VaultView() {
     Column() {
       Row() {
+        /* [A] ⚠️ 用户 2026-10-02：「返回按钮太小了」。
+         * ⭐ 字形 18 → **26**，并给足内边距 —— 可点区域从约 18×18 变成约 46×46，
+         *    那接近触摸目标的下限（约 44）。⛔ 别只放大字形而不给内边距：
+         *    字形大了但热区还贴着笔画，照样点不中。 */
         SymbolGlyph($r('sys.symbol.chevron_left'))
-          .fontSize(18).fontColor([$r('sys.color.brand')])
-          .padding({ right: 8 })
+          .fontSize(26).fontColor([$r('sys.color.brand')])
+          .padding({ left: 10, right: 14, top: 10, bottom: 10 })
           .onClick(() => { this.closeVault(); })
         Text('垃圾站')
           .fontSize(18).fontColor($r('sys.color.font_primary'))
@@ -2411,7 +2475,17 @@ export struct LauncherHome {
               .backgroundColor($r('app.color.launcher_card'))
               .margin({ bottom: 8 })
               .alignItems(HorizontalAlign.Start)
-            }, (e: VaultEntry) => e.id)
+            /* [A] ⛔⛔ **key 必须带上【会变的字段】** —— 这就是用户 2026-10-02 报的
+             * 「取消归档 / 放回，点了 UI 不刷新」的成因之一。
+             *
+             * ⭐ ArkUI 的 `ForEach` 按 key 做差分：**key 没变的那一项会被【复用】、
+             *    不会重建** ⇒ 行里的文字（「已归档，不会自动清理」→「还有 7 天清理」）
+             *    永远停在旧值上。⚠️ 而 `e.id` 只在**增删**时变，
+             *    归档/取消归档是**原地改内容** ⇒ key 一模一样 ⇒ 界面一动不动。
+             *
+             * ⚠️ 所以 key 里要放**渲染真正依赖的**那几个字段：归档位与到期时刻。
+             * ⛔ 别只写 `e.id`：那在「原地改」这一类操作上必然失灵，而且**看起来完全正常**。 */
+            }, (e: VaultEntry) => e.id + '|' + (e.archived ? 'a' : 'n') + '|' + String(e.expiresMs))
           }
           .width('100%')
           .padding({ left: 16, right: 16, top: 12 })
@@ -2449,35 +2523,31 @@ export struct LauncherHome {
         Text('删除「' + this.selectedSaveLabel() + '」')
           .fontSize(17).fontColor($r('sys.color.font_primary'))
           .width('100%').textAlign(TextAlign.Center)
-        Text('它不会被抹掉，而是搬到垃圾站 —— 之后可以放回来。')
-          .fontSize(13).fontColor($r('sys.color.font_secondary'))
-          .width('100%').textAlign(TextAlign.Center)
-          .margin({ top: 12 })
 
+        /* [A] ⛔⛔ **这个框里【没有任何说明文字】** —— 用户 2026-10-02：
+         *    「删除还需要说明吗？？？下面按钮都说了放到垃圾站，那上面的文字说明根本没用」。
+         *
+         *    ⭐ 他是对的，而且理由不只是「嫌啰嗦」：原来的写法把**区别**放在**按钮上面
+         *      的文字**里（「保留到 X，然后自动清理」/「不会自动清理…」），
+         *      而按钮本身只说「放进垃圾站」「归档」—— 两者分开之后，
+         *      玩家要**先读上面、再看下面**才能知道自己在选什么。
+         *    ⇒ 把区别**直接写进按钮标签**：一处说清，不需要对照。
+         *
+         * ⚠️ 日期仍然保留（它是有信息量的那一部分，而且只有这里有），只是压到
+         *    「保留到 2026-10-09」这种程度 —— 时分对 3/7/30 天的时间尺度是噪音。
+         */
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
 
-        /* ---- 选项一：普通垃圾站（到期清理） ---- */
-        Text('保留到 ' + this.deleteExpiryText() + '，然后自动清理')
-          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-          .width('100%').textAlign(TextAlign.Center)
-          .margin({ top: 12 })
-        Button('放进垃圾站')
+        Button('放进垃圾站（保留到 ' + this.deleteExpiryDate() + '）')
           .fontSize(15)
-          .width('50%').alignSelf(ItemAlign.Center)
-          .margin({ top: 8 })
+          .width('72%').alignSelf(ItemAlign.Center)
+          .margin({ top: 16 })
           .onClick(() => { this.doVaultDelete(false); })
 
-        Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
-
-        /* ---- 选项二：归档 ---- */
-        Text('归档：不会自动清理，只能你手动放回或彻底删除')
-          .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-          .width('100%').textAlign(TextAlign.Center)
-          .margin({ top: 12 })
-        Button('归档')
+        Button('归档（不自动清理）')
           .fontSize(15)
-          .width('50%').alignSelf(ItemAlign.Center)
-          .margin({ top: 8 })
+          .width('72%').alignSelf(ItemAlign.Center)
+          .margin({ top: 10 })
           .onClick(() => { this.doVaultDelete(true); })
 
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
@@ -2514,9 +2584,10 @@ export struct LauncherHome {
       } else if (this.isNarrow() && this.panelOpen) {
         /* ===================== 窄屏：子页 ===================== */
         Row() {
+          /* [B] 与垃圾站那个返回同尺寸、同热区 —— 两处是同一个动作，别长得不一样。 */
           SymbolGlyph($r('sys.symbol.chevron_left'))
-            .fontSize(18).fontColor([$r('sys.color.brand')])
-            .padding({ right: 8 })
+            .fontSize(26).fontColor([$r('sys.color.brand')])
+            .padding({ left: 10, right: 14, top: 10, bottom: 10 })
             .onClick(() => { this.panelOpen = false; })
           Text(this.savesView === SAVES_VIEW_VERSION
                ? this.selectedVersionLabel() : this.selectedSaveLabel())
