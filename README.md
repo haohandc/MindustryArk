@@ -120,5 +120,5 @@ Copyright (C) 2026 Haohandc and contributors.
 - [**SDL3**](https://github.com/libsdl-org/SDL) —— 窗口 / 输入 / 音频层
 - [**LWJGL**](https://github.com/LWJGL/lwjgl3) —— OpenGL 与 SDL 的 JNI 绑定
 - [**OpenJDK 21**](https://github.com/openjdk/jdk) —— 运行时
-> [!CAUTION]
+> [!NOTE]
 > 本仓库绝大部分代码、文档和文字由 AI 辅助完成（Claude via Cherry Studio，模型 deepseek-flash v4.1）。
