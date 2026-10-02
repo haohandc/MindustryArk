@@ -54,7 +54,7 @@ in the store**: a store (release) signature never gets it. ⚠️ **HarmonyOS 5 
 | Touch | Works, including two-finger pinch zoom |
 | Keyboard | Works (physical keyboard; WASD and ESC). Typing into game text fields uses an on-screen field with full input-method support — see [limitations](docs/LIMITATIONS.md) |
 | Gamepad / mouse | Mouse works. Gamepad untested |
-| Save import/export | Via the app's folder in Download, using the picker — **measured working on both devices, and it needs no permission at all**. ⚠️ **Still unverified**: whether the game's own browser can read that path — it uses a path through libc, while the app's grant is held per URI — see [limitations](docs/LIMITATIONS.md) |
+| Save import/export | Via the app's folder in Download, using the picker — **measured working on both devices, and it needs no permission at all**. The game's **own file browser** reads that same path too — **measured** — see [limitations](docs/LIMITATIONS.md) |
 | Mods | Work. Import them with the **game's own "import mod" button** — that is the only way in, and it needs no restart. The app deliberately does **not** take files from Downloads by itself; drop one in `Download/Ark Launcher/` and pick it in that browser. See [limitations](docs/LIMITATIONS.md) |
 | Desktop/mobile mode switch | Switches, but needs an app restart — see the [FAQ](docs/FAQ.md) |
 | Networking / multiplayer | **The platform side works** — `socket`, `epoll`, DNS, TCP, TLS and HTTP all measured working here. **LAN, public-server search and hosting on the device have each been tested, and a match has actually been played** (2026-09-23) |

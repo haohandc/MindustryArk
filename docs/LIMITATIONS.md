@@ -184,8 +184,10 @@ HotSpot 要先建**启动用的桩代码**（`SharedRuntime` / `StubRoutines`）
 `user_dirs.txt` 里 `mods=/storage/Users/currentUser/Download/com.haohandc.arklauncher`，
 启动器日志 `file browser will open at (mod folder): ...`。
 
-⚠️ **仍未验证**：游戏的**文件浏览器**（走 libc，不是走 URI）能否读那个路径 ——
-应用的授权是**按 URI** 持有的，而浏览器用**路径**。这是下一步要在设备上看的。
+⭐ **实测：能读。** 游戏的**文件浏览器**（走 libc，不是走 URI）读那个路径没问题 ——
+尽管应用的授权是**按 URI** 持有的、浏览器用的是**路径**，而且本应用**零文件权限**。
+⛔ 这里原先记的是一条**相反**的推断（凭 URI 与路径的区别判定它应当读不到）—— **实测否证了它**。
+⇒ 关于「拿得到 / 拿不到某个路径」，判据是**实测**，不是从权限模型推出来的结论。
 
 ⚠️ **顺带**：`READ_WRITE_DOWNLOAD_DIRECTORY` 在本项目里**从来没有过一次成功**
 （见下），已**于 2026-09-22 移除**。⇒ **本应用现在是【零文件权限】。**
@@ -609,10 +611,14 @@ folder is visible in the file manager; `user_dirs.txt` carries
 `mods=/storage/Users/currentUser/Download/com.haohandc.arklauncher`, and the
 launcher logs `file browser will open at (mod folder): ...`.
 
-⚠️ **Still unverified**: whether the game's own **file browser** (which goes
-through libc, not through the URI) can read that path -- the app's grant is held
-**per URI** while the browser uses a **path**. That is the next thing to check on
-the device.
+⭐ **Measured: it can read it.** The game's own **file browser** (which goes
+through libc, not through the URI) has no trouble with that path -- even though
+the app's grant is held **per URI** while the browser uses a **path**, and this
+app holds **zero file permissions**.
+⛔ What stood here was the **opposite** inference (URI versus path, so it should
+not work) -- **the measurement disproved it**. For "can something reach a given
+path", the judge is a measurement, not a conclusion derived from a permission
+model.
 
 ⚠️ **Also**: `READ_WRITE_DOWNLOAD_DIRECTORY` has **never once succeeded** in this
 project (see below), and was **removed on 2026-09-22**. ⇒ **this app now has ZERO
