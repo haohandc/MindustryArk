@@ -28,6 +28,43 @@
 python scripts/config.py          # 打印每个路径，以及它是否存在
 ```
 
+### 一之二、⭐ 先把 JDK 树铺进 `entry/libs/arm64-v8a/jdk21/`
+
+⛔ **这一步没有脚本，而且它的输入也不在 `payload-src/` 里。**
+`prep_jdklib.py` 与 `prep_jdkconf.py` 把 `entry/libs/arm64-v8a/jdk21/` 当作**输入**去读
+（前者读 `lib/tzdb.dat`，后者读整个 `conf/` 与 `lib/security/`），
+但**没有任何脚本创建它** —— 少了它，下面链条的第一步就报：
+
+```
+tzdb.dat  source MISSING at <entry/libs>/arm64-v8a/jdk21/lib/tzdb.dat
+```
+
+它必须是一棵 **OpenJDK 21 的 OpenHarmony（musl / aarch64）** 构建，桌面 JDK 不行。
+最少要有：
+
+```
+entry/libs/arm64-v8a/jdk21/
+├── release
+├── conf/             prep_jdkconf.py 的输入（security/ 等）
+└── lib/
+    ├── modules       134 MB 的模块镜像；patch_libjvm.py 会把它改名成 jimg.so 发运
+    ├── tzdb.dat      prep_jdklib.py 的输入（游戏读日期时会打开它）
+    └── …             其余 JDK 库
+```
+
+⚠️ **这不是一处笔误，是这个仓库目前的一个真实缺口**：从一份干净的克隆加上
+`payload-src/` 出发，链条跑不起来。记在这里是为了让下一个遇到它的人一眼看到，
+而不是先花半小时怀疑自己的 `tzdb.dat` 路径。已记入下列两份文档的待办。
+
+⭐ 手边有一份旧构建时，最省事的办法就是把它拷过来（`entry/libs/` 与 `payload-src/`
+一样不进 git，所以它在你机器上通常是有的）：
+
+```bash
+# 从另一个已经构建过的检出里拷
+cp -r <另一个检出>/entry/libs/arm64-v8a/jdk21 entry/libs/arm64-v8a/jdk21
+```
+同一台机器上只有一份时，它一般还留在你自己的 `entry/libs/` 里 —— 只要别把整个目录删掉。
+
 ### 二、把载荷组装到 `entry/libs/arm64-v8a/`
 
 ```bash
@@ -225,6 +262,43 @@ any script. To see what it resolves to:
 ```bash
 python scripts/config.py          # each path, and whether it exists
 ```
+
+### 1b. Put the JDK tree in `entry/libs/arm64-v8a/jdk21/`
+
+⛔ **There is no script for this, and its input is not in `payload-src/` either.**
+`prep_jdklib.py` and `prep_jdkconf.py` read `entry/libs/arm64-v8a/jdk21/` as **input**
+(the first reads `lib/tzdb.dat`, the second reads all of `conf/` and `lib/security/`),
+but **nothing creates it** — without it the first step of the chain below reports:
+
+```
+tzdb.dat  source MISSING at <entry/libs>/arm64-v8a/jdk21/lib/tzdb.dat
+```
+
+It has to be an **OpenJDK 21 build for OpenHarmony (musl / aarch64)**; a desktop JDK will not do.
+At minimum it contains:
+
+```
+entry/libs/arm64-v8a/jdk21/
+├── release
+├── conf/            input to prep_jdkconf.py (security/ and friends)
+└── lib/
+    ├── modules      the 134 MB module image; patch_libjvm.py ships it renamed to jimg.so
+    ├── tzdb.dat     input to prep_jdklib.py (the game opens it when it asks for a date)
+    └── ...          the rest of the JDK's libraries
+```
+
+⚠️ **This is not a typo, it is a real gap in this repository**: starting from a clean clone plus
+`payload-src/`, the chain does not run. It is written down so that the next person hits the
+explanation instead of spending half an hour doubting their `tzdb.dat` path.
+
+⭐ With an earlier build at hand, the cheapest fix is to copy the tree across (`entry/libs/`, like
+`payload-src/`, is not in git, so it usually exists on a machine that has built once):
+
+```bash
+cp -r <another-checkout>/entry/libs/arm64-v8a/jdk21 entry/libs/arm64-v8a/jdk21
+```
+If there is only one checkout on the machine, it is probably still in your own `entry/libs/` --
+just do not delete that whole directory.
 
 ### 2. Assemble the payload into `entry/libs/arm64-v8a/`
 

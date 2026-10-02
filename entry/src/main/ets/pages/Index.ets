@@ -5,6 +5,8 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { KeyCode } from '@kit.InputKit';
 import { window } from '@kit.ArkUI';
 import { ensureModFolder, modFolderPath } from '../mods/ModImporter';
+/* 应用自己的显示名 —— 与启动器那些页面同一处规则，⛔ 别在这里写死。 */
+import { appLabel } from '../utils/AppLabel';
 /* 导出它，是为了让本页在那个文件夹真正存在之后再写一次桥接文件。见调用处。 */
 import { writeUserDirs } from '../entryability/EntryAbility';
 /* 崩溃在 ability 的 onCreate 捕获（必须赶在原生代码 unlink 之前），在这里发布 ——
@@ -311,6 +313,10 @@ struct Index {
   @State launchFaultJar: string = '';
 
   @State appVersion: string = '';
+  /* 应用自己的显示名，来自资源。打开 About 时读一次 —— 与版本号同一个时机、同一个理由。
+   * ⚠️ 名字叫 `appName` 而不是 `appLabel`：后者是 `utils/AppLabel` 导入的【函数】名，
+   * 同一个标识符既是成员又是导入函数，读代码的人（和我）都会看错。 */
+  @State appName: string = '';
 
   /* 这里【曾经】有兼容性提示的状态，已随那个提示一起删掉；原文见 RELEASE-MAINTENANCE.md 2.13b。 */
   /* 球的直径，从窗口重新计算。用 @State 而不是 getter：由 winW/winH 推导的普通字段会变，
@@ -665,7 +671,10 @@ struct Index {
         return;
       }
       hilog.info(DOMAIN, TAG, 'diagnostics exported to %{public}s', where);
-      this.toast('已导出到「下载 / Mindustry Ark / diagnostics」');
+      /* ⭐ 拿不到应用名就只说真实路径 —— 编一个名字会指向【另一个】应用的文件夹。 */
+      this.toast(this.appName === ''
+                 ? '已导出到「下载 / diagnostics」'
+                 : ('已导出到「下载 / ' + this.appName + ' / diagnostics」'));
     } catch (e) {
       const err = e as BusinessError;
       hilog.error(DOMAIN, TAG, 'exportDiagnostics threw: %{public}s', err.message);
@@ -711,6 +720,9 @@ struct Index {
   openAbout(): void {
     this.ballMenu = false;
     this.showAbout = true;
+    /* ⚠️ 与版本号同一个时机：它也是一次包查询，而在此之前没人需要它。
+     * 拿不到就留空串，下面两处调用点各自有兜底。 */
+    this.appName = appLabel(getContext(this) as common.Context);
     try {
       bundleManager.getBundleInfoForSelf(bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT)
         .then((info: bundleManager.BundleInfo) => {
@@ -1474,7 +1486,11 @@ struct Index {
     if (this.showAbout) {
       Column() {
         Column() {
-          Text('Mindustry Ark')
+          /* ⭐ 走资源，与启动器那边的 About 同一处规则。原来这里写死 'Mindustry Ark'，
+           * 于是改名之后同一块屏幕上两处 About 显示两个名字。
+           * ⚠️ 拿不到时给一个空格，不是给某个写死的名字 —— 下一个 `Text`（版本号）就是这么做的，
+           * 而写死一个名字恰好会让【另一个】应用显示错名，那正是这次要修的毛病。 */
+          Text(this.appName === '' ? ' ' : this.appName)
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
             .fontColor(Color.White)

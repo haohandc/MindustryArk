@@ -95,7 +95,21 @@
           "strictMode": {
             "caseSensitiveCheck": true,
             "useNormalizedOHMUrl": true
-          }
+          },
+          // ⭐ 这一行是承重的，而且它曾经【不在】这份模板里。
+          //
+          // 不写它，hvigor 就用 SDK 里 OpenHarmony 那一套 clang 编 native 代码：
+          //
+          //     写它   sdk/default/hms/native/BiSheng/bin/…      ← 本项目实测过的那套
+          //     不写   sdk/default/openharmony/native/llvm/bin/… ← 另一套，未验证
+          //
+          // ⚠️ 两者都能编过、都能出包、都不会报任何错 —— 差别只在产物里那条
+          //    `OHOS (BiSheng Mobile CPU …) clang version …` 字符串，以及编译器的行为。
+          //    2026-10-03 实测：一个照模板生成的 profile 编出来的 libSDL3.so 用的是
+          //    llvm，而 master 编出来的是 BiSheng，逐字节不同。
+          //
+          // ⇒ 添 product 时**连这一行一起抄**。漏了它不会有任何提示。
+          "nativeCompiler": "BiSheng"
         }
       }
     ],
