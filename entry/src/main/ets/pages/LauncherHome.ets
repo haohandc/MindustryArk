@@ -586,6 +586,9 @@ export struct LauncherHome {
    * ⛔ 返回 `false` 表示「我这里没东西可关了」，交给宿主页（在游戏里那会转成 ESC）。
    */
   handleBack(): boolean {
+    /* [B] 多选态排在最前：它是一个**模式**，而模式必须能一键退出 ——
+     * ⛔ 排在后面的话，返回键会先把别的东西关掉，而玩家看到的还是那张多选列表。 */
+    if (this.multiMode) { this.exitMulti(); return true; }
     if (this.showDeleteAsk) { this.showDeleteAsk = false; return true; }
     if (this.transferOp !== '') { this.transferOp = ''; this.transferNote = ''; return true; }
     if (this.isolationConfirm !== '') { this.isolationConfirm = ''; return true; }
@@ -701,6 +704,22 @@ export struct LauncherHome {
    *    （动作在那儿按的），而 `isolationNote` 渲染在**设置页**。⛔ 一个字段两个渲染点
    *    会让「按下去了、屏幕上没反应」再发生一次 —— 那正是这一轮要修的病。 */
   @State staleCopyNote: string = '';
+  /* [A] ⭐⭐ **长按进入多选，一次删多个**（用户 2026-10-02）：
+   *    「按存档这里还应该加上长按多选存档，可以一键删除」「按版本…右边的选择存档删除页
+   *      应该能长按多选」。
+   *
+   * ⚠️ 选中的键与单选**同一套**（`<目录>|<id>`）⇒ 两个视图、两张列表里指的是同一样东西，
+   *    ⛔ 不需要第二套身份。而 `multiMode` 是**一个开关管两处**：
+   *    进去之后两张列表都按多选解释点击，行为不会分叉。
+   *
+   * ⭐ 删除走的是**同一条路**（搬进垃圾站，不是抹掉），保留方式用**全局那个保留期** ——
+   *    逐条问就把「一键」毁掉了；而归档仍然可以事后在垃圾站里点。
+   */
+  @State multiMode: boolean = false;
+  @State multiPicked: string[] = [];
+  /** [B] 多选删除之后的一句话（成功/失败都写这儿）。⚠️ 与 `vaultNote` 分开：
+   * 那个渲染在**垃圾站**里，而这里是**存档页**。 */
+  @State savesNote: string = '';
   @State copyTargets: CopyTarget[] = [];
   @State copyPicked: string[] = [];
 
@@ -1579,35 +1598,36 @@ export struct LauncherHome {
     return out;
   }
 
-  /* [A] ⭐⭐ 一个版本的**显示名**：标签，外加括号里的版本号 —— 但**只在标签里看不出版本时**。
+  /* [A] ⭐⭐ 一组的标题。**顺序是用户定的**（2026-10-02）：
+   *    「先展示**版本**，再展示**文件名**。比如 v8 Build 159.7 (xxx.jar)」。
    *
-   * ⭐ 用户 2026-10-02：「内置游戏这里，应该加上标注（**动态标注**），括号里面写明版本」。
-   *    ⛔ 而「动态」是这个要求的重点：版本号要**读出来**（`bundledGameVersion`），
-   *    不能写死 —— 我们换内置 jar 时它会变，写死的那个立刻就是错的。
+   * ⇒ 形状是 `v8 Build 160.5（内置游戏, Mindustry160.5.jar）`。
    *
-   * ⚠️ 为什么要有「标签里已经含版本就不加」这一条：
-   *    玩家自建的 jar 标签就是文件名（`Mindustry160.5`），而它**自带版本** ⇒
-   *    无条件追加会得到 `Mindustry160.5（160.5）`，那是纯噪音。
-   * ⭐ 判据是 `includes` 而不是相等：文件名里版本常带着额外的后缀
-   *    （`Mindustry160.5-b2`），那也已经在标签里看得见了。 */
-  private versionLabelOf(v: VersionEntry): string {
-    if (v.version === '' || v.label.includes(v.version)) {
-      return v.label;
-    }
-    return v.label + '（' + v.version + '）';
-  }
-
-  /** [B] 一组的标题：共用这份数据的版本名。空数组 = 没有版本读它（未隔离的那一份）。 */
+   * ⛔ 我上一版是反的（`内置游戏（v8 Build 160.5）`），理由是「名字是身份」——
+   *    而那个理由只在**单个**版本时成立。一组里可能有好几个版本，那时名字串在最后
+   *    反而更容易看：先读到「这是哪个版本」，再看「都是谁在用」。
+   *
+   * ⚠️ **一组里可能有两个不同的版本号**：构建号档下 `160.4` 与 `160.5` 折进同一个槽位。
+   *    ⇒ 版本号要去重后**全部列出来**（`/` 分隔），⛔ 不能只写第一个 ——
+   *      那会让 160.4 的那份数据看起来属于 160.5。
+   *
+   * ⚠️ 版本读不出来时写「未知版本」，⛔ 不留空 —— 空着会被读成「没有版本」。
+   */
   private groupTitle(g: SaveGroup): string {
     if (g.versions.length === 0) {
       /* [B] 两种「没人读」：以前某一档留下的键 vs 未隔离的那一份本身。 */
       return g.orphanKey === '' ? '未隔离的那一份' : ('没有版本读它（' + g.orphanKey + '）');
     }
+    const vers: string[] = [];
     const names: string[] = [];
     for (const v of g.versions) {
-      names.push(this.versionLabelOf(v));
+      const s: string = v.version === '' ? '未知版本' : v.version;
+      if (vers.indexOf(s) < 0) {
+        vers.push(s);
+      }
+      names.push(v.label);
     }
-    return names.join('  ·  ');
+    return vers.join(' / ') + '（' + names.join(', ') + '）';
   }
 
   /** [B] 一组的副标题：谁在读它。 */
@@ -1721,20 +1741,26 @@ export struct LauncherHome {
     return v.saveCount === 0 ? '目录在，没有存档' : (String(v.saveCount) + ' 个存档');
   }
 
-  /** [B] 选中版本的显示名；没选时空串。 */
+  /* [A] ⭐ 这两个的**内容对调了**（2026-10-02）—— 用户要「版本在前、文件名在后」。
+   *    `selectedVersionLabel` 现在给的是**版本号**（手机子页拿它当标题），
+   *    `selectedVersionLine` 给的是文件名与「当前版本」。
+   * ⚠️ 名字没跟着改，因为「label / line」说的是**位置**（大字那行 / 小字那行），
+   *    而不是内容 —— 两处渲染点的结构不需要跟着动。 */
   private selectedVersionLabel(): string {
     const v: VersionEntry | undefined = this.selectedVersionEntry();
-    return v === undefined ? '' : v.label;
+    if (v === undefined) {
+      return '';
+    }
+    return v.version === '' ? '未知版本' : v.version;
   }
 
-  /** [B] 选中版本的版本号行。 */
+  /** [B] 选中版本的**文件名**那一行，附带「当前版本」。 */
   private selectedVersionLine(): string {
     const v: VersionEntry | undefined = this.selectedVersionEntry();
     if (v === undefined) {
       return '';
     }
-    const ver: string = v.version === '' ? '未知版本' : v.version;
-    return this.selectedVersionIsCurrent() ? (ver + '  ·  当前版本') : ver;
+    return this.selectedVersionIsCurrent() ? (v.label + '  ·  当前版本') : v.label;
   }
 
   /** [B] 选中版本是不是当前正在使用的那个。 */
@@ -1972,6 +1998,91 @@ export struct LauncherHome {
     return this.copyPicked.indexOf(key) >= 0;
   }
 
+  /* ==================================================================
+   * 长按多选
+   * ================================================================== */
+
+  /** [B] 这一行现在算不算「选中」—— 多选态看 `multiPicked`，平时看 `selectedSave`。
+   *  ⭐ 做成一个函数而不是两处各写一遍 if：两张列表必须**长得一样**。 */
+  private rowHot(key: string): boolean {
+    return this.multiMode ? (this.multiPicked.indexOf(key) >= 0) : (this.selectedSave === key);
+  }
+
+  /** [B] 长按：不在多选态就**带着这一行**进去，已经在就当成一次点击（切换）。 */
+  private enterMulti(key: string): void {
+    if (!this.multiMode) {
+      this.multiMode = true;
+      this.multiPicked = [key];
+      return;
+    }
+    this.toggleMultiPick(key);
+  }
+
+  /** [B] 勾/取消。⚠️ 必须**赋新数组**（ArkUI 只认赋值），理由同 toggleTransferPick。 */
+  private toggleMultiPick(key: string): void {
+    const i: number = this.multiPicked.indexOf(key);
+    if (i >= 0) {
+      const out: string[] = this.multiPicked.slice();
+      out.splice(i, 1);
+      this.multiPicked = out;
+    } else {
+      this.multiPicked = this.multiPicked.concat([key]);
+    }
+    /* [B] 一个都不剩 ⇒ 自动退出多选。⛔ 留着一个「已选 0 项」的条只会让人以为卡住了。 */
+    if (this.multiPicked.length === 0) {
+      this.multiMode = false;
+    }
+  }
+
+  private exitMulti(): void {
+    this.multiMode = false;
+    this.multiPicked = [];
+  }
+
+  /** [B] 勾上的那些行（按 `saveGroups` 的顺序）。找不到的键**跳过** ——
+   *  它可能已经被别处删掉了，而那不是错误。 */
+  private pickedRows(): SaveRow[] {
+    const out: SaveRow[] = [];
+    for (const g of this.saveGroups) {
+      for (const s of g.saves) {
+        if (this.multiPicked.indexOf(this.saveKey(g.dir, s.id)) >= 0) {
+          out.push({ dir: g.dir, entry: s });
+        }
+      }
+    }
+    return out;
+  }
+
+  /* [A] 一次删掉所有勾上的。⚠️ 一个个走**同一条**搬进垃圾站的路，不是批量直接删 ——
+   *    批量删要额外的回滚逻辑，而这条路已经带回了回滚（见 SaveVault.vaultDelete）。
+   * ⚠️ 部分失败要**说出来**：只报成功会让玩家以为全删了。 */
+  private deleteMultiToVault(): void {
+    const rows: SaveRow[] = this.pickedRows();
+    if (rows.length === 0) {
+      this.exitMulti();
+      return;
+    }
+    const now: number = Date.now();
+    const fails: string[] = [];
+    let done: number = 0;
+    for (const r of rows) {
+      const e: string = vaultDelete(r.entry, r.dir, this.vaultDays, now,
+                                    this.ownerOfDir(r.dir), this.keyOfDir(r.dir));
+      if (e === '') {
+        done += 1;
+      } else {
+        fails.push(r.entry.label + '：' + e);
+      }
+    }
+    this.savesNote = fails.length === 0
+      ? ('把 ' + String(done) + ' 个存档放进了垃圾站，可以在那儿找回。')
+      : ('放进了垃圾站 ' + String(done) + ' 个；有 ' + String(fails.length) + ' 个没成功：'
+         + NL + fails.join(NL));
+    this.exitMulti();
+    this.selectedSave = '';
+    this.refresh();
+  }
+
   private askDelete(): void {
     if (this.selectedSave === '') {
       return;
@@ -2022,7 +2133,7 @@ export struct LauncherHome {
   /* [A] ⭐ 一个**存档目录**属于哪些版本 —— 直接复用「按存档」那一屏的分组结论。
    *
    * ⭐ 用 `groupTitle` 而不是自己拼：那里已经处理了「内置游戏要带版本号」
-   *    （`versionLabelOf`），而这两个地方必须**说同一件事** ——
+   *    （`groupTitle` 那套「版本在前」），而这两个地方必须**说同一件事** ——
    *    垃圾站里写「内置游戏」、存档页写「内置游戏（v8 Build 160.5）」，
    *    玩家会以为是两个东西。 */
   private ownerOfDir(dir: string): string {
@@ -2040,12 +2151,25 @@ export struct LauncherHome {
    * ⚠️ 老条目（或那一刻的 jar 已被删、目录已不在）没有 `owner` ⇒ **现算一次**，
    *    拿 `from` 去当前的分组里找。⛔ 都失败就说实话，别留空 ——
    *    空着会被读成「没有版本」，而那是错的。 */
+  /* [A] ⛔ 三级回退，**顺序是用户定的**（2026-10-02）：「优先显示版本 → 文件夹路径
+   *    → 不知道是谁的」。
+   *
+   * ⭐ 每一级都比下一级更接近玩家脑子里的那个东西：
+   *    ① 版本（`内置游戏（v8 Build 160.5）`）—— 就是他选的那一项；
+   *    ② 目录 —— ⚠️ 老条目、以及「留了很久没人读的孤立档」（`b160.5` 这种）只有这个，
+   *       而它恰好**指得准**：那个键就是他当时那一档的名字；
+   *    ③ 都没有 ⇒ 实话实说。
+   * ⛔ 别把 ③ 写成一句空话（「未知」）—— 要让人看出**我们真的不知道**，
+   *    而不是「有值但没显示」。 */
   private vaultOwnerText(e: VaultEntry): string {
     if (e.owner !== '') {
       return e.owner + (e.key === '' ? '' : ('（' + e.key + '）'));
     }
     const now: string = this.ownerOfDir(e.from);
-    return now === '' ? '（这条记录里没写下来源）' : now;
+    if (now !== '') {
+      return now;
+    }
+    return e.from === '' ? '不知道原来属于哪个版本' : ('目录 ' + e.from);
   }
 
   /** [B] 放回。刷新后存档列表当场出现它。 */
@@ -2753,6 +2877,34 @@ export struct LauncherHome {
    *    所以「操作的是哪一份数据」有唯一答案。⛔ 在它只存 `id` 的那些日子里，
    *    两边各放一份动作会让它们对「操作谁」的理解分叉。
    */
+  /* [A] 多选态的那一条。⭐ 抽成**零参** `@Builder`：两张列表共用同一份
+   * （带参数的 @Builder 不会因状态变化重跑，见文件开头那条）。
+   * ⚠️ 两句话必须都在：「已选几项」是状态，「删除 = 放进垃圾站」是**后果** ——
+   *    少了后者，玩家会以为「删除」是抹掉，于是不敢按。 */
+  @Builder
+  MultiBar() {
+    Row() {
+      Text('已选 ' + String(this.multiPicked.length) + ' 项 · 删除只是放进垃圾站，可以找回')
+        .fontSize(12).fontColor($r('sys.color.font_secondary'))
+        .layoutWeight(1)
+        .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+      Button('删除')
+        .fontSize(BUTTON_FONT_VP)
+        .fontColor($r('sys.color.warning'))
+        .backgroundColor($r('app.color.launcher_bg'))
+        .enabled(this.multiPicked.length > 0)
+        .onClick(() => { this.deleteMultiToVault(); })
+      Button('取消')
+        .fontSize(BUTTON_FONT_VP)
+        .backgroundColor($r('app.color.launcher_bg'))
+        .margin({ left: 8 })
+        .onClick(() => { this.exitMulti(); })
+    }
+    .width('100%')
+    .margin({ top: 10 })
+    .alignItems(VerticalAlign.Center)
+  }
+
   @Builder
   SaveActionRow() {
     Row() {
@@ -2832,6 +2984,12 @@ export struct LauncherHome {
         Text('这个目录里的存档')
           .fontSize(12).fontColor($r('sys.color.font_tertiary'))
 
+        /* [B] 用户 2026-10-02：「右边的选择存档删除页应该能长按多选」。
+         * ⚠️ 与「按存档」那边是**同一个** `MultiBar` 与同一份选中集 —— 两处是同一件事。 */
+        if (this.multiMode) {
+          this.MultiBar()
+        }
+
         /* [A] ⭐⭐ 用户 2026-10-02：「**按版本那里也要能管理存档**」。
          * ⛔ 原来这里只是一串只读文字 —— 看得到、动不了。
          * ⇒ 现在每一行**可以点**（选中它，与「按存档」那边用同一个选中状态），
@@ -2864,7 +3022,7 @@ export struct LauncherHome {
               Row() {
                 Text(sv.label)
                   .fontSize(14)
-                  .fontColor(this.selectedSave === this.saveKey(this.versionSavesDir(), sv.id)
+                  .fontColor(this.rowHot(this.saveKey(this.versionSavesDir(), sv.id))
                              ? $r('sys.color.brand') : $r('sys.color.font_primary'))
                   .layoutWeight(1)
                   .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2882,7 +3040,7 @@ export struct LauncherHome {
                   .fontSize(14).fontColor($r('sys.color.brand'))
                   .width(SAVE_TICK_COL_VP).textAlign(TextAlign.End)
                   .margin({ left: 6 })
-                  .visibility(this.selectedSave === this.saveKey(this.versionSavesDir(), sv.id)
+                  .visibility(this.rowHot(this.saveKey(this.versionSavesDir(), sv.id))
                               ? Visibility.Visible : Visibility.Hidden)
               }
               .width('100%')
@@ -2890,7 +3048,13 @@ export struct LauncherHome {
               .borderRadius(CARD_RADIUS_VP)
               .backgroundColor($r('app.color.launcher_card'))
               .margin({ top: 6 })
+              .gesture(LongPressGesture({ repeat: false, duration: 400 })
+                .onAction(() => { this.enterMulti(this.saveKey(this.versionSavesDir(), sv.id)); }))
               .onClick(() => {
+                if (this.multiMode) {
+                  this.toggleMultiPick(this.saveKey(this.versionSavesDir(), sv.id));
+                  return;
+                }
                 this.selectedSave = this.saveKey(this.versionSavesDir(), sv.id);
               })
             }, (sv: SaveEntry) => sv.id)
@@ -3441,6 +3605,16 @@ export struct LauncherHome {
             .fontSize(11).fontColor($r('sys.color.font_tertiary'))
             .margin({ top: 8 })
             .copyOption(CopyOptions.LocalDevice)
+
+          /* [B] 多选那条，以及上一次多选删除的结果。⛔ 结果只说一句就走 —— 它是提示，不是门。 */
+          if (this.multiMode) {
+            this.MultiBar()
+          }
+          if (this.savesNote !== '') {
+            Text(this.savesNote)
+              .fontSize(12).fontColor($r('sys.color.font_secondary'))
+              .width('100%').margin({ top: 8 })
+          }
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 20 })
@@ -3460,13 +3634,13 @@ export struct LauncherHome {
                   ForEach(this.versions, (v: VersionEntry) => {
                     Row() {
                       Column() {
-                        Text(v.label)
+                        /* [B] **版本在前、文件名在后** —— 与组头同一套顺序（用户 2026-10-02）。 */
+                        Text(v.version === '' ? '未知版本' : v.version)
                           .fontSize(15)
                           .fontColor(this.selectedVersion === v.path
                                      ? $r('sys.color.brand') : $r('sys.color.font_primary'))
                           .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-                        Text((v.version === '' ? '未知版本' : v.version)
-                             + '  ·  ' + this.versionSavesLine(v))
+                        Text(v.label + '  ·  ' + this.versionSavesLine(v))
                           .fontSize(12).fontColor($r('sys.color.font_tertiary'))
                           .margin({ top: 4 })
                           .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -3536,7 +3710,7 @@ export struct LauncherHome {
                           Column() {
                             Text(sv.label)
                               .fontSize(15)
-                              .fontColor(this.selectedSave === this.saveKey(g.dir, sv.id)
+                              .fontColor(this.rowHot(this.saveKey(g.dir, sv.id))
                                          ? $r('sys.color.brand') : $r('sys.color.font_primary'))
                               .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
                             Text((sv.kind === 'sector' ? (sv.sectors + ' 个区块 · ') : '')
@@ -3547,7 +3721,7 @@ export struct LauncherHome {
                           .alignItems(HorizontalAlign.Start)
                           .layoutWeight(1)
 
-                          if (this.selectedSave === this.saveKey(g.dir, sv.id)) {
+                          if (this.rowHot(this.saveKey(g.dir, sv.id))) {
                             Text('✓')
                               .fontSize(16).fontColor($r('sys.color.brand'))
                           }
@@ -3557,7 +3731,18 @@ export struct LauncherHome {
                         .borderRadius(CARD_RADIUS_VP)
                         .backgroundColor($r('app.color.launcher_card'))
                         .margin({ top: 8 })
-                        .onClick(() => { this.openSaveRow(g.dir, sv.id); })
+                        /* [A] ⭐ 长按进多选；已经在多选态时，**点击**就是勾选（见下）。
+                         * ⚠️ 多选态里长按与点击做同一件事，是为了让「已经进去了」的人
+                         *    不会因为记错手势而以为点不动。 */
+                        .gesture(LongPressGesture({ repeat: false, duration: 400 })
+                          .onAction(() => { this.enterMulti(this.saveKey(g.dir, sv.id)); }))
+                        .onClick(() => {
+                          if (this.multiMode) {
+                            this.toggleMultiPick(this.saveKey(g.dir, sv.id));
+                            return;
+                          }
+                          this.openSaveRow(g.dir, sv.id);
+                        })
                       }, (sv: SaveEntry) => this.saveKey(g.dir, sv.id))
                     }
                     .width('100%')
@@ -3588,6 +3773,19 @@ export struct LauncherHome {
           }
           .layoutWeight(3)
           .height('100%')
+          /* [A] ⛔⛔ **必须有这一行，否则内容短的时候会被竖直居中。**
+           *
+           * ⭐ `Scroll` 的 `align` **默认是 `Alignment.Center`** —— 内容比视口矮时它
+           *    就把内容摆在中间。用户 2026-10-02 报的「按版本，左边列表居中了，
+           *    应该置顶」就是它。
+           *
+           * ⚠️ 为什么以前看不出来：那时内层 Row 带着 `height('100%')`，
+           *    **永远和视口一样高** ⇒ 没有「多余空间」可以居中，也就没有症状。
+           *    而那一行正是让存档列表**滚不动**的原因（见那边的说明）。
+           * ⇒ ⭐ 同一个布局缺了两个属性，各自遮住了对方的毛病：
+           *    去掉 height 暴露了居中，补上 align 才两件都平。
+           * ⛔ 别只改一个。 */
+          .align(Alignment.TopStart)
           .scrollBar(BarState.Off)
 
           /* [A] ⚠️ 窄屏时**不渲染右侧面板** —— 那时它是子页（见上面那个分支）。
