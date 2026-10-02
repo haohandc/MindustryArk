@@ -143,6 +143,25 @@ interface SaveGroup {
   saves: SaveEntry[];
 }
 
+/* [A]
+ * 隔离切换时，「复制过去」可以复制进哪些**分类** —— 也就是这一档下的每一个键。
+ *
+ * ⭐ 用户 2026-10-02：
+ *   「复制改成多版本自行选择，告知用户可以复制到哪些粒度下的分类里面。现在这个有点反直觉。」
+ *
+ * ⛔ 原来是我替他全选（每个版本都补一份）—— 那不是「复制过去」的直觉含义，
+ *    而它又**看不见**（列表里没有任何东西告诉你刚才复制了几份）。
+ * ⭐ 现在把它摆出来让玩家自己勾：**看得见的选择，比聪明的默认值可靠**。
+ */
+interface CopyTarget {
+  /** [B] 隔离键 —— 也就这一档下的一个「分类」。 */
+  key: string;
+  /** [B] 落进这个分类的版本。 */
+  versions: VersionEntry[];
+  /** [B] 这个分类**已经有数据**了吗。⚠️ 有的话勾了也不会覆盖（见 applyIsolationCopy）。 */
+  hasData: boolean;
+}
+
 /** [B] 存档页的两种视图。 */
 const SAVES_VIEW_SAVE: string = 'save';
 const SAVES_VIEW_VERSION: string = 'version';
@@ -652,6 +671,17 @@ export struct LauncherHome {
   /** [B] 询问里待确认的那一档；'' 表示没有待确认的切换。 */
   @State pendingGranularity: string = '';
 
+  /* [A] ⭐ 「复制过去」时**玩家勾了哪些分类**。
+   * ⚠️ 每次打开这个选择时**重算**（见 `chooseGranularity`）—— 版本的增删与
+   *    各个分类有没有数据都会变，缓存下来会显示过期的东西。 */
+  /** [A] 上一次「把数据复制进来」失败的原因；'' = 没有失败。
+   * ⚠️ 单独一个 @State 而不是复用 `isolationNote`：这一块是要显示在**存档页**上的
+   *    （动作在那儿按的），而 `isolationNote` 渲染在**设置页**。⛔ 一个字段两个渲染点
+   *    会让「按下去了、屏幕上没反应」再发生一次 —— 那正是这一轮要修的病。 */
+  @State staleCopyNote: string = '';
+  @State copyTargets: CopyTarget[] = [];
+  @State copyPicked: string[] = [];
+
   /** [B] 迁移出问题时要告诉玩家的一句话；'' 表示没有。⛔ 不是门，只提示。 */
   @State isolationNote: string = '';
 
@@ -849,6 +879,15 @@ export struct LauncherHome {
     /* [A] ⭐⭐ 选之前就把「这一档怎么分、会落到哪些目录」摆出来。
      * 用户 2026-10-02：「弹窗没说明是怎么分类的，必须让人选完了才知道是啥情况」。 */
     this.pendingPreview = this.buildGranularityPreview(g);
+    /* [A] ⭐ 「复制过去」要复制的分类：算出来，并**默认全勾**。
+     *
+     * ⚠️ 默认全勾是刻意的：玩家点「复制过去」的意图就是「每个版本都别丢数据」，
+     *    那是**常见情形**；而他随时能取消掉某几个。
+     *    反过来的默认（一个都不勾）会让最常见的意图要点两次。
+     * ⭐ 与「我替你全选」的差别在于——**现在是看得见的**，而且能改。
+     */
+    this.copyTargets = this.buildCopyTargets(g);
+    this.copyPicked = this.copyTargets.map((c: CopyTarget) => c.key);
     this.pendingUsesBundled = this.versions.some((v: VersionEntry) => v.source === 'bundled');
     /* [A] ⭐ 点名当前这个版本，以及它**在这一档下**会用哪个目录 —— 见那两个 @State 的说明。
      * ⚠️ 版本名从 `versions` 里按 `resolution.path` 找：那是**版本身份**（jar 路径），
@@ -954,31 +993,33 @@ export struct LauncherHome {
     this.refresh();
     return;
   }
-  /* [B] 其余版本**尽力而为**：补的是「它还没有数据」的那些，失败了不阻止开隔离。 */
+  /* [A] ⭐ 其余**玩家勾了的**分类 —— 不再是我替他全选（见 CopyTarget 的说明）。
+   * ⚠️ 仍然只补「还没有数据」的那些：已有的那份可能装着后来玩的进度，
+   *    覆盖它等于又删了一次。⇒ 勾了也不会覆盖，界面上就是这么写的。 */
   const extraFails: string[] = [];
-  for (const v of this.versions) {
-    const k: string = resolveGameDirAndKey(g, v.source, v.path).key;
-    if (k === '' || k === key) {
+  for (const c of this.copyTargets) {
+    if (this.copyPicked.indexOf(c.key) < 0 || c.key === key || c.hasData) {
       continue;
     }
-    if (gameDataExists(isolatedGameDataDir(k))) {
-      continue;
-    }
-    const e: string = copyLiveDataInto(k);
+    const e: string = copyLiveDataInto(c.key);
     if (e !== '') {
-      extraFails.push(v.label + '：' + e);
+      extraFails.push(c.key + '：' + e);
     }
-  }
-  if (extraFails.length > 0) {
-    this.isolationNote = '隔离已经打开，但有几个版本没能拿到这份数据：'
-                       + NL + extraFails.join(NL);
   }
 
     this.granularity = g;
     writeGranularity(this.filesDir, g);
-    this.isolationNote = '';
+    /* [A] ⛔⛔ 顺序：**先清空、再写失败说明**。
+     *    原来的写法是反的（先赋值、紧接着 `= ''`）⇒ 那句「有几个版本没能拿到这份数据」
+     *    **一次都没显示过**。⚠️ 它不报错、不留痕，只是永远看不见 ——
+     *    与 `ForEach` 那条「做完了没刷新」是同一族：**写进去了，但没人读得到**。 */
+    this.isolationNote = extraFails.length > 0
+      ? ('隔离已经打开，但有几个版本没能拿到这份数据：' + NL + extraFails.join(NL))
+      : '';
     this.showIsolationAsk = false;
     this.pendingGranularity = '';
+    this.copyTargets = [];
+    this.copyPicked = [];
     /* [A] ⭐⭐ **刷新**，而这一句是用户 2026-10-02 报上来的缺口。
      *
      * ⛔⛔ 后果是这样的：复制**其实成功了**（设备日志：`copied 14 dir(s) / 188 file(s)`），
@@ -1004,6 +1045,86 @@ export struct LauncherHome {
      * ⚠️ 界面上会**看起来像空的** —— 那是真的（玩家选的就是「不复制」），
      *    但必须让它是**新目录的空**，而不是停在旧目录的内容上。 */
     this.refresh();
+  }
+
+  /* [A] ⭐⭐ 「隔离开着，但**当前版本那一档**还是空的」—— 这里给它一个出口。
+   *
+   * ⛔⛔ 用户 2026-10-02 报「复制过去的新存档全都看不见」，而他踩到的是**这条路没有出口**：
+   *    · 复制只发生在**改粒度**那一刻（`chooseGranularity` → 询问 → `applyIsolationCopy`）
+   *    · 而他换 jar（159.7）是在**改完粒度之后** ⇒ 键从 `bundled` 变成 `b159`
+   *    · 这时粒度**没变**（还是 build）⇒ `chooseGranularity` 第一行就 return ⇒ **再也不弹那个窗**
+   *    ⇒ 新键那份目录**没有任何代码路径去建它** ⇒ 进游戏看到空数据，
+   *      而界面上只有一句「请把隔离关掉（或重新打开一次）」—— 那是让他去**猜**我该做的事。
+   *
+   * ⭐ 实测（同一台平板，2026-10-02），两个事实都读自设备、不是推的：
+   *      `isolation: bridge written -- enabled=1 key=b159`
+   *      `isolation: STALE -- on, but /data/.../instances/b159/sets/default/.local/share/Mindustry does not exist`
+   *      而 `instances/` 下只有 `bundled` 与 `n8` —— **没有 b159**。
+   *
+   * ⭐ 判据（本项目的老账「门关上了也要有开它的路」）：
+   *    「目标目录是空的」是一个**状态**，那就必须有一个**只针对这个状态**的出口。
+   *
+   * ⭐ 为什么是**内嵌的一块**而不是弹窗：状态一出现它就一直在（切页签、切版本回来都还在），
+   *    而弹窗只在那一刻响一次 —— 手一滑关掉就再也找不到它了。
+   *    ⚠️ 这同时就是用户说的「切版本时再问一次」：换一个 jar ⇒ 目标目录又空了 ⇒ 这块又出现。
+   *
+   * ⛔ 只补**当前版本**这一个键（他的两个提案里选的是这个）—— 别的键一律不动，
+   *    已有的数据一律不覆盖（`copyLiveDataInto` 只在目标目录**不存在**时才被这里调到）。
+   */
+  private copyStaleCurrent(): void {
+    this.staleCopyNote = '';
+    const res: GameResolution = resolveGame(this.filesDir, this.bundleCodeDir);
+    const key: string = resolveGameDirAndKey(this.granularity, res.source, res.path).key;
+    if (key === '') {
+      /* [B] 不隔离时这一块根本不显示；走到这里说明状态刚好变了。
+       * ⛔ 不要硬造一个键 —— 那会造出一个游戏根本不会去读的目录。 */
+      this.staleCopyNote = '现在没有开启隔离，没有可以复制进去的分类';
+      this.refresh();
+      return;
+    }
+    const note: string = copyLiveDataInto(key);
+    if (note !== '') {
+      this.staleCopyNote = note;
+    } else {
+      this.isolationNote = '已经把数据复制进这一档（' + key + '）。';
+    }
+    /* [A] ⭐ 必须显式重算 —— 复制成功后这块会**自己消失**，而存档列表会当场填上。
+     * ⛔ 不刷新的话，「复制成功」与「什么都没发生」在界面上长得一模一样。 */
+    this.refresh();
+  }
+
+  /* [A] 上面那个状态的界面。⭐ 零参 `@Builder`，所以**设置页与存档页可以共用同一份**
+   * （本文件开头那条「带参数的 @Builder 不会因状态变化重跑」只针对**带参数**的那种）。
+   */
+  @Builder
+  StaleCopyOffer() {
+    Column() {
+      Text('⚠ 隔离开着，但当前版本这一档还是空的 —— 进游戏会看到空的数据。'
+           + '你的存档一直都在（在「未隔离的那一份」里）。')
+        .fontSize(12).fontColor($r('sys.color.warning'))
+        .width('100%')
+      /* [B] 失败时**留在这块里**说清楚，因为失败意味着状态没变、这块还会在。
+       * ⛔ 不写成弹窗：失败一次就弹一次的话，玩家得先关掉窗才看得见下面还有什么。 */
+      if (this.staleCopyNote !== '') {
+        Text(this.staleCopyNote)
+          .fontSize(12).fontColor($r('sys.color.warning'))
+          .width('100%').margin({ top: 6 })
+      }
+      Row() {
+        Button('把未隔离的那份复制过来')
+          .fontSize(BUTTON_FONT_VP)
+          .onClick(() => { this.copyStaleCurrent(); })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.End)
+      .margin({ top: 8 })
+    }
+    .width('100%')
+    .padding(14)
+    .borderRadius(CARD_RADIUS_VP)
+    .backgroundColor($r('app.color.launcher_bg'))
+    .alignItems(HorizontalAlign.Start)
+    .margin({ bottom: 16 })
   }
 
   /* [A]
@@ -1697,6 +1818,64 @@ export struct LauncherHome {
    * ⚠️ 确认框里要写出**具体保留到哪一天** —— 「7 天」是抽象的，
    *    「保留到 2026-10-09 18:40」是玩家能判断的。
    */
+  /* [A]
+   * 列出「这一档下的每一个分类」，以及谁落进它、它有没有数据。
+   *
+   * ⚠️ 会读每个 jar（`resolveGameDirAndKey` → `computeKey` → `gameVersionParts`，
+   *    那个函数没有缓存）⇒ 只在**点开这个选择**时算一次，⛔ 不在渲染里算。
+   */
+  private buildCopyTargets(g: string): CopyTarget[] {
+    const out: CopyTarget[] = [];
+    const byKey: Map<string, CopyTarget> = new Map<string, CopyTarget>();
+    for (const v of this.versions) {
+      const k: string = resolveGameDirAndKey(g, v.source, v.path).key;
+      if (k === '') {
+        continue;   /* [B] 不隔离 ⇒ 没有分类可复制进 */
+      }
+      let one: CopyTarget | undefined = byKey.get(k);
+      if (one === undefined) {
+        one = { key: k, versions: [], hasData: gameDataExists(isolatedGameDataDir(k)) };
+        byKey.set(k, one);
+        out.push(one);
+      }
+      one.versions.push(v);
+    }
+    return out;
+  }
+
+  /** [B] 分类的显示名：键 ＋ 落进它的版本。 */
+  private copyTargetTitle(c: CopyTarget): string {
+    const names: string[] = [];
+    for (const v of c.versions) {
+      names.push(v.label);
+    }
+    return names.join('  ·  ') + '   →   ' + c.key;
+  }
+
+  /** [B] 分类的副标题：它现在有没有数据。⭐ 这一句是「勾了会发生什么」的答案。 */
+  private copyTargetSub(c: CopyTarget): string {
+    if (c.hasData) {
+      return '已经有数据 —— 勾了也不会覆盖它';
+    }
+    return '还没有数据 —— 会复制一份当前数据进来';
+  }
+
+  /** [B] 勾/取消勾一个分类。⚠️ 必须**赋新数组**，理由见 toggleTransferPick。 */
+  private toggleCopyPick(key: string): void {
+    const i: number = this.copyPicked.indexOf(key);
+    if (i >= 0) {
+      const out: string[] = this.copyPicked.slice();
+      out.splice(i, 1);
+      this.copyPicked = out;
+    } else {
+      this.copyPicked = this.copyPicked.concat([key]);
+    }
+  }
+
+  private isCopyPicked(key: string): boolean {
+    return this.copyPicked.indexOf(key) >= 0;
+  }
+
   private askDelete(): void {
     if (this.selectedSave === '') {
       return;
@@ -3169,6 +3348,13 @@ export struct LauncherHome {
                    * ⚠️ 分组键是**目录**而不是版本（理由见 buildSaveGroups）：
                    *    隔离关着时只有一组，组头会写「N 个版本共用同一份数据」。
                    */
+                  /* [A] ⭐⭐ 「当前版本那一档是空的」在**存档页**也要有出口 ——
+                   * 玩家来找存档时就是在这儿看见「空」的，那就该在这儿把它补上。
+                   * ⚠️ 放在列表**顶上**而不是塞进那一组里：这个状态意味着当前版本那一组
+                   *    本身是空的，把按钮放进一个空组里，玩家会以为它只对那一组有效。 */
+                  if (this.isolationStale) {
+                    this.StaleCopyOffer()
+                  }
                   ForEach(this.saveGroups, (g: SaveGroup) => {
                     Column() {
                       /* [B] 组头 = 用户要的「小字」那一半：谁在读这份数据。 */
@@ -3440,10 +3626,9 @@ export struct LauncherHome {
            * 它不是错误提示，而是一句**诊断**：说清现在什么状态、以及怎么退回去。
            * ⛔ 没有它，玩家只能看到「存档全没了」，而界面上没有任何线索指向隔离。 */
           if (this.isolationStale) {
-            Text('⚠ 隔离现在是开着的，但当前版本的数据目录还不存在 —— '
-                 + '进游戏会看到空数据。请把隔离关掉（或重新打开一次让它复制），原存档一直都在。')
-              .fontSize(12).fontColor($r('sys.color.warning'))
-              .margin({ top: 8 })
+            /* [A] ⛔ 原来这里只是一句提示（「请把隔离关掉（或重新打开一次）」）——
+             * 那是让玩家去猜一个**我们该做**的动作。现在它是同一块可点的东西。 */
+            this.StaleCopyOffer()
           }
 
           /* [B] 迁移出问题时的提示。⛔ 它不是门 —— 隔离照旧打开，只是新目录可能是空的，
@@ -3931,32 +4116,97 @@ export struct LauncherHome {
     if (this.isolationConfirm !== '') {
       Column() {
         Column() {
-          Text('再确认一次')
-            .fontSize(17).fontColor($r('sys.color.font_primary'))
           Text(this.isolationConfirm === 'copy'
-               ? '把当前数据复制一份到这个版本。原来那份不动。'
-               : '这个版本会是空的，相当于新建一个存档。')
-            .fontSize(13).fontColor($r('sys.color.font_secondary'))
-            .margin({ top: 10 })
+               ? '复制到哪些分类' : '再确认一次')
+            .fontSize(17).fontColor($r('sys.color.font_primary'))
 
-          Button('确定')
-            .fontSize(15)
-            .width('40%').alignSelf(ItemAlign.Center)
-            .margin({ top: 16 })
-            .onClick(() => {
-              const what: string = this.isolationConfirm;
-              this.isolationConfirm = '';
-              if (what === 'copy') {
-                this.applyIsolationCopy();
-              } else {
-                this.applyIsolationEmpty();
+          /* ============================================================
+           * [A] ⭐⭐ 「复制过去」＝**自己挑复制进哪些分类**。
+           *
+           * 用户 2026-10-02：
+           *   「复制改成多版本自行选择，**告知用户可以复制到哪些粒度下的分类里面**。
+           *     现在这个有点反直觉。」
+           *
+           * ⛔ 原来是我替他全选（每个版本都补一份）—— 而它在界面上**看不见**：
+           *    没有任何东西告诉玩家「刚才复制了几份」。⇒ 一个聪明但沉默的默认值，
+           *    比一个看得见的选择差。
+           *
+           * ⭐ 每一行就是**这一档下的一个分类**（一个键），后面列出落进它的版本、
+           *    以及它现在有没有数据 —— 那正是「勾了会发生什么」的答案。
+           * ⚠️ 默认**全勾**（见 chooseGranularity）：最常见的意图就是「每个都别丢」，
+           *    ⛔ 而默认一个不勾会让最常见的意图要点两次。
+           * ============================================================ */
+          if (this.isolationConfirm === 'copy') {
+            Scroll() {
+              Column() {
+                ForEach(this.copyTargets, (c: CopyTarget) => {
+                  Row() {
+                    Column() {
+                      Text(this.copyTargetTitle(c))
+                        .fontSize(14)
+                        .fontColor(this.isCopyPicked(c.key)
+                                   ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
+                        .width('100%')
+                        .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
+                      Text(this.copyTargetSub(c))
+                        .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                        .width('100%').margin({ top: 4 })
+                    }
+                    .alignItems(HorizontalAlign.Start)
+                    .layoutWeight(1)
+
+                    if (this.isCopyPicked(c.key)) {
+                      Text('✓').fontSize(16).fontColor($r('sys.color.brand'))
+                    }
+                  }
+                  .width('100%')
+                  .padding(12)
+                  .borderRadius(CARD_RADIUS_VP)
+                  .backgroundColor($r('app.color.launcher_bg'))
+                  .margin({ top: 8 })
+                  .onClick(() => { this.toggleCopyPick(c.key); })
+                }, (c: CopyTarget) => c.key)
+
+                if (this.copyTargets.length === 0) {
+                  Text('这一档下没有可复制的分类。')
+                    .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                    .width('100%').margin({ top: 8 })
+                }
               }
-            })
-          Button('取消')
-            .fontSize(14)
-            .width('20%').alignSelf(ItemAlign.Center)
+              .width('100%')
+            }
+            .width('100%')
+            .constraintSize({ maxHeight: 300 })
+            .align(Alignment.TopStart)
             .margin({ top: 12 })
-            .onClick(() => { this.isolationConfirm = ''; })
+          } else {
+            Text('这个版本会是空的，相当于新建一个存档。')
+              .fontSize(13).fontColor($r('sys.color.font_secondary'))
+              .margin({ top: 10 })
+          }
+
+          Row() {
+            Button(this.isolationConfirm === 'copy' ? '复制' : '确定')
+              .fontSize(15)
+              .layoutWeight(1)
+              .enabled(this.isolationConfirm !== 'copy' || this.copyPicked.length > 0)
+              .onClick(() => {
+                const what: string = this.isolationConfirm;
+                this.isolationConfirm = '';
+                if (what === 'copy') {
+                  this.applyIsolationCopy();
+                } else {
+                  this.applyIsolationEmpty();
+                }
+              })
+            Button('取消')
+              .fontSize(14)
+              .layoutWeight(1)
+              .margin({ left: 12 })
+              .onClick(() => { this.isolationConfirm = ''; })
+          }
+          .width('100%')
+          .margin({ top: 16 })
         }
         .width('100%')
         .constraintSize({ maxWidth: this.dialogWidthVp() })

@@ -402,7 +402,7 @@ export function describeCounts(c: GameDataCounts): string {
 }
 
 /* [A]
-/* [A] 递归复制**不再在这里实现** —— 已抽到 `utils/FsTree.ets`，
+ * 递归复制**不再在这里实现** —— 已抽到 `utils/FsTree.ets`，
  * 因为存档垃圾站也要用它（搬家/放回/彻底删除），而本项目对「同一件事两份实现」
  * 付过好几次代价。
  *
