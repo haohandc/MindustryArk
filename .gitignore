@@ -34,6 +34,11 @@ __pycache__/
 # ---------------------------------------------------------------------------
 entry/libs/
 
+# tools 形态构建时 `entry/libs/arm64-v8a/` 暂存处（见 scripts/make_store_app.sh）。
+# ⛔ 它**必须在 entry/libs/ 之外**：hvigor 会递归收集那里的 `.so`，
+#    放进去会让 stash 被打进包。
+/.tools-stash/
+
 # The INPUTS those scripts assemble entry/libs/ from: the upstream and patched
 # game jars, the LWJGL jars and natives, and two files out of the trimmed JDK.
 # Same reasoning as entry/libs/ -- large, mostly reproducible, and the parts that

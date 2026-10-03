@@ -2038,6 +2038,28 @@ export struct LauncherHome {
            * 问题 ⇒ 必须能出去：一个「仍然尝试启动」的入口。没有它，一次路径判断失误就把应用变成
            * 永远打不开游戏的启动器，而玩家没有任何办法绕过去（本项目为「门关上了却没有开的路径」付过代价）。 */
           Column() {
+            /* ⛔⛔ **先分叉：这个包到底带不带运行时。**
+             *  `resolution.source === 'no-runtime'` 由 `resolveGame()` 给出，而那是
+             *  **运行期文件探测**（`hasRuntime()`，查包里有没有 `libjvm_real.so`），
+             *  ⛔ 不是编译期常量 ⇒ 三种形态（master / lite / tools）的 ArkTS 因此可以逐字节相同。
+             *
+             *  ⚠️ 为什么这里非分叉不可：这个空状态原本一律说「把 .jar 放进文件夹」——
+             *     而那对**没有运行时的包**是**空头承诺**：jar 放进来了也跑不起来
+             *     （包里没有 JVM）。玩家会照做、然后发现「点了没反应」，
+             *     而那是最难查的一种失败。⇒ 这个分支的**全部价值就是不给那条错指引**。 */
+            if (this.resolution.source === 'no-runtime') {
+              Text('这个包不能运行游戏')
+                .fontSize(18).fontColor($r('sys.color.font_primary'))
+              Text('它只能管理存档与数据包 —— 包里没有游戏运行时。')
+                .fontSize(13).fontColor($r('sys.color.font_secondary'))
+                .margin({ top: 8 })
+                .textAlign(TextAlign.Center)
+              /* ⭐ 给出**出路**，不只是一句「不行」。没有这一句，玩家只知道坏掉了。 */
+              Text('要玩 Mindustry，请安装带游戏的完整版本；\n这个版本可以用「导入数据」接管它的存档。')
+                .fontSize(13).fontColor($r('sys.color.font_secondary'))
+                .margin({ top: 12 })
+                .textAlign(TextAlign.Center)
+            } else {
             /* ⚠️ 标题**据实**说，别一律说「没有找到游戏」。进入条件是 `games.length === 0`，
              * 而 `games` 是 `listGameJars()` 列出来的 —— 也就是**玩家自己放在 Download 里的 jar**，
              * 内置那份不在里面 ⇒ 内置在时写「没有找到游戏」会和下面的「内置游戏：有」**自相矛盾**，
@@ -2072,6 +2094,7 @@ export struct LauncherHome {
             Text('内置游戏：' + (this.hasBundled ? '有' : '无'))
               .fontSize(12).fontColor($r('sys.color.font_secondary'))
               .margin({ top: 12 })
+            }
           }
           .width('100%')
           .padding({ left: 24, right: 24, top: 40, bottom: 24 })

@@ -34,6 +34,30 @@ const LAUNCHER_MARKER_FILE_NAME = 'show_launcher';
  *    所以两个 jar 都是改过名的。见 launcher.c 的 GAME_JAR 注释。 */
 const BUNDLED_GAME_REL = '/libs/arm64/game/mindustry.so';
 
+/* 包内那份 JVM，相对 `bundleCodeDir`。
+ *
+ * ⭐ 为什么需要它：**有两种包不带运行时**。
+ *    一种是 `SHIPS_GAME = False` 的 lite 分支（不带游戏，但**带** JDK）；
+ *    另一种是 `make_store_app.sh tools` 产出的「管理工具」包
+ *    —— **JDK 和游戏都不带**，因为不跑 JVM 就不需要
+ *    `ALLOW_WRITABLE_CODE_MEMORY`，而那条 ACL 只覆盖平板与 PC/2in1
+ *    ⇒ 那是它能在手机上架的**全部理由**（见那个脚本的文件头）。
+ *
+ * ⚠️ 路径里那两层名字都来自 `launcher.c` 的编译期常量
+ *    （`JDK_HOME = ".../libs/arm64/jdk21"`、真正的 JVM 在 `lib/server/` 下，
+ *     是 `libjvm_real.so`）。⛔ 改这里必须同时看那边 —— 两处指向同一个文件，
+ *    而它们 **只有在「包齐不齐」这件事上会同时被用**。
+ * ⚠️ `libjvm.so`（顶层那个）**不能**用来判：它是锚库，
+ *    在一个没有 JDK 的包里它同样会缺席，但用真正的 JVM 更直白。 */
+const BUNDLED_RUNTIME_REL = '/libs/arm64/jdk21/lib/server/libjvm_real.so';
+
+/* `source` 的取值：
+ *   'user'      玩家自选的那个 jar
+ *   'bundled'   包内自带的那个
+ *   'none'      两个都不行（真的没有游戏）
+ *   'no-runtime' **这个包不带 JVM** —— 它与 'none' 是两件事：
+ *               前者是「这个包不支持跑游戏」，后者是「你没有游戏文件」。
+ *               分开是因为对玩家的处置不同（换包 vs 导入一个 jar）。 */
 /** 列表里的一项。够画一行就够了。 */
 export interface GameJar {
   name: string;
@@ -250,6 +274,37 @@ export function hasBundledGame(bundleCodeDir: string): boolean {
   return isReadableJar(bundledGamePath(bundleCodeDir));
 }
 
+/** 这个包里**带不带运行时**（那份自编译的 JVM）。
+ *
+ * ⭐⭐ 与 `isReadableJar` 同样，是**运行期文件探测**，**不是编译期常量**。
+ *    这一点是刻意的、也是承重的：三种形态（master / lite / tools）的
+ *    ArkTS 源码因此**可以逐字节相同**，差异只体现在「包里有什么」——
+ *    与 `SHIPS_GAME` 那套既有设计完全一致。
+ *
+ * ⛔ **为什么必须问它，而不是只问「有没有游戏」**：
+ *    `resolveGame()` 是两级的 —— 先看**玩家自选**的 jar，再看包里的。
+ *    只判「包里有没有游戏」的话，一个**没有运行时**的包里只要玩家
+ *    导入并选中了自己的 jar，`resolveGame` 就会乐呵呵地返回那个路径，
+ *    启动器显示「启动游戏」，按下去却什么都不发生（`launcher.c` 在
+ *    `start_jvm` 里找不到 JVM 就直接返回）。
+ *    ⇒ 那是「点了没反应」，最难查的一种失败。
+ *
+ * ⚠️ 判据取**真正的 JVM**（`libjvm_real.so`），不是顶层那个锚库 `libjvm.so`：
+ *    两者在有运行时的包里都在、在没有的包里都不在，但前者是「能不能起 JVM」
+ *    的直接回答，后者只是加载链上的一环。 */
+export function hasRuntime(bundleCodeDir: string): boolean {
+  return isReadableJar(bundledRuntimePath(bundleCodeDir));
+}
+
+/** 包内那份 JVM 的绝对路径。⚠️ 结尾斜杠会被吃掉，同 `bundledGamePath`。 */
+export function bundledRuntimePath(bundleCodeDir: string): string {
+  let base: string = bundleCodeDir;
+  while (base.length > 1 && base.endsWith('/')) {
+    base = base.substring(0, base.length - 1);
+  }
+  return base + BUNDLED_RUNTIME_REL;
+}
+
 export function bundledGameVersion(bundleCodeDir: string): string {
   const p: string = bundledGamePath(bundleCodeDir);
   return p === '' ? '' : gameVersionOf(p);
@@ -392,18 +447,36 @@ export function consumeLauncherRequest(filesDir: string): boolean {
  * ⚠️ 两个来源都必须【真的能打开】才算数：一条记在那里但文件已被删掉的路径必须落回下一档，
  *    而不是让启动失败 —— 玩家删掉一个 jar 文件是常事。 */
 export function resolveGame(filesDir: string, bundleCodeDir: string): GameResolution {
-  const chosen: string = readSelection(filesDir);
-  if (chosen !== '' && isReadableJar(chosen)) {
-    return { path: chosen, source: 'user' };
+  /* ⭐⭐ **先问运行时在不在，再谈选哪个 jar。**
+   * ⛔ 这一行是后补的，而它补的是一个真缺口：`resolveGame` 原本只看
+   *    「哪个 jar 可读」，完全不问包里的 JVM 在不在。于是**没有运行时的包**
+   *    （`make_store_app.sh tools` ⇒ 管理工具形态）里，只要玩家导入并选中
+   *    自己的 jar，它就会返回 `source: 'user'` ⇒ 界面显示「启动游戏」
+   *    ⇒ 按下去什么都不发生（`launcher.c` 的 `start_jvm` 找不到 JVM 直接返回）。
+   *    ⇒ 一个**点了没反应**的按钮，比一个**明确不可用**的按钮糟得多。
+   * ⚠️ 它**不**改动 `hasBundledGame()` 的语义，也不影响 master/lite：
+   *    那两个形态的包里都有运行时，这一行恒为真。 */
+  const runtime: boolean = hasRuntime(bundleCodeDir);
+  if (runtime) {
+    const chosen: string = readSelection(filesDir);
+    if (chosen !== '' && isReadableJar(chosen)) {
+      return { path: chosen, source: 'user' };
+    }
+    if (chosen !== '') {
+      hilog.warn(DOMAIN, TAG, 'games: the chosen jar is gone, falling back: %{public}s', chosen);
+    }
+    const bundled: string = bundledGamePath(bundleCodeDir);
+    if (isReadableJar(bundled)) {
+      return { path: bundled, source: 'bundled' };
+    }
+    return { path: '', source: 'none' };
   }
-  if (chosen !== '') {
-    hilog.warn(DOMAIN, TAG, 'games: the chosen jar is gone, falling back: %{public}s', chosen);
-  }
-  const bundled: string = bundledGamePath(bundleCodeDir);
-  if (isReadableJar(bundled)) {
-    return { path: bundled, source: 'bundled' };
-  }
-  return { path: '', source: 'none' };
+  /* 没有运行时。❗ 这里**不再看玩家选的 jar** —— 选了也跑不起来。
+   * ⚠️ 也不清 `selected_game.txt`：那个文件属于玩家，而且将来换回带运行时的
+   *    包时它应该还有效。只是在**这个**包里它不构成「可以启动」。 */
+  hilog.info(DOMAIN, TAG, 'games: no runtime in this package (form=tools?) -- '
+             + 'the launcher is a management tool here, not a game launcher');
+  return { path: '', source: 'no-runtime' };
 }
 
 /** 把这次判断的依据整个写进 hilog，每次都写。
