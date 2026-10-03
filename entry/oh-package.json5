@@ -6,6 +6,24 @@
   "author": "",
   "license": "",
   "dependencies": {
-    //"libSDL3.so": "file:./src/main/cpp/types/libSDL3",
+    // 每个 src/main/cpp/types/ 下的 NAPI 模块一条。DevEco 的
+    // 「oh-package.json5配置」检查要求：那边的 oh-package.json5 指名的每个 .so，
+    // 都必须能从**模块自己**的 dependencies 里找到（CppPackageJsonChecker，
+    // 在 ohos-resource-*.jar 里；DEPENDENCIES_PATH_PREFIX = "file:."）。
+    // 没有这几条时，五个模块全被标红。
+    //
+    // ⭐ 构建**不需要**它们：hvigor 打包的是 CMake 产出的 .so，
+    //    这个块为空时照样能产出正确的 HAP（已实测）。
+    //
+    // ⛔⛔ `libSDL3.so` **故意不列**，这不是漏写。
+    //    依赖的【键】同时还要满足 ohpm 的包名规则，而那条规则**只允许小写** ——
+    //    `libSDL3.so` 里有大写。⇒ 把它加进来，是拿「.so 名称」那条红字
+    //    去换「字符串违反模式」那条红字，**两边都是一条**。
+    //    而小写拼写又不能改：这个键同时是 `EntryAbility.ets` 里的 import
+    //    说明符，也是 SDL 自己产出的文件名（`OUTPUT_NAME "SDL3"`）。
+    "libjarver.so": "file:./src/main/cpp/types/libjarver",
+    "libsavemeta.so": "file:./src/main/cpp/types/libsavemeta",
+    "libshield.so": "file:./src/main/cpp/types/libshield",
+    "libstorprobe.so": "file:./src/main/cpp/types/libstorprobe",
   }
 }
