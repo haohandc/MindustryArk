@@ -2619,3 +2619,67 @@ without a "what this build was tested on" line, and the maintainer will turn the
 testing during the day. So the state at publication is: built, gated (`verify_hap.py` PASS,
 version gate PASS), and exercised on the tablet by hand — **and not** exercised on a phone, and
 not exercised from the payload zip.
+
+### ✅ Verified as published — v1.3.1.1, 2026-10-03
+
+⭐ **Read back from the API, not assumed.** Both digests came from `release.assets[].digest` and
+both match the local artifact byte for byte, sizes included. This is the first release since
+v1.0.0.2 published **without** the pre-release flag.
+
+| | |
+|---|---|
+| Release id | **`402517924`** |
+| Tag | **`v1.3.1.1`** |
+| Target | **`f6a7fafd8fca4f657381744803540d5efdcc1b4d`** — `fix(launcher): a full package reported itself as one with no runtime` |
+| Pre-release | **false** (and `draft` false) |
+| Published | **`2026-10-03T13:09:10Z`** = 2026-10-03 21:09:10 +08:00 |
+| Assets | two, and **neither is the signed HAP** ✅ |
+
+| Asset | bytes | sha256 (from the API) | matches local |
+|---|---|---|---|
+| `…-1.3.1.1-unsigned.hap` | 276,023,112 | `03781be2d7a76b46f4235a5ed75430732953a02a4d5c6090ed1570b8809686c8` | ✅ |
+| `…-1.3.1.1-payload.zip` | 149,339,785 | `911c3832fc9a08bbc8ffc68d1933532994ca771e628c5d44ab949b1a4239bd6a` | ✅ |
+
+⚠️ **The HAP was re-staged 13 minutes before publication, and that is load-bearing.** The first
+staging (20:35) predated the `hasRuntime` fix and would have shipped a package that calls itself
+a management tool with no runtime — the exact defect being fixed in this release. Caught by
+comparing `dist/` against the build output; the two differed in size by 445 bytes and in sha256.
+
+⚠️ **The payload's digest changed from v1.3.0.1's (`de7d1535…` → `911c3832…`) and the payload did
+NOT change.** Two reasons, neither of them content:
+
+- the entry names gained the `entry/libs/` prefix, because the zip's base is now
+  `config.PROJECT_ROOT` rather than `entry/libs`'s parent. That is the fix described in §4 —
+  the `arm64-v8a/` layout made the zip's own `README-PAYLOAD.txt` instruction wrong. Longer
+  names compress to a different size: **149,337,475 B → 149,339,785 B**, +2,310.
+- a zip records each entry's mtime, so re-zipping identical content never reproduces a digest.
+
+⭐ **The content is unchanged, measured by comparing CRCs rather than sizes: all 105 payload
+files are CRC-identical to v1.3.0.1's.** That is now six consecutive builds that have moved
+nothing under `entry/libs/` — the payload has not changed since v1.0.0.2.
+
+⚠️ **The tag is `f6a7faf`, and the released artifact is the fixed one.** `releases/latest` now
+points here (checked, not assumed — a non-prerelease release takes the repository's "Latest"
+link), so a visitor arriving at the repository lands on this build rather than v1.2.0.1.
+
+**What this release fixes, and who it affects**
+
+- **`hasRuntime()` was always false.** It reused `isReadableJar`, which requires the first two
+  bytes to be `PK` — a zip — while the bundled JVM is an ELF. Every package therefore reported
+  itself as having no runtime: the launcher said 「这个包不能运行游戏」 and disabled the start
+  button, on a 276 MB package containing the game, the module image and the JVM. Introduced in
+  `9bc66b8`, so **it never shipped in a release** — v1.3.0.1 predates it. Fixed in `f6a7faf`.
+- Two C functions that were only implicitly declared, and an SDL3 `.d.ts` whose arity and imports
+  had never been correct — see §2.16.
+
+**How this block was closed**
+
+```bash
+curl -s https://api.github.com/repos/haohandc/MindustryArk/releases/tags/v1.3.1.1   | grep -E '"id"|"tag_name"|"prerelease"|"digest"|"size"'
+```
+
+⚠️ **What is NOT verified: nobody has run the released artifact.** The maintainer exercised the
+same build on a phone during development (`hdc install -r`, launched, and its hilog shows
+`resolved=… source=bundled` with no "no runtime" line), and on the tablet earlier — but the file
+that was uploaded has not itself been downloaded, installed and driven. And it has never been
+exercised from the payload zip.
