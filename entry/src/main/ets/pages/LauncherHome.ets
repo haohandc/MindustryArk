@@ -17,7 +17,10 @@ import { GameJar, GameResolution, listGameJars, readSelection, writeSelection,
          bundledGameVersion, hasBundledGame, bundledGamePath } from '../games/GameLibrary';
 /* 界面偏好（启动后进哪里）。⛔ 内容宽度**不再**在这里 —— 见 gamesWidthVp。 */
 import { readLaunchMode, writeLaunchMode,
-         LAUNCH_MODE_HOME, LAUNCH_MODE_GAME } from '../settings/LauncherPrefs';
+         LAUNCH_MODE_HOME, LAUNCH_MODE_GAME,
+         readSafeVp, writeSafeVp, hasSafeVp, SAFE_VP_MAX, SAFE_VP_STEP } from '../settings/LauncherPrefs';
+/* 异形屏探测（挖孔 / 曲面边缘）。⛔ 游戏画面不归它管，只用于启动器自己的界面。 */
+import { SafeInsets, detectInsets, uniformOf, describeInsets } from '../utils/SafeArea';
 /* 版本隔离：四档粒度、键的计算、以及打开时的那次复制。
  * ⛔ 实际的 `-Duser.home=` 在 native 侧 —— 这里只负责【决定】并把结论写进桥。 */
 /* 存档：一个存档 = 一个星球的一组 msav（或一个手动存档）。 */
@@ -322,6 +325,15 @@ export struct LauncherHome {
   /** 启动后进哪里。设置里那个开关写盘，启动时由 Index.ets 读。 */
   @State launchMode: string = LAUNCH_MODE_HOME;
 
+  /* 异形屏避让量（vp，四边统一）。作用在**启动器自己的界面**上：三个页签的内容与所有弹窗。
+   * ⭐ 语义是**覆盖**（用户 2026-10-03 选的）：这个数就是最终值，探测只用来给**首次**播种。
+   * ⚠️ 0 是合法值（「不让」），所以「有没有存过」不能用 0 来判断 —— 见 hasSafeVp()。 */
+  @State safeVp: number = 0;
+  /** 这台机器探测出来的建议值（vp，四边取最大）。只用于设置页的提示与日志。 */
+  @State detectedSafeVp: number = 0;
+  /** 探测到的四边明细，设置页里显示出来 —— 「探测不到」和「探测到了但没生效」要能分开。 */
+  @State detectedDetail: string = '';
+
   /** 玩家点过「知道了」。只活这一次会话 —— 不再是失败状态就不会再显示。 */
   @State faultAck: boolean = false;
 
@@ -536,9 +548,43 @@ export struct LauncherHome {
     this.launchMode = readLaunchMode(this.filesDir);
     this.granularity = readGranularity(this.filesDir);
     this.appName = this.resolveAppLabel();
+    /* 异形屏避让是**异步**的（getCutoutInfo 返回 Promise），所以单独走一条，不挡住下面那些。
+     * ⚠️ 它一定在首帧之后才回来 ⇒ 不做骨架屏、也不迟到得像「界面闪了一下」：
+     * 探测通常几毫秒，而玩家的注意力那时还在启动动画上。 */
+    this.initSafeArea();
     /* 把「返回一层」交给宿主页 —— 见 registerBack。 */
     this.registerBack(() => this.handleBack());
     this.refresh();
+  }
+
+  /* 异形屏避让的初始化。⭐ 语义是**覆盖**（用户 2026-10-03 的选择）：
+   *   玩家自己设过 ⇒ **完全听他的**，探测值只用来在设置页里显示作参考；
+   *   没设过     ⇒ 用这次探测的结论**播种**一次，之后那也成了「玩家的选择」。
+   * ⛔ 「设过没有」看的是**文件在不在**，不是「值是不是 0」—— 0 是合法选择（不让开）。 */
+  private async initSafeArea(): Promise<void> {
+    let ins: SafeInsets = { top: 0, right: 0, bottom: 0, left: 0 };
+    try {
+      ins = await detectInsets();
+    } catch (e) {
+      /* detectInsets 自己吞掉异常并返回 0；这一层只是不让它拖垮 aboutToAppear。 */
+    }
+    this.detectedSafeVp = uniformOf(ins);
+    this.detectedDetail = describeInsets(ins);
+
+    if (hasSafeVp(this.filesDir)) {
+      this.safeVp = Math.max(0, readSafeVp(this.filesDir));
+      hilog.info(DOMAIN, TAG,
+                 'safearea: using the stored value %{public}d vp (detected %{public}d)',
+                 this.safeVp, this.detectedSafeVp);
+      return;
+    }
+    /* 首次：用探测值播种并落盘。
+     * ⚠️ **不播种也要落盘**（探测为 0 时写 0）—— 否则「没设过」这个状态会一直留着，
+     * 下次启动又探测一遍；而玩家如果在设置页里把滑条拖到 0 表示「我不要」，那也该被记住。 */
+    this.safeVp = this.detectedSafeVp;
+    writeSafeVp(this.filesDir, this.safeVp);
+    hilog.info(DOMAIN, TAG, 'safearea: first run -- seeded %{public}d vp from detection',
+               this.safeVp);
   }
 
   /* ====================================================================
@@ -2569,7 +2615,12 @@ export struct LauncherHome {
     .width('100%').height('100%')
     .backgroundColor('#80000000')
     .justifyContent(FlexAlign.Center)
-    .padding({ left: 32, right: 32 })
+    /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
+     * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
+     * ⚠️ 竖向原本就是 0（卡片靠 justifyContent 居中），所以这里也只加 safeVp ——
+     *    safeVp = 0 时布局与从前**逐像素相同**。 */
+    .padding({ left: 32 + this.safeVp, right: 32 + this.safeVp,
+               top: this.safeVp, bottom: this.safeVp })
   }
 
   @Builder
@@ -2812,7 +2863,12 @@ export struct LauncherHome {
     .width('100%').height('100%')
     .backgroundColor('#80000000')
     .justifyContent(FlexAlign.Center)
-    .padding({ left: 32, right: 32 })
+    /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
+     * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
+     * ⚠️ 竖向原本就是 0（卡片靠 justifyContent 居中），所以这里也只加 safeVp ——
+     *    safeVp = 0 时布局与从前**逐像素相同**。 */
+    .padding({ left: 32 + this.safeVp, right: 32 + this.safeVp,
+               top: this.safeVp, bottom: this.safeVp })
   }
 
   @Builder
@@ -2861,7 +2917,12 @@ export struct LauncherHome {
     .width('100%').height('100%')
     .backgroundColor('#80000000')
     .justifyContent(FlexAlign.Center)
-    .padding({ left: 32, right: 32 })
+    /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
+     * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
+     * ⚠️ 竖向原本就是 0（卡片靠 justifyContent 居中），所以这里也只加 safeVp ——
+     *    safeVp = 0 时布局与从前**逐像素相同**。 */
+    .padding({ left: 32 + this.safeVp, right: 32 + this.safeVp,
+               top: this.safeVp, bottom: this.safeVp })
   }
 
   @Builder
@@ -3345,6 +3406,65 @@ export struct LauncherHome {
         .borderRadius(CARD_RADIUS_VP)
         .margin({ top: 8 })
 
+        /* ================= 异形屏避让 ================= */
+        Row() {
+          Column() {
+            Text('界面避让（异形屏）')
+              .fontSize(14).fontColor($r('sys.color.font_primary'))
+            /* ⭐ 两行都要：第一行是**建议值**，第二行是**明细**。
+             * ⛔ 只说「建议 0」是不够的 —— 「没探测到」和「探测到了但界面没吃进去」在屏幕上
+             *    长得一样，而这两件事的修法完全不同（一个调滑条、一个是布局的 bug）。 */
+            Text(this.detectedSafeVp === 0
+                 ? '本机未探测到挖孔 / 曲面边缘'
+                 : ('本机探测建议 ' + this.detectedSafeVp + ' vp'))
+              .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+              .margin({ top: 4 })
+            if (this.detectedDetail !== '') {
+              Text(this.detectedDetail + '（上/右/下/左，vp）')
+                .fontSize(11).fontColor($r('sys.color.font_tertiary'))
+                .margin({ top: 2 })
+            }
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Text(this.safeVp === 0 ? '不让' : (this.safeVp + ' vp'))
+            .fontSize(14).fontColor($r('sys.color.font_secondary'))
+        }
+        .width('100%')
+
+        /* ⭐ 滑条 = **最终值**（用户 2026-10-03 选的「覆盖」语义）：拖到哪就是多少，
+         * 探测只在**首次**用来给初值。⚠️ 所以它不需要「自动」开关 —— 拖回建议值就等于自动。
+         * ⚠️ 沉浸模式下挖孔会直接压在内容上，所以这项默认值来自探测、而不是写死 0。 */
+        Slider({
+          value: this.safeVp,
+          min: 0,
+          max: SAFE_VP_MAX,
+          step: SAFE_VP_STEP,
+          style: SliderStyle.OutSet
+        })
+          .width('100%')
+          .margin({ top: 10 })
+          .onChange((v: number, mode: SliderChangeMode) => {
+            const nv: number = Math.round(v);
+            if (nv === this.safeVp) {
+              return;
+            }
+            this.safeVp = nv;
+            /* ⚠️ 只在**手指离开**时写盘（`End` / `Click`）—— 拖动过程中每次变化都写会写上百次，
+             * 而这是一块闪存。`Moving` 时只改内存里的值，界面照常实时预览。 */
+            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              writeSafeVp(this.filesDir, nv);
+            }
+          })
+
+        /* 滑条下方的说明。⛔ 不写「自动探测」这个词 —— 语义是覆盖，说成自动会让人以为拖了没用。 */
+        Text('数值越大，启动器四周让开越多。四边统一。⛔ 只管启动器自己的界面；'
+             + '游戏画面由游戏自带的「适应刘海显示」负责。')
+          .fontSize(11).fontColor($r('sys.color.font_tertiary'))
+          .margin({ top: 6 })
+          .width('100%')
+
         /* ================= 关于 ================= */
         Text('关于')
           .fontSize(13).fontColor($r('sys.color.font_secondary'))
@@ -3483,6 +3603,12 @@ export struct LauncherHome {
     /* ⚠️ 必须关掉：Navigation 默认在左上角画一个返回箭头，而**这一页不在任何 NavPathStack 里**
      * ⇒ 它没有任何可返回的东西、点它什么都不会发生（用户看到的就是「一个空按钮」）。 */
     .hideBackButton(true)
+    /* ⭐ 异形屏避让加在**这里**，不在外层 Stack 上。
+     * ⛔ 那个区别是承重的：几个弹窗的遮罩是 `.width('100%').height('100%')` 的**兄弟节点**，
+     *    如果把 padding 加在 Stack 上，遮罩就只盖住缩进后的框，四周露出一圈没被压暗的条。
+     *    ⇒ 内容在 Navigation 上避让，遮罩各自的 padding 里再加一份（见各弹窗）。 */
+    .padding({ top: this.safeVp, bottom: this.safeVp,
+               left: this.safeVp, right: this.safeVp })
     .width('100%')
     .height('100%')
     /* 唯一的任务是把窗口宽度学回来，好让底部栏能算出对称的左右留白。见 sideMargin()。 */
@@ -3626,7 +3752,12 @@ export struct LauncherHome {
       .width('100%').height('100%')
       .backgroundColor('#80000000')
       .justifyContent(FlexAlign.Center)
-      .padding({ left: 32, right: 32 })
+      /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
+     * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
+     * ⚠️ 竖向原本就是 0（卡片靠 justifyContent 居中），所以这里也只加 safeVp ——
+     *    safeVp = 0 时布局与从前**逐像素相同**。 */
+    .padding({ left: 32 + this.safeVp, right: 32 + this.safeVp,
+               top: this.safeVp, bottom: this.safeVp })
       /* ⚠️ 这里【不】让点遮罩等于取消：这个窗比「关于」重（它会改数据位置），
        * 而一个手滑点空白就消失的确认框，比没有确认框更糟。出口只有「取消」。 */
     }
@@ -3732,7 +3863,12 @@ export struct LauncherHome {
       .width('100%').height('100%')
       .backgroundColor('#80000000')
       .justifyContent(FlexAlign.Center)
-      .padding({ left: 32, right: 32 })
+      /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
+     * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
+     * ⚠️ 竖向原本就是 0（卡片靠 justifyContent 居中），所以这里也只加 safeVp ——
+     *    safeVp = 0 时布局与从前**逐像素相同**。 */
+    .padding({ left: 32 + this.safeVp, right: 32 + this.safeVp,
+               top: this.safeVp, bottom: this.safeVp })
     }
 
     if (this.showAbout) {
@@ -3804,7 +3940,12 @@ export struct LauncherHome {
       .width('100%').height('100%')
       .backgroundColor('#80000000')
       .justifyContent(FlexAlign.Center)
-      .padding({ left: 32, right: 32 })
+      /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
+     * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
+     * ⚠️ 竖向原本就是 0（卡片靠 justifyContent 居中），所以这里也只加 safeVp ——
+     *    safeVp = 0 时布局与从前**逐像素相同**。 */
+    .padding({ left: 32 + this.safeVp, right: 32 + this.safeVp,
+               top: this.safeVp, bottom: this.safeVp })
       /* 点卡片【外面】的空白处也关。与右上角那个 ✕ 并存 —— 两个都是出口，出口多一点比少一点安全。 */
       .onClick(() => { this.showAbout = false; })
     }
@@ -3891,7 +4032,12 @@ export struct LauncherHome {
       .width('100%').height('100%')
       .backgroundColor('#B0000000')
       .justifyContent(FlexAlign.Center)
-      .padding({ left: 32, right: 32 })
+      /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
+     * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
+     * ⚠️ 竖向原本就是 0（卡片靠 justifyContent 居中），所以这里也只加 safeVp ——
+     *    safeVp = 0 时布局与从前**逐像素相同**。 */
+    .padding({ left: 32 + this.safeVp, right: 32 + this.safeVp,
+               top: this.safeVp, bottom: this.safeVp })
     }
     }
   }

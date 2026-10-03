@@ -28,8 +28,18 @@
 
 ## 沉浸模式下刘海 / 挖孔挡住东西了，怎么办？
 
-**我们没做异形屏适配，也不打算做** —— 因为**游戏自带**：
-设置里有「**适应刘海显示**」开关，另有一个安全区边距值可调。请在那里调。
+**分两块，两块都能调：**
+
+**① 启动器自己的界面**（首页 / 存档 / 设置，以及那些弹窗）——
+应用会**自己探测**挖孔与曲面边缘（`display.getCutoutInfo()`），首次启动时按探测结果给一个避让值。
+要调就去 **设置 → 界面避让（异形屏）**，那里有一条滑条，**四边统一**，0 到 64 vp。
+⭐ 滑条是**最终值**（不是「在自动的基础上再加」）：拖到多少就是多少，拖回建议值就等于用自动的。
+
+⚠️ **多数平板探测出来是 0**（没有挖孔、也不是曲面屏），那就什么都不用做。
+个别圆角很大、内容被切到的平板，探测不到 —— **用手动滑条补**。
+
+**② 游戏画面** —— 那是**游戏自带**的：设置里有「**适应刘海显示**」开关，
+另有一个安全区边距值可调。请在那里调。⛔ 启动器那条滑条管不到它。
 
 ## 怎么切换 PC 模式 / 触屏模式？
 
@@ -115,9 +125,23 @@ the floating ball → **"launcher"** to go back to the launcher UI and exit from
 
 ## On a notched or hole-punch screen the cutout covers things.
 
-**We do not implement display-cutout handling, and we do not intend to** — the game has it.
-There is an **"adapt to notch"** toggle in the settings, plus an adjustable safe-area padding
-value. Use those.
+**Two separate things, and both are adjustable:**
+
+**① The launcher's own UI** (Home / Saves / Settings, and the dialogs) —
+the app **detects cutouts and curved edges itself** (`display.getCutoutInfo()`) and seeds an inset
+from that on first launch. To change it: **Settings → 界面避让（异形屏）**, a slider,
+**the same value on all four edges**, 0 to 64 vp.
+⭐ The slider is the **final value**, not an amount added on top of the automatic one: whichever
+value it sits at is what gets used, so dragging it back to the detected value is the same as
+letting the detection win.
+
+⚠️ **On most tablets the detection returns 0** (no cutout, not a curved display), and then there is
+nothing to do. The few tablets where a large corner radius clips the content will not be detected --
+**use the slider**.
+
+**② The game's picture** — that one belongs to the **game**: there is an **"adapt to notch"** toggle
+in its settings, plus an adjustable safe-area padding value. ⛔ The launcher's slider does not
+affect it.
 
 ## How do I switch between PC mode and touch mode?
 
