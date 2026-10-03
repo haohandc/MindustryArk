@@ -509,6 +509,99 @@ bash deploy.sh          # build + verify + install + launch + collect log
 
 ## Changelog
 
+### 1.3.1.1 — 2026-10-03 · whole-package import and export, and a rebuilt launcher interface
+
+**Added**
+
+| Item | Notes |
+|---|---|
+| **Whole-package export** | Packs one version's entire game data (saves, mods, schematics, settings) into a single zip |
+| **Whole-package import** | Pick a zip and it is applied. ⚠️ The existing data is **backed up automatically** first |
+| **Where exports and backups go** | Both under a `Mindustry Ark/` folder, reachable from the file manager, named after the version and the time |
+| **Launcher entry motion** | The launcher's own screens transition rather than cutting |
+| **Cutout and curved-edge handling** | The launcher lays itself out around the camera cutout and the curved edges, adjustable in Settings |
+| **Bottom navigation bar** | Replaced with the system's floating-material bar |
+
+**Changed**
+
+| Item | Notes |
+|---|---|
+| **Save row actions** | The row of buttons is replaced by three: delete, copy, move |
+| **The app name is no longer hardcoded** | The About card and the diagnostics report title read it from resources |
+| **Diagnostics report** | One separator line under the title is gone |
+| **A package with no game runtime** | It says so and disables "start game", rather than offering a button that does nothing |
+
+**Fixed**
+
+| Problem | Notes |
+|---|---|
+| **The bundled-game row had no guard** | In a package with no bundled game, that row was still shown |
+| **Two C functions were never declared** | `setenv` and `pthread_getname_np` compiled through the implicit declarations C99 removed. Both are now declared, and **the generated machine code is unchanged** |
+| **The SDL3 declaration disagreed with the call** | Three parameters declared, five passed. An incremental compile cache had been hiding it: **a clean clone, or clearing the cache once, fails to build** |
+
+### 1.3.0.1 — 2026-10-03 · version isolation and the save manager
+
+**Added**
+
+| Item | Notes |
+|---|---|
+| **Version isolation** | Each game version gets its own game data (saves, mods, schematics, research). Four tiers: off, major version, build, patch |
+| **Save management** | A Saves tab: every version's saves, grouped by which versions share the same data, with metadata (the version that wrote it, map, playtime, mod list) |
+| **Copy / move saves** | Carry a save between versions, or copy it to several at once. Multi-select works. ⚠️ Copying a campaign save within the same version is not offered |
+| **Vault** | A delete is not an erase — the save moves to a vault for 3 / 7 / 30 days, or is archived (never auto-removed), and can be put back at any time |
+| **Multi-select delete** | Long-press a save to enter multi-select and delete several at once. A confirmation lists what is selected and where each came from |
+| **Launch mode** | In Settings, choose between showing the launcher first and going straight into the game |
+
+**Changed**
+
+| Item | Notes |
+|---|---|
+| **Which versions see a save** | With isolation on, a save is visible only to versions reading the same data. **Unchanged when it is off, which is the default** |
+| **A jar matching the bundled version joins it** | A jar whose version equals the bundled game's shares that copy instead of taking a slot of its own. ⚠️ Existing data is not overwritten |
+| **The by-save list** | Now lists the saves of **every** version, and directories with no saves are listed too — they are somewhere to put things, not noise |
+| **How a version is named** | Version first, file name after: `v8 Build 160.5（内置游戏, Mindustry160.5.jar）` |
+
+**Fixed**
+
+| Problem | Notes |
+|---|---|
+| **Saves "all invisible" after switching versions** | With isolation on and the current version's slot still empty, the screen only told you to turn isolation off or on again, with nothing to press. It now offers the copy in place |
+| **The save list would not scroll** | Only the first two or three groups could be reached; the list never had any scrollable room |
+| **The version list sat vertically centred** | With few versions it floated in the middle instead of starting at the top |
+| **The home column did not fill a phone-width window** | Its width was pinned by a fixed number, leaving a gap on the right — neither filling nor centred |
+| **A row was missing from the About dialog** | The "upstream" row's label was gone while its styles attached to the row above, so that row rendered at the wrong size and colour |
+| **Tapping a selected save could not deselect it** | Once anything had been selected, the detail pane could not be emptied |
+| **Two "delete" buttons appeared in multi-select** | One deleted the picked batch, one deleted the save in the detail pane, with identical labels. The latter is now hidden in multi-select |
+| **Deselecting the last item left multi-select** | Leaving is the cancel button's job |
+
+### 1.2.0.1 — 2026-10-02 · you choose the game version
+
+**Added**
+
+| Item | Notes |
+|---|---|
+| **Choose the game version** | Several game jars can sit side by side and you pick one in the launcher. Before this, only the bundled copy could be used |
+| **Each jar's version is shown** | Read out of the file itself, so the file name is not what you go by |
+| **A launcher screen** | A new screen for managing game versions. Shown at startup by default |
+| **Pull to refresh** | Pull down on the list to rescan the folder |
+| **Launch mode** | In Settings, choose between showing the launcher first and going straight into the game |
+| **An explanation when startup fails** | If the last launch did not succeed, the launcher says why and offers a way past that judgement |
+
+**Changed**
+
+| Item | Notes |
+|---|---|
+| **The app icon** | Back to the earlier one |
+| **The default launch behaviour** | From "go straight into the game" to "show the launcher first". Changeable in Settings |
+| **"Try to start anyway"** | From a permanent button to a dialog that appears only after a failed launch |
+
+**Fixed**
+
+| Problem | Notes |
+|---|---|
+| **Unopenable after picking a file that cannot run** | If the selected file could not run (a mod taken for a game, say), every launch exited immediately and **there was no screen left to change it back on**. It now returns to the launcher and says why |
+| **A fresh install said the folder was missing on first launch** | The first launch reported that the game folder could not be read, and a restart fixed it. The first launch is now correct |
+
 ### 1.1.0.1 — 2026-09-29 · architecture
 
 The embedded game is updated to upstream `v8 Build 160.5` and is now the **unmodified upstream
