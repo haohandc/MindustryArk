@@ -109,13 +109,29 @@ def sha256f(path):
 
 
 def collect():
-    """Every file under entry/libs, as (abs path, path inside the zip)."""
+    """`entry/libs` 下的每个文件，返回 (绝对路径, zip 内的路径)。
+
+    ⭐⭐ **基准是【仓库根】，不是 `entry/libs` 的父目录。** 这一行改了是修缺陷，
+    不是改风格：以 `dirname(LIBS)` 为基准时 zip 的顶层是 `arm64-v8a/`，
+    而 `dist/README-PAYLOAD.txt`（zip 里唯一带说明的文件）让人**在仓库根 unzip** ——
+    那样会解出 `<仓库根>/arm64-v8a/`，**不是** `entry/libs/arm64-v8a/`，
+    于是 `deploy.sh` 找不到 libs。实测过（2026-10-03）：
+
+        unzip 在仓库根          -> <根>/arm64-v8a/            不对
+        解到 entry/libs/ 里      -> entry/libs/arm64-v8a/     对
+
+    ⭐ 以仓库根为基准之后，顶层就是 `entry/libs/`，README 里那句
+    「在仓库根 unzip」**变成对的**，而且 `README-PAYLOAD.txt` 自己落在仓库根
+    （它该在的地方），不会再被塞进 `entry/libs/`。
+    ⚠️ 这与 v1.1.0.1 那份载荷的布局一致；1.2.0.1 / 1.3.0.1 用的是 `arm64-v8a/`，
+    那两份里的 README 指令是坏的。
+    """
     out = []
     root = config.LIBS
     for dirpath, _dirnames, filenames in os.walk(root):
         for name in sorted(filenames):
             full = os.path.join(dirpath, name)
-            rel = os.path.relpath(full, os.path.dirname(root))
+            rel = os.path.relpath(full, config.PROJECT_ROOT)
             out.append((full, rel.replace(os.sep, "/")))
     return out
 

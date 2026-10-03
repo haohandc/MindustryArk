@@ -1815,6 +1815,97 @@ link lines can do neither.
 Measured after the swap: no file still names `README.zh-CN.md`, `payload-src/README.md` is
 untouched, and every back-link points at a file that exists.
 
+### 2.16 Four defects that had been true for a long time, and why nothing could see them
+
+All four were found on 2026-10-03, all four had been present since the initial commit or nearly
+so, and all four were invisible to every gate this project runs. Recorded together because the
+reason they were invisible is the same in three of the four cases: **the check that would have
+caught it was looking at the wrong thing, or was not looking at all.**
+
+#### 1. A clean ArkTS build had never succeeded in this repository
+
+`entry/src/main/cpp/types/libSDL3/Index.d.ts` declared `provideArkTSObjects` with **three**
+parameters. `entry/src/main/ets/entryability/EntryAbility.ets:202` calls it with **five**. Both
+lines were written in `6fe1059` (the initial commit) and neither had been touched since, so the
+two have never agreed -- this is not a regression.
+
+The C side settles which is right (`SDL_openharmony.c:1161`):
+
+    #define expected_argc 5
+    if (argc != expected_argc) {
+        OH_LOG_Print(..., "Script is out of sync? Aborting!"); exit(1);
+    }
+
+The call site was correct; the declaration was wrong. The build fails with
+
+    ArkTS Compiler Error
+    Expected 3 arguments, but got 5.  At File: .../EntryAbility.ets:202:89
+
+and it stayed hidden because `CompileArkTS` kept hitting its incremental cache and never
+recompiled. **The moment the cache is invalidated -- a clean, a fresh clone, or an edit to any
+ArkTS file -- the build stops.** Verified rather than reasoned: every other change in the batch
+was stashed, and building HEAD as it stood failed with exactly that message.
+
+⚠️ The same file also named `UIAbility`, `abilityAccessCtrl` and `intl` with **no import
+anywhere**, so none of the three had a definition. The build does not care -- it reads this file
+only for the signature at the call site -- which is the same asymmetry that hid the arity defect.
+`intl.Locale` was also the wrong type: the caller passes `i18n.System`.
+
+#### 2. Two C functions were only ever implicitly declared
+
+`setenv` and `pthread_getname_np`, for two unrelated reasons: `launcher.c` never included
+`<stdlib.h>`, and the sysroot's `pthread.h` wraps its declaration in `#ifdef _GNU_SOURCE`
+(`pthread.h:361`) while the real compile command defines only `-Dmain_EXPORTS -D__MUSL__`.
+
+C99 removed implicit declarations, so clang reports `-Wimplicit-function-declaration` and then
+assumes `int f()`. On AArch64 both calls happen to pass their arguments the way the callee
+expects, so they link and they run correctly -- a coincidence, not a guarantee, and clang 16 makes
+it an error by default.
+
+Fixed as a compile definition (`target_compile_definitions(main PRIVATE _GNU_SOURCE)`) rather
+than a `#define` at the top of `launcher.c`, because a `-D` always precedes every `#include` and
+so cannot be silently disabled by an include inserted above it later.
+
+⭐ **Measured: `.text` is byte-for-byte identical before and after** (28576 bytes), as are
+`.rodata`, `.data` and `.data.rel.ro`. Only `.note.gnu.build-id`, the `.debug_*` sections (line
+numbers shifted) and `.symtab` differ. The machine code is the same code, which is the only
+acceptable evidence that a change of this kind did what it claimed.
+
+#### 3. The version policy table was rewritten
+
+The old table defined exactly one segment -- the fourth, as "the content is identical, this is a
+re-cut" -- and then forbade using it for fixes. The user replaced it on 2026-10-03 with a rule
+defining all four, assigning the fourth to **bug fixes, including a re-cut**:
+
+| segment | meaning | example |
+|---|---|---|
+| 1 | a major change: backend / graphics-engine class replacement | 2.0.0.1 |
+| 2 | a visible, direct update | 1.4.0.1 |
+| 3 | a small fix on top of the previous feature, visible | 1.3.2.1 |
+| 4 | a bug fix that adds nothing | 1.3.1.2 |
+
+What separates a re-cut from a fix is the **release notes**, not the number. The superseded
+paragraph is kept in `scripts/config.py`, marked as superseded, so that anyone who remembers it
+finds the correction where they look.
+
+#### 4. The `tools` form belongs to Ark Launcher, and had been built here
+
+The user's scope rule: 拆分包体仅限于 Ark Launcher 这个版本, Mindustry Ark 不做实际的拆分包体.
+The code stays shared -- `make_store_app.sh`, `ARK_FORM` and `hasRuntime()` are byte-identical in
+both branches, so the three shapes still come from one source -- but only the lite tree may run
+it.
+
+It had been run here, producing `dist/store/MindustryArk-v1.3.0.1-tools.app`: **1.50 MB,
+containing neither the game nor the JDK.** A package named after this app that cannot run a game.
+It slipped past `verify_hap.py` because nothing compared the artifact's *name* against the shape
+it was built in -- the gate checks what a package contains, not whether that content suits its
+name.
+
+`make_store_app.sh` now refuses `tools` unless `config.SHIPS_GAME` is `False`, which is this
+repository's branch identity. Not keyed on `APP_NAME`, which would fail silently if the branch
+were renamed. The refusal happens before the build and before `entry/libs` is stashed. The
+artifact was deleted rather than kept: it can no longer legitimately be reproduced here.
+
 
 ## 3. Release page copy
 
@@ -2033,22 +2124,32 @@ bash build.sh assembleHap                # -> the HAPs, in entry/build/.../outpu
 
 # the payload zip, from the assembled payload. Rebuild it whenever entry/libs changes,
 # or the published zip will disagree with the repository:
-python - <<'PY'
-import os, zipfile, sys
-sys.path.insert(0, "scripts")
-import config
-with zipfile.ZipFile("dist/%s-payload.zip" % config.ARTIFACT_NAME, "w",
-                     zipfile.ZIP_DEFLATED, compresslevel=9) as z:
-    z.write("dist/README-PAYLOAD.txt", "README-PAYLOAD.txt")
-    for dp, _d, fs in os.walk("entry/libs"):
-        for f in sorted(fs):
-            p = os.path.join(dp, f)
-            z.write(p, p.replace(os.sep, "/"))
-PY
+python scripts/make_payload_zip.py
 ```
 
-The zip carries `entry/` at the top level and `README-PAYLOAD.txt` beside it, so unzipping
-into the repository root does the right thing.
+The zip carries `entry/libs/` at the top level and `README-PAYLOAD.txt` beside it, so
+unzipping at the repository root does the right thing. Verified by extracting into an empty
+directory and checking that `entry/libs/arm64-v8a/jdk21/lib/jimg.so` lands there.
+
+⚠️ **This section used to show an inline `python - <<'PY'` block instead, and it was worse
+than it looked.** Its comment claimed to know why a script was needed while being exactly the
+hand-made thing that reason forbids -- and a hand-made zip of a directory that changes is what
+shipped the `v0.2.0-beta.2` payload **missing 21 entries**, 20 of them `jdkhome/` including
+`java.security.so`, without which no runtime class can be defined at all. That zip looked
+perfectly normal. `make_payload_zip.py` refuses to write until the load-bearing entries are
+present, and reopens the zip afterwards to compare the entry **set** against the directory.
+
+⚠️ **The top-level prefix is `entry/libs/`, and it is load-bearing.** It was `arm64-v8a/`
+(relative to `entry/libs` rather than to the repository root) in **1.2.0.1 and 1.3.0.1**, and
+those packages' own `README-PAYLOAD.txt` tells the reader to unzip at the repository root --
+which lands the tree at `<root>/arm64-v8a/` instead of `entry/libs/arm64-v8a/`, so `deploy.sh`
+then finds no libs. Measured 2026-10-03, both ways:
+
+    在仓库根 unzip      ->  <root>/arm64-v8a/            wrong
+    解到 entry/libs/ 里  ->  entry/libs/arm64-v8a/        right
+
+The script's base is `config.PROJECT_ROOT`, which makes the README's instruction correct and
+keeps `README-PAYLOAD.txt` at the repository root where it belongs.
 
 ⚠️ **A version bump touches THREE files, and the third is easy to miss:**
 

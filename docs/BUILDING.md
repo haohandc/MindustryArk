@@ -235,6 +235,24 @@ JIT 需要它）。它只在**商店构建**时由 `scripts/make_store_app.sh` �
 该发布什么见 **[RELEASE.md](../RELEASE.md)**。
 
 ---
+### 四、另外两种包形态
+
+日常的 `bash build.sh assembleHap` 出的是 **HAP**。要出**应用商店的 `.app`** 用另一个脚本，
+它按模式改变包形状（是否注入权限、面向哪些设备）：
+
+| 模式 | 设备 | 可执行内存权限 | 内容 |
+|---|---|---|---|
+| `bash scripts/make_store_app.sh tablet` | 平板 + 2in1 | **注入** | 完整：JDK + 游戏 |
+| `bash scripts/make_store_app.sh tools` | 手机 + 平板 + 2in1 | **不注入** | **无 JDK、无游戏**（管理工具，约 8 MB） |
+
+⛔⛔ **`tools` 只属于 Ark Launcher（`lite` 分支）。** 范围是「拆分包体仅限于 Ark Launcher，
+Mindustry Ark 不做实际的拆分包体」。脚本里有一道门：在 `config.SHIPS_GAME` 为 `True` 的树上
+**直接拒绝运行**（在任何文件被碰之前）。只有 `lite` 那棵树是 `False`。
+
+⭐ **`tools` 不需要 `entry/libs/` 那棵 JDK 树** —— 它把整个 `arm64-v8a/` 挪走、构建完再挪回。
+而那棵树**没有脚本能重建**（见上面「一之二」）⇒ **`tools` 是一份干净克隆唯一能构建出来的
+产物**，也就能当「这条工具链是否完好」的验收。
+
 # English
 
 ## Requirements
@@ -468,3 +486,24 @@ profile is a *debug* profile, which names the device UDIDs it is valid for, and
 the HAP it produces embeds that list — plus your developer id and the name on
 your certificate. Build with it, install with it, do not publish the result.
 What to publish instead is in **[RELEASE.md](../RELEASE.md)**.
+
+### 4. The other two package shapes
+
+`bash build.sh assembleHap` produces the **HAP**. The **store `.app`** comes from a different
+script, which changes the shape of the package by mode (whether a permission is injected, and
+which devices it claims):
+
+| Mode | Devices | Executable-memory permission | Contents |
+|---|---|---|---|
+| `bash scripts/make_store_app.sh tablet` | tablet + 2in1 | **injected** | full: JDK + game |
+| `bash scripts/make_store_app.sh tools` | phone + tablet + 2in1 | **not injected** | **no JDK, no game** (a management tool, ~8 MB) |
+
+⛔⛔ **`tools` belongs to Ark Launcher (the `lite` branch) only.** The scope is 拆分包体仅限于
+Ark Launcher, Mindustry Ark 不做实际的拆分包体. The script refuses the mode unless
+`config.SHIPS_GAME` is `False` -- which is this repository's branch identity -- and it refuses
+before touching anything. Only the `lite` tree has it `False`.
+
+⭐ **`tools` does not need the JDK tree under `entry/libs/`** -- it moves the whole `arm64-v8a/`
+aside and back. That tree **has no script that can rebuild it** (see 1b above), so `tools` is the
+one artifact a clean clone can produce, and therefore also a way to check that the toolchain
+itself is intact.
