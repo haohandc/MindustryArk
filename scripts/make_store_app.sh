@@ -5,6 +5,12 @@
 #   tools   **不带 JDK、不带游戏**的「管理工具」包，面向 phone + tablet + 2in1，
 #           **不声明**可执行内存 ACL。它管存档与数据包，不跑游戏。
 #
+# ⛔⛔ **`tools` 只属于 Ark Launcher（lite 分支），Mindustry Ark 不用它。**
+#    用户 2026-10-03 定的范围：「拆分包体仅限于 Ark Launcher 这个版本，
+#    Mindustry Ark 不做实际的拆分包体。」
+#    ⇒ 本脚本的 `tools` 分支带一道门（见下面 PY= 之后那段），在
+#      `config.SHIPS_GAME` 为 True 的树上直接拒绝运行。那条开关就是分支身份。
+#
 # 为什么需要 tools 模式（2026-10-03）
 #   本应用上不了手机，原因**不是体积而是权限**：
 #   ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY 是 JVM 的 JIT 所必需的，
@@ -126,6 +132,7 @@ case "$MODE" in
         echo "          The full package: JVM and game included." >&2
         echo "  tools   phone + tablet + 2in1, NO ACL. A management tool with no" >&2
         echo "          JVM and no game (~8 MB instead of ~266 MB)." >&2
+        echo "          ⛔ Ark Launcher (the lite branch) only -- refused here otherwise." >&2
         echo >&2
         echo "The mode is required: it is where the package says out loud which" >&2
         echo "platforms it claims, and a default should not be allowed to answer that." >&2
@@ -145,6 +152,36 @@ esac
 export ARK_FORM="$([ "$MODE" = tools ] && echo tools || echo full)"
 
 PY=("${ARK_PYTHON:-python}")
+
+# ⛔⛔ tools 形态**只属于 Ark Launcher**（lite 分支）。
+#    用户 2026-10-03 定的范围原话：「拆分包体仅限于 Ark Launcher 这个版本，
+#    Mindustry Ark 不做实际的拆分包体。」
+#
+#    ⚠️ 加这道门，是因为它真的被越过一次：2026-10-03 在 master 上跑了 tools 模式，
+#    产出 dist/store/MindustryArk-v1.3.0.1-tools.app —— **一个叫 MindustryArk、
+#    却既没有 JDK 也没有游戏的 1.5 MB 包**。名字对，内容错，而这种东西
+#    一旦被当成「Mindustry Ark 的包」发出去，读者拿到的是一个跑不了游戏的版本。
+#
+#    ⭐ 判据用 `config.SHIPS_GAME`：它就是**本仓库的分支身份**
+#    （config.py 里那句「这一行就是本分支与 master 之间唯一的代码差异」）。
+#    ⛔ 不用 `APP_NAME == "ArkLauncher"`：那是把产品名硬编码进构建脚本，
+#    改名时会**静默**失效，而这道门必须只在正确的那棵树上前进。
+if [ "$MODE" = tools ]; then
+    SHIPS_GAME="$("${PY[@]}" -c 'import sys;sys.path.insert(0,"scripts");import config;print(config.SHIPS_GAME)')" || exit 1
+    if [ "$SHIPS_GAME" != "False" ]; then
+        echo "!! 'tools' is not built from this tree." >&2
+        echo "!!" >&2
+        echo "!! The split package belongs to Ark Launcher (the lite branch), which is" >&2
+        echo "!! the tree where config.SHIPS_GAME is False. This tree has it True, so" >&2
+        echo "!! this is Mindustry Ark -- and Mindustry Ark always ships the game and" >&2
+        echo "!! the runtime. Splitting it would produce a package named after this" >&2
+        echo "!! app that cannot run a game at all." >&2
+        echo "!!" >&2
+        echo "!! Use the lite worktree for a tools build." >&2
+        echo "!! For this tree, the mode you want is 'tablet'." >&2
+        exit 2
+    fi
+fi
 MODJSON="entry/src/main/module.json5"
 PERM="ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY"
 BUILT_APP="build/outputs/release/MindustryArk-release-signed.app"
