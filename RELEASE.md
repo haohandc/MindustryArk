@@ -163,6 +163,42 @@ bash deploy.sh          # 构建 + 校验 + 安装 + 启动 + 收日志
 > 其中提到「包内自带的那一份」「随包的那一份」的地方，**在本分支（`lite`）上不成立** ——
 > 本分支的包里没有游戏本体，游戏始终由你提供。除此之外的每一条都适用于本分支。
 
+### 1.3.2.1 — 2026-10-03 · 修复
+
+⚠️ **这一版是 `1.3.1.1` 的正式版。** `1.3.1.1` 曾发布过，随后被改成预发布 —— 它有一个会让**完整包自称「没有游戏运行时」**的缺陷。下面把那一版的内容一并写全，从 `1.3.0.1` 直接升上来的读者不必翻另一页。
+
+**新增**
+
+| 项目 | 说明 |
+|---|---|
+| **整包导出** | 把某个版本的一整套游戏数据（存档、模组、蓝图、设置）打成一个 zip |
+| **整包导入** | 选一个 zip 导入。导入前会**自动把现有数据备份一份** |
+| **导入可选多处** | 一次勾选多个目标再确认；带「全选 / 全不选」。同一份数据只写一次 |
+| **导出与备份的位置** | 都在 `Mindustry Ark/` 文件夹下；文件名带版本与时间 |
+| **启动器进场动效 / 异形屏适配 / 底部导航栏** | 启动器界面重做：过渡动效、避开挖孔与曲面边缘、底栏换成系统的悬浮材质 |
+
+**变动**
+
+| 项目 | 说明 |
+|---|---|
+| **导入的交互** | 原来是「点一行就立刻导入」，现在是**先勾选、再确认** |
+| **存档的动作按钮** | 原来的一排按钮改为「删除 / 复制 / 移动」三个 |
+| **应用名不再硬编码** | 「关于」卡片、诊断报告标题等处改为读取应用资源 |
+| **没有运行时的包** | 包里没有运行时，启动器会说明原因并让「启动游戏」不可用 |
+
+**修复**
+
+| 问题 | 说明 |
+|---|---|
+| **完整包自称「这个包不能运行游戏」** | 判断有没有运行时的那个检查要求文件头两字节是 `PK`（即 zip），而 JVM 是 ELF ⇒ **恒为假**。265 MB 的完整包也会说「没有运行时」并置灰「启动游戏」。这正是 `1.3.1.1` 被撤回的原因 |
+| **「关于」看不到版本号** | 那一行一直在，但喂给它的值**永远是空串**。现在点开就查一次 |
+| **删多个同名存档时进不了垃圾站** | 同一批共用同一个毫秒戳，同名存档撞同一个目录名。现在撞名自动加序号 |
+| **垃圾站的列表滚不动** | 内容高度等于视口，一点可滚动的余量都没有 |
+| **「按版本」把内部标记当版本号念** | 孤儿的标签写成「没有版本读它（b160.5）」，与内置那份的 `160.5` 看起来是两条一样的记录。现在写明那是内部标记 |
+| **两个 C 函数从未被声明** | `setenv` 与 `pthread_getname_np` 一直靠 C99 已废弃的隐式声明编译通过 —— AArch64 上恰好能跑对。已补上声明，生成的机器码不变 |
+| **SDL3 的类型声明与实际调用不符** | 声明 3 个参数、调用传 5 个。此前被增量编译缓存掩盖：**换一份干净克隆、或清一次缓存，构建就会失败** |
+| **「内置游戏」那一行缺守卫** | 在包里没有内置游戏时，那一行仍然显示 |
+
 ### 1.3.1.1 — 2026-10-03 · 整包导入导出与启动器界面
 
 新增**整包导入 / 导出**：把一整套游戏数据打成一个 zip 带走或带回来。启动器的界面也在这一版重做 —— 加了进场动效、适配异形屏，底部导航栏换成系统的悬浮材质样式。
@@ -552,6 +588,44 @@ bash deploy.sh          # build + verify + install + launch + collect log
 > copy of the game being inside the package, **that does not hold on this branch
 > (`lite`)** — this branch ships no game, and you always supply it. Every other
 > entry applies here too.
+
+### 1.3.2.1 — 2026-10-03 · fixes
+
+⚠️ **This is the stable release of what 1.3.1.1 was a pre-release of.** 1.3.1.1 was published and
+then demoted: a complete package could report itself as having no game runtime. Its contents are
+repeated here in full, so anyone coming straight from 1.3.0.1 does not have to read a second page.
+
+**Added**
+
+| Item | Notes |
+|---|---|
+| **Whole-package export** | One version's entire game data — saves, mods, schematics, settings — packed into a single zip |
+| **Whole-package import** | Pick a zip and it is applied. The existing data is **backed up automatically** first |
+| **Import to several places** | Pick as many targets as you like and confirm once, with select-all and clear-all. A single set of data is written once |
+| **Where exports and backups go** | Both under `Mindustry Ark/`, named after the version and the time |
+| **Launcher interface** | Entry transitions, cutout and curved-edge handling, and the system's floating-material bottom bar |
+
+**Changed**
+
+| Item | Notes |
+|---|---|
+| **How importing works** | It used to import the moment you tapped a row. Now you pick targets and confirm |
+| **Save row actions** | Reduced to three: delete, copy, move |
+| **The app name is no longer hardcoded** | The About card and the diagnostics title read it from resources |
+| **A package with no game runtime** | The launcher says so and disables "start game" |
+
+**Fixed**
+
+| Problem | Notes |
+|---|---|
+| **A complete package called itself one with no runtime** | The check required the file's first two bytes to be `PK` (a zip), while the JVM is an ELF, so it was always false — a 265 MB package would grey out the start button. This is why 1.3.1.1 was withdrawn |
+| **About showed no version number** | The line was there, but the value it printed was always empty |
+| **Deleting several saves with the same name failed** | One batch shares a single timestamp, so same-named saves collided. A collision now takes a sequence number |
+| **The vault list would not scroll** | Its content was exactly as tall as the viewport |
+| **A by-version row read an internal key as a version number** | The orphan label read like a second copy of the bundled game's 160.5 |
+| **Two C functions were never declared** | `setenv` and `pthread_getname_np` went through C99-removed implicit declarations. Both are declared now, and the machine code is unchanged |
+| **The SDL3 declaration disagreed with the call** | Three declared, five passed — hidden by an incremental compile cache, so a clean build failed |
+| **The bundled-game row had no guard** | It showed even in a package with no bundled game |
 
 ### 1.3.1.1 — 2026-10-03 · whole-package import and export, and a rebuilt launcher interface
 
