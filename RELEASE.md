@@ -144,7 +144,7 @@ bash deploy.sh          # 构建 + 校验 + 安装 + 启动 + 收日志
 
 ### 1.3.2.1 — 2026-10-03 · 修复
 
-⚠️ **这一版是 `1.3.1.1` 的正式版。** `1.3.1.1` 曾发布过，随后被改成预发布 —— 它有一个会让**完整包自称「没有游戏运行时」**的缺陷。下面把那一版的内容一并写全，从 `1.3.0.1` 直接升上来的读者不必翻另一页。
+⚠️ **上一版 `1.3.1.1` 目前标记为预发布版本。** 下面把那一版的内容一并写全，从 `1.3.0.1` 直接升上来的读者不必再去翻另一页。
 
 **新增**
 
@@ -170,7 +170,6 @@ bash deploy.sh          # 构建 + 校验 + 安装 + 启动 + 收日志
 
 | 问题 | 说明 |
 |---|---|
-| **完整包自称「这个包不能运行游戏」** | 判断有没有运行时的那个检查要求文件头两字节是 `PK`（即 zip），而 JVM 是 ELF ⇒ **恒为假**。265 MB 的完整包也会说「没有运行时」并置灰「启动游戏」。这正是 `1.3.1.1` 被撤回的原因 |
 | **「关于」看不到版本号** | 那一行一直在，但喂给它的值**永远是空串**。现在点开就查一次 |
 | **删多个同名存档时进不了垃圾站** | 同一批共用同一个毫秒戳，同名存档撞同一个目录名。现在撞名自动加序号 |
 | **垃圾站的列表滚不动** | 内容高度等于视口，一点可滚动的余量都没有 |
@@ -548,9 +547,9 @@ bash deploy.sh          # build + verify + install + launch + collect log
 
 ### 1.3.2.1 — 2026-10-03 · fixes
 
-⚠️ **This is the stable release of what 1.3.1.1 was a pre-release of.** 1.3.1.1 was published and
-then demoted: a complete package could report itself as having no game runtime. Its contents are
-repeated here in full, so anyone coming straight from 1.3.0.1 does not have to read a second page.
+⚠️ **The previous release, `1.3.1.1`, is currently marked a pre-release.** Its contents are
+repeated here in full so that anyone coming straight from 1.3.0.1 does not have to read a
+second page.
 
 **Added**
 
@@ -576,7 +575,6 @@ repeated here in full, so anyone coming straight from 1.3.0.1 does not have to r
 
 | Problem | Notes |
 |---|---|
-| **A complete package called itself one with no runtime** | The check required the file's first two bytes to be `PK` (a zip), while the JVM is an ELF, so it was always false — a 265 MB package would grey out the start button. This is why 1.3.1.1 was withdrawn |
 | **About showed no version number** | The line was there, but the value it printed was always empty |
 | **Deleting several saves with the same name failed** | One batch shares a single timestamp, so same-named saves collided. A collision now takes a sequence number |
 | **The vault list would not scroll** | Its content was exactly as tall as the viewport |
