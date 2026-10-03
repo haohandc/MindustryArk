@@ -1315,6 +1315,38 @@ export struct LauncherHome {
     return head + String(g.versions.length) + ' 个版本共用同一份数据';
   }
 
+  /* ⭐⭐ 「按存档」分组列表**外层** `ForEach` 的键。⛔ 不能只用 `g.dir`，理由见下。
+   *
+   * 机制（官方文档 `arkts-rendering-control-foreach` 的原话）：
+   *   「框架**不会为保留的数组项执行项构造函数**」
+   * ⇒ 键没变的那一项**不重跑项构造函数** ⇒ 它里面**嵌套的** `ForEach(g.saves, …)` 拿到的还是
+   *   **旧** `g.saves`（项构造函数闭包里捕获的那个数组）。而这一层原来的键只有 `g.dir`，
+   *   **删掉一个存档并不会改目录名** ⇒ 那一组被当成「保留」⇒ 删掉的那一行**留在屏幕上**，
+   *   切一下页面（子树整体重建）才消失。
+   * ⚠️ 2026-10-03 用户报的正是它：「按存档」下长按进多选、只勾一条，**删掉了但列表不刷新**。
+   * ⭐ 这是本项目**第二次**踩同一个坑 —— 第一次是垃圾站那张列表（见它 `ForEach` 上方那段注释）。
+   *
+   * ⭐ 写法：**键 = 这一组渲染出来的那两行字 + 这一组的存档 id**。
+   * ⛔ 故意**不逐字段列**（目录、孤儿键、版本名单、`isCurrent`、存档 id…）：那种写法**漏一个字段
+   *   就复发一次**；而「组头那两行」正好是 `groupTitle` / `groupSub` 的返回值 ⇒ 它们就是
+   *   渲染依赖的**全集**，以后改组头版式也不会忘。
+   * `g.dir` 放在最前面：分组本来就按目录去重（见 buildSaveGroups），它保证键唯一。
+   * ⚠️ 键变 ⇒ 那一组的子树被**重建**（而不是移动）。这一组里没有需要保留的行内状态，代价可以接受。 */
+  private groupKey(g: SaveGroup): string {
+    const ids: string[] = [];
+    for (const s of g.saves) {
+      ids.push(s.id);
+    }
+    return g.dir + '|' + this.groupTitle(g) + '|' + this.groupSub(g) + '|' + ids.join(',');
+  }
+
+  /* ⭐ 「按版本」列表 `ForEach` 的键。**同一类缺陷、同一页**：那一行渲染的是 `versionSavesLine(v)`，
+   * 也就是 **`v.saveCount`** ⇒ 删掉一个存档那个数字就变了，而键原来只有 `v.path`（不会变）
+   * ⇒ 数字停在旧值上。理由与修法见上面 `groupKey`。 */
+  private versionRowKey(v: VersionEntry): string {
+    return v.path + '|' + v.label + '|' + this.versionSavesLine(v);
+  }
+
   /** 当前选中的那个版本项；没选或它已经不在（jar 被删了）时 `undefined`。 */
   private selectedVersionEntry(): VersionEntry | undefined {
     if (this.selectedVersion === '') {
@@ -3936,7 +3968,7 @@ export struct LauncherHome {
                     .backgroundColor($r('app.color.launcher_card'))
                     .margin({ bottom: 8 })
                     .onClick(() => { this.openVersionRow(v.path); })
-                  }, (v: VersionEntry) => v.path)
+                  }, (v: VersionEntry) => this.versionRowKey(v))
                 } else if (this.saveGroups.length === 0) {
                   Text('没有存档')
                     .fontSize(15).fontColor($r('sys.color.font_secondary'))
@@ -4014,7 +4046,7 @@ export struct LauncherHome {
                     .width('100%')
                     .margin({ bottom: 16 })
                     .alignItems(HorizontalAlign.Start)
-                  }, (g: SaveGroup) => g.dir)
+                  }, (g: SaveGroup) => this.groupKey(g))
                 }
               }
               .width('100%')
