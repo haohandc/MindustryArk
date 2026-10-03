@@ -190,6 +190,117 @@ def run(tool, *args):
     return r.stdout + r.stderr
 
 
+# ==========================================================================
+# tools 形态（「管理工具」包）—— 一个**只有本形态才有**的独立闸门。
+#
+# 为什么它值得单独一段而不是给每一节加一个 `if`：下面的 1–8 节全部是在
+# 校验「JVM 装载链」和「游戏的 Arc/LWJGL」这两条链的字节，而 tools 形态
+# **把这两条链整个拿掉**。给 8 个地方各加一个取反的 if，等于把
+# 「这个形态是什么」埋进 8 个分散的否定里；而它自身的性质其实很短：
+# **包里只有 CMake 自己编出来的那几个库，别的什么都没有。**
+# ==========================================================================
+
+# tools 形态下**允许**出现在 libs/ 下的条目。
+#
+# ⭐ 这是一份**白名单**，不是「禁用清单」。这个区别是承重的：
+#    禁用清单只挡得住你**想到**的东西（JDK、游戏 jar、Arc、LWJGL），
+#    而白名单挡住的是一切**没想到**的 —— 一个漏掉的 JDK 文件、一个放错位置
+#    的 stash、hvigor 收集规则变了导致多带的东西。tools 形态的全部意义
+#    就是「它很小、且它没有运行时」，而这两件事只有白名单能保住。
+#
+# ⚠️ 为什么是这几个而不是更少：下面每一个都被 ArkTS **无条件 import**
+#    （或由 SDL3 在挂载时 dlopen），少一个就是应用起不来。
+#    `libmain.so` 是唯一的例外：XComponent 不建时它不会被 dlopen，
+#    但它是 CMake 的产物、拿掉它反而要动构建 ⇒ 留着，代价 0.04 MB。
+#
+# ⭐ 这份清单是**对着实测产物列的**，不是推的。第一次跑 tools 构建时
+#    它只有 6 项，闸门当场拦下一个我没想到的 `libc++_shared.so`
+#    （NDK 的 C++ 运行时，SDL3 是 C++ 所以被 native 构建带进来）。
+#    ⇒ **这不是闸门误报，这正是白名单存在的意义**：清单只挡得住想到的东西。
+TOOLS_ALLOWED_LIBS = (
+    "libs/arm64-v8a/libSDL3.so",       # EntryAbility 的 `import sdl from 'libSDL3.so'`
+    "libs/arm64-v8a/libc++_shared.so", # NDK 的 C++ 运行时（SDL3 是 C++）
+    "libs/arm64-v8a/libmain.so",       # CMake 产物（launcher.c），见上
+    "libs/arm64-v8a/libshield.so",     # Index.ets 的 import
+    "libs/arm64-v8a/libjarver.so",     # GameLibrary 的 import
+    "libs/arm64-v8a/libsavemeta.so",   # SaveLibrary 的 import
+    "libs/arm64-v8a/libstorprobe.so",  # StorageRoot 的 import
+)
+
+# tools 形态产物的体积上限（字节）。
+#
+# ⚠️ **这个数字是实测来的，不是拍的**：2026-10-03 的 tools 产物是
+#    **3.6 MB**（libs/ 合计 3.12 MB，最大一项 libSDL3.so 1.84 MB）；
+#    而完整包是 **265.9 MB**。
+# ⇒ 取 10 MB：比实测高约 2.8 倍（构建选项的微小变化、或将来多一个
+#    小库都不会误报），比完整包低约 26 倍。**不是边界值**，所以它不会
+#    变成那种「每次都报 FAIL、于是大家学会忽略它」的检查。
+# ⚠️ 若将来这个包合理地长到接近 10 MB，**要连实测值一起改**，并说明为什么——
+#    不要只把数字调大让它过去。
+# 它挡的是三条用别的方式都很难发现的回归：有人跑了 prep_vendor.py 把
+# libjvm.so 造了回来；stash 放错位置导致它的 .so 被打进包；
+# hvigor「只收 .so」这条规则变了。三者都不会让别的闸门响。
+TOOLS_MAX_BYTES = 10 * 1024 * 1024
+
+
+def check_tools_form(hap, ok_ref):
+    """`ARK_FORM=tools` 专用的检查。返回进程退出码。"""
+    print("== form: tools (a management tool -- no JVM, no game) ==")
+    print("   ARK_FORM=tools was passed to this build, so the whole JVM and game")
+    print("   chains are expected to be ABSENT. See scripts/config.py's FORM block.")
+    print()
+
+    ok = ok_ref[0]
+    with zipfile.ZipFile(hap) as z:
+        names = z.namelist()
+
+        # ① 白名单：libs/ 下除了允许的那几个，一个都不许有。
+        #    用「前缀 + 不在允许集里」来判，所以它同时覆盖 jdk21/、game/、
+        #    arc/、lwjgl*/、patchjar/、jdkhome/ 以及顶层那两个 .so。
+        present = [n for n in names if n.startswith("libs/")]
+        unexpected = sorted(p for p in present if p not in TOOLS_ALLOWED_LIBS)
+        print("== tools-1. nothing but the built libraries ==")
+        for p in TOOLS_ALLOWED_LIBS:
+            print("   %-8s %s" % ("OK" if p in names else "MISSING", p))
+        if unexpected:
+            print("   !! %d unexpected entries under libs/:" % len(unexpected))
+            for p in unexpected[:20]:
+                print("      %s" % p)
+            if len(unexpected) > 20:
+                print("      ... and %d more" % (len(unexpected) - 20))
+            print("   This build must not carry a runtime. If you ran")
+            print("       python scripts/prep_vendor.py")
+            print("   (or any other prep_* script) after the stash step, that is why.")
+            ok = False
+        else:
+            print("   no unexpected entries under libs/   OK")
+        # 缺失的那几个也要报（`present` 只说明「没有多的」，不说明「没少的」）
+        missing = [p for p in TOOLS_ALLOWED_LIBS if p not in names]
+        if missing:
+            print("   !! MISSING, and ArkTS imports these unconditionally:")
+            for p in missing:
+                print("      %s" % p)
+            ok = False
+        print()
+
+    # ② 体积闸门。⚠️ 建在**产物**上（读归档），不是读目录 ——
+    #    「目录里有没有东西」与「包里有什么」是两件事，本项目为此有过教训。
+    size = os.path.getsize(hap)
+    print("== tools-2. the artifact is small ==")
+    print("   %d bytes (%.1f MB), limit %.1f MB"
+          % (size, size / 1048576.0, TOOLS_MAX_BYTES / 1048576.0))
+    if size > TOOLS_MAX_BYTES:
+        print("   !! OVER the limit -- something big got in. The full package is")
+        print("      ~266 MB, so this is not a marginal miss: a runtime is present.")
+        ok = False
+    else:
+        print("   under the limit   OK")
+    print()
+
+    print("RESULT: %s" % ("PASS" if ok else "FAIL"))
+    return 0 if ok else 1
+
+
 def main():
     hap = find_hap()
     if not hap:
@@ -204,6 +315,13 @@ def main():
     # 版本不一致会让后面所有内容描述的都是错误的构建。
     ok_ref = [True]
     check_version_matches_name(hap, ok_ref)
+
+    # tools 形态走**自己那一段**并就地返回，不再往下走 1–8 节。
+    # ⛔ 不要改成「在每一节里加 if」：那 8 节校验的是 JVM 装载链与游戏链的字节，
+    #    而 tools 形态把这两条链整个拿掉了 —— 用 8 个分散的否定去表达
+    #    「这个形态是什么」，会把它的性质埋掉，也更容易漏掉一节。
+    if config.IS_TOOLS:
+        return check_tools_form(hap, ok_ref)
 
     os.makedirs(TMP, exist_ok=True)
     with zipfile.ZipFile(hap) as z:

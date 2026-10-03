@@ -36,10 +36,18 @@ function verifyArtifact() {
 
       assemble.afterRun(() => {
         const product = hvigor.getParameter().getExtParam('product') ?? 'default';
-        console.log(`[ARK] verifying artifact (product=${product}, python=${PYTHON}) ...`);
+        // ⭐ `ARK_FORM` 是**构建形态**，不是分支身份（分支身份是 config.py 里那个可提交的布尔）。
+        //    只有 `make_store_app.sh tools` 会设它；平常构建时为 'full'。
+        //    ⚠️ **必须打印出来**：这个值决定了下面那个闸门去断言「JDK 必须在」还是「必须不在」，
+        //    而两者恰好相反 ⇒ 它一旦没传进来，tools 构建会被自己的闸门打回，
+        //    报错却指向「缺 JDK 条目」、完全不提环境变量。一行日志把这条歧义按住。
+        //    （传递靠的是本行下面的 `env: { ...process.env }`。同类先例见文件头 ARK_PYTHON 那段：
+        //      它实测只在 `--no-daemon` 时可靠，而 store 构建与日常构建都带 --no-daemon。）
+        const form = process.env.ARK_FORM || 'full';
+        console.log(`[ARK] verifying artifact (product=${product}, form=${form}, python=${PYTHON}) ...`);
         try {
           execFileSync(PYTHON, [script], {
-            env: { ...process.env, ARK_PRODUCT: product },
+            env: { ...process.env, ARK_PRODUCT: product, ARK_FORM: form },
             stdio: 'inherit',
           });
         } catch (e) {

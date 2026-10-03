@@ -1,14 +1,41 @@
 #!/bin/bash
-# 构建 AppGallery 的 .app，并声明可执行内存权限。
+# 构建 AppGallery 的 .app。**两种模式，差别是「这个包要不要跑游戏」。**
 #
-# 为什么需要它
+#   tablet  带可执行内存 ACL，面向 tablet + 2in1。JVM 与游戏都在包里。
+#   tools   **不带 JDK、不带游戏**的「管理工具」包，面向 phone + tablet + 2in1，
+#           **不声明**可执行内存 ACL。它管存档与数据包，不跑游戏。
+#
+# 为什么需要 tools 模式（2026-10-03）
+#   本应用上不了手机，原因**不是体积而是权限**：
 #   ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY 是 JVM 的 JIT 所必需的，
 #   在某些设备上如此 -- 见 RELEASE-MAINTENANCE.md 2.11。实测：一台 HarmonyOS 6.1.1
 #   (API 24) 设备拒绝 mmap(RWX)，errno=22，launcher 完全走不过
 #   JNI_CreateJavaVM，应用装得上却起不来。
+#   而那条 ACL **只覆盖平板与 PC/2in1**（详见下面 deviceTypes 那段）。
+#   ⇒ 「手机形态」只有一条出路：**不要运行时**。不跑 JVM 就不需要那条权限。
+#   实测体积：完整包 265.9 MB，tools 包约 8 MB（保留的 6 个库合计 6.95 MB）。
 #
-#   它不能无条件写进 src/main/module.json5，因为一个普通
-#   (debug) profile 无法授予受限权限：声明它会让
+# ⚠️⚠️ **tools 与本项目【有意删掉】的那个 phone 模式不是同一个东西，别混。**
+#   那个 phone 模式产出的包**还带着 JDK 和游戏**，只是不声明权限，
+#   并指望 JVM 以解释模式运行。2026-09-22 实测（RELEASE-MAINTENANCE.md 2.13b）
+#   证明那条路不可能工作：
+#
+#     在设备绑定的 RELEASE profile 且没有可执行内存 ACL 时，launcher
+#     探测该能力，拿到 -1，强制 -Xint，然后死在
+#     JNI_CreateJavaVM 里，之后再无任何输出。解释器仍然需要
+#     可执行内存：HotSpot 在去看字节码要怎么运行之前，
+#     就已经建好了启动桩。
+#
+#   ⇒ 那种包**装得上却永远起不来**，所以被删了。
+#   ⭐ tools 模式把**运行时整个拿掉** ⇒ **没有东西会坏**，它是一个自洽的产品。
+#   ⇒ 判据：**「带着一个跑不动的东西」与「不带那个东西」是两回事。**
+#
+#   ⭐ 还顺带解决了一件事：tools 模式**不需要 `entry/libs/` 那棵 JDK 树**
+#     （它没有脚本能重建，见 docs/BUILDING.md）⇒ 它是一份**干净克隆**
+#     唯一能构建出来的产物，也就能当「工具链是否完好」的验收。
+#
+# 为什么可执行内存权限不能无条件写进 src/main/module.json5
+#   一个普通 (debug) profile 无法授予受限权限：声明它会让
 #   本地安装失败，报 "install failed due to grant request permissions
 #   failed"，本项目已经踩过一次 -- 见 deploy.sh 开头。
 #
@@ -16,10 +43,11 @@
 #   hvigor 没有按 product 区分的 module.json5：它自己的
 #   getJsonProfilePath() 对每个 TARGET 的 source-set 根目录只解析一个文件，所以
 #   按 product 的 manifest 意味着整个源码树要再拷一份。
+#   ⭐ 也正因为这样，本脚本是「按模式改变包形状」的唯一落点。
 #
-# ⚠️ 顺序很重要
+# ⚠️ 顺序很重要（tablet 模式）
 #   在 AppGallery Connect 里 ACL 已获批、且 Release profile 已重新生成
-#   带上它之前，不要运行本脚本。一个声明了受限权限、其 profile 却
+#   带上它之前，不要运行 tablet 模式。一个声明了受限权限、其 profile 却
 #   无法授予该权限的包是装不上的 -- 所以
 #   提前运行只会让 store 构建更糟，而不是更好。
 #
@@ -28,32 +56,17 @@
 #      上一次在注入中途被杀掉的情况会被检出，而不是在其之上继续构建。
 #   2. module.json5 在每一条退出路径上都会恢复，且恢复结果用哈希
 #      校验 -- 不是假设。trap 在第一次写入之前就装好。
-#   3. 构建产物会被打开并检查其中的权限。注入一个
+#   3. **tools 模式下 `entry/libs/arm64-v8a/` 会被挪走、构建完再挪回**。
+#      ⛔ 只挪不删：那棵树 172 MB、**没有脚本能重建**。
+#      ⚠️ 挪回时用「文件数 + 磁盘占用」复核，不是假设（同第 2 条对 manifest 的做法）。
+#      ⚠️ 发现残留 stash 就**拒绝启动**并给出恢复命令（上一次死了）。
+#   4. 构建产物会被打开并检查权限的**有无**与 deviceTypes。注入一个
 #      文件并指望它进了包，和信任一份构建日志是同一个错误；
 #      真正被上传的是那个包。
 #
 # 用法：
 #   bash scripts/make_store_app.sh tablet
-#
-# ⚠️⚠️ 没有 phone 模式，而不做 phone 模式正是要点。
-#
-# 曾经写过一个 phone 模式，现在有意删掉了。它会产出一个
-# 不声明任何可执行内存权限、且只面向 phone 的包，
-# 并指望 JVM 以解释模式运行。2026-09-22 实测 -- 见
-# RELEASE-MAINTENANCE.md 2.13b -- 那个包不可能工作：
-#
-#   在设备绑定的 RELEASE profile 且没有可执行内存 ACL 时，launcher
-#   探测该能力，拿到 -1，强制 -Xint，然后死在
-#   JNI_CreateJavaVM 里，之后再无任何输出。解释器仍然需要
-#   可执行内存：HotSpot 在去看字节码要怎么运行之前，
-#   就已经建好了启动桩。
-#
-# ⇒ 手机无法被授予该 ACL（该策略覆盖 tablet 和 PC/2in1），而
-#   解释模式兜底也救不了它，所以一个手机 store 包会
-#   装得上却永远起不来 -- 最糟糕的一种提交。手机改由
-#   SELF-SIGNED 构建服务，那里的 debug profile 会临时解锁所有
-#   权限，JIT 因此可用。那条路线有文档记录；它不是本脚本
-#   产出的包。
+#   bash scripts/make_store_app.sh tools
 #
 # ⚠️ 而且 module.json5 的 deviceTypes 里仍列着 "phone" -- 同样是有意为之。
 #    deviceTypes 在安装时就会被强制检查，不只是在列表展示时，所以从
@@ -62,9 +75,10 @@
 #    这里，构建期：这一层才决定 STORE 提供什么。
 #
 # 可执行内存权限是通过一个受限（ACL）应用授予的，
-# 其支持的设备是 "tablet and PC/2in1"。本构建
-# 声明了它并面向 tablet + 2in1。用户已与华为确认，一个
-# Release Profile 就能覆盖它，且 AppGallery 按 deviceTypes 过滤 -- 这就是
+# 其支持的设备是 "tablet and PC/2in1"。**tablet 模式**声明了它并面向
+# tablet + 2in1（用户已与华为确认，一个 Release Profile 就能覆盖它）；
+# **tools 模式不声明它**，因此可以把范围放到含 phone 的那一组。
+# AppGallery 按 deviceTypes 过滤 -- 这就是
 # 为什么 deviceTypes 要在这里重写，而不是沿用工具链模板的
 # ["phone","tablet","2in1","tv"]。"tv" 被去掉：本项目从未测过
 # TV，而声明一个未测试的平台是一种主张，不是默认值。
@@ -81,30 +95,54 @@ export MSYS_NO_PATHCONV=1
 
 MODE="${1:-}"
 case "$MODE" in
-    tablet) WANT_PERM=yes; WANT_DEVICES='["tablet", "2in1"]' ;;
+    tablet)
+        WANT_PERM=yes; WANT_DEVICES='["tablet", "2in1"]'; STASH_LIBS=no
+        ;;
+    tools)
+        # ⭐ 「管理工具」形态：**不要运行时** ⇒ 不需要 ACL ⇒ 手机上成立。
+        # ⚠️ `STASH_LIBS=yes` 会把 entry/libs/arm64-v8a/ 整个挪走再挪回 ——
+        #    那是本脚本唯一会动到源码树之外的大件，理由与保护方式见文件头第 3 条。
+        WANT_PERM=no; WANT_DEVICES='["phone", "tablet", "2in1"]'; STASH_LIBS=yes
+        ;;
     phone)
         # 显式写出来，这样回答就是解释而不是用法
         # 报错。输入 "phone" 的人不是打错字 -- 他们要的是
         # 本项目决定不构建的那个包，而单独一句 "usage: tablet"
         # 读起来会像这个参数只是没被识别。
         echo "!! there is no phone mode, and that is a decision rather than an omission." >&2
-        echo "!! A phone store package would install and never start: the ACL covers" >&2
-        echo "!! tablet and PC/2in1 only, and the interpreted fallback does not rescue a" >&2
-        echo "!! device that was refused executable memory. Phones are served by the" >&2
-        echo "!! self-signed build. See the header of this file, and" >&2
-        echo "!! RELEASE-MAINTENANCE.md 2.13b." >&2
+        echo "!! A phone package that still carries the JVM would install and never" >&2
+        echo "!! start: the ACL covers tablet and PC/2in1 only, and the interpreted" >&2
+        echo "!! fallback does not rescue a device that was refused executable memory." >&2
+        echo "!!" >&2
+        echo "!! What you probably want is 'tools': a package with NO runtime in it," >&2
+        echo "!! which needs no ACL and therefore does work on a phone." >&2
+        echo "!! See the header of this file, and RELEASE-MAINTENANCE.md 2.13b." >&2
         exit 2
         ;;
     *)
-        echo "usage: bash scripts/make_store_app.sh tablet" >&2
+        echo "usage: bash scripts/make_store_app.sh tablet|tools" >&2
         echo >&2
-        echo "  tablet  tablet + 2in1, WITH the executable-memory ACL (JIT)" >&2
+        echo "  tablet  tablet + 2in1, WITH the executable-memory ACL (JIT)." >&2
+        echo "          The full package: JVM and game included." >&2
+        echo "  tools   phone + tablet + 2in1, NO ACL. A management tool with no" >&2
+        echo "          JVM and no game (~8 MB instead of ~266 MB)." >&2
         echo >&2
         echo "The mode is required: it is where the package says out loud which" >&2
         echo "platforms it claims, and a default should not be allowed to answer that." >&2
         exit 2
         ;;
 esac
+
+# ⭐⭐ **这一行是 tools 构建能通过自己闸门的关键。**
+#     hvigor 每次 assembleApp 都会跑 scripts/verify_hap.py，而它按
+#     `config.IS_TOOLS` 决定断言「JDK 必须在」还是「必须不在」——
+#     两者方向相反。不给这个变量，tools 构建会被自己的闸门打回，
+#     而报错指向「libs/ 下有意外条目」、完全不提环境变量。
+#     传播链：本脚本 export → build.sh → hvigor（--no-daemon，见 hvigorfile.ts
+#     文件头那段）→ hvigorfile.ts 的 `env: {...process.env, ARK_FORM}` → 子进程。
+#     ⚠️ tablet 模式**显式写成 full**，免得调用方 shell 里残留的一个
+#     ARK_FORM=tools 把它悄悄变成另一个形态。
+export ARK_FORM="$([ "$MODE" = tools ] && echo tools || echo full)"
 
 PY=("${ARK_PYTHON:-python}")
 MODJSON="entry/src/main/module.json5"
@@ -120,17 +158,59 @@ ARTIFACT="$("${PY[@]}" -c 'import sys;sys.path.insert(0,"scripts");import config
 OUTAPP="$OUTDIR/$ARTIFACT-$MODE.app"
 BACKUP="${TEMP:-/tmp}/module.json5.pre-store"
 
+# tools 模式把 entry/libs/arm64-v8a/ 挪到这里。
+# ⛔ **不能放在 entry/libs/ 里面** —— hvigor 会递归收集那里的 `.so`，
+#    stash 会被原样打进包（而验证闸门的体积上限正是为了兜住这类事）。
+# ⛔ **不能放 ${TEMP}** —— 那通常是 C: 盘，与仓库不同卷 ⇒ `mv` 会变成
+#    172 MB 的**拷贝**，既慢又可能中途失败。
+# ⇒ 仓库根：同卷，`mv` 就是一次 rename（瞬时）。
+STASH_DIR=".tools-stash"
+STASHED_SIG=""
+LIBS_DIR="entry/libs/arm64-v8a"
+
 echo "############ store build: mode = $MODE ############"
 echo "   permission $PERM: $([ "$WANT_PERM" = yes ] && echo INJECTED || echo absent)"
 echo "   deviceTypes: $WANT_DEVICES"
+echo "   entry/libs/arm64-v8a: $([ "$STASH_LIBS" = yes ] && echo 'STASHED during the build' || echo kept)"
 
 # ---------------------------------------------------------------------------
 # 恢复，先装好，在一切写入之前
 #   在写入之后才装的 trap 只能保护比它更晚发生的失败。
 #   真正要命的失败就是写入本身。
 # ---------------------------------------------------------------------------
+# entry/libs/arm64-v8a 的「指纹」：文件数 + 磁盘占用。
+# ⚠️ 两者都要：只数文件会漏掉「文件还在但被截断」。
+libs_signature() {
+    [ -d "$LIBS_DIR" ] || { echo "absent"; return; }
+    n=$(find "$LIBS_DIR" -type f 2>/dev/null | wc -l)
+    kb=$(du -sk "$LIBS_DIR" 2>/dev/null | cut -f1)
+    echo "$n files, $kb KB"
+}
+
 restore() {
     rc=$?
+    # ⭐ 先把挪走的那棵树放回去 —— 它比 manifest 要紧得多：
+    #    manifest 有 git 兜底（`git checkout --`），而 entry/libs/ 是
+    #    gitignore 的工作区目录，**没有任何东西能把它变回来**。
+    if [ -d "$STASH_DIR/arm64-v8a" ]; then
+        if [ -d "$LIBS_DIR" ]; then
+            echo "!! $LIBS_DIR reappeared while the stashed copy exists -- NOT overwriting." >&2
+            echo "!! the stashed copy is at $STASH_DIR/arm64-v8a" >&2
+        else
+            mv "$STASH_DIR/arm64-v8a" "$LIBS_DIR"
+            now="$(libs_signature)"
+            # 复核，不是假设 —— 同下面 manifest 那段的道理。
+            if [ "$now" = "$STASHED_SIG" ]; then
+                echo "   entry/libs/arm64-v8a restored: $now   OK"
+            else
+                echo "!! entry/libs/arm64-v8a restored, but the signature CHANGED" >&2
+                echo "!!   before: $STASHED_SIG" >&2
+                echo "!!   after : $now" >&2
+                echo "!!   the tree is back in place, but check it before trusting a build" >&2
+            fi
+            rmdir "$STASH_DIR" 2>/dev/null || true
+        fi
+    fi
     if [ -f "$BACKUP" ]; then
         "${PY[@]}" - "$MODJSON" "$BACKUP" <<'PYEOF'
 import hashlib, io, os, shutil, sys
@@ -262,14 +342,26 @@ print("   deviceTypes -> %s" % want_devices)
 # 对写入本身做的廉价检查，在它落盘之前。下面的构建
 # 闸门检查的是产物；这一条在备份还新鲜的时候
 # 抓出被改坏的编辑。
+#
+# ⚠️ 方向随模式而反 —— 与下面产物闸门里的那条同一个道理。
+#    这里原本只写「必须有」，因为那时只有 tablet 一个模式；
+#    tools 模式下不注入 ⇒ 那次检查必然失败，而它会报
+#    「注入产出的文件里没有这个权限」—— 对着一个**本来就不该有它**的模式。
 decl = ('"name": "%s"' % perm) in out
-if not decl:
-    print("!! the injection produced a file without the permission in it")
-    sys.exit(1)
+if want_perm == "yes":
+    if not decl:
+        print("!! the injection produced a file without the permission in it")
+        sys.exit(1)
+else:
+    if decl:
+        print("!! mode=%s must NOT declare %s, but the edited manifest does" % (mode, perm))
+        print("!! if you injected it by hand, remove it -- otherwise a package that is")
+        print("!! supposed to work on phones would need an ACL phones cannot be granted.")
+        sys.exit(1)
 
 io.open(path, "w", encoding="utf-8", newline="\n").write(out)
 print("   %s" % ("injected %s" % perm if want_perm == "yes"
-                else "no permission injected (phone mode)"))
+                else "no permission injected (mode=%s does not need it)" % mode))
 PYEOF
 
 # ---------------------------------------------------------------------------
@@ -277,6 +369,42 @@ PYEOF
 # ---------------------------------------------------------------------------
 echo
 echo "############ building the store .app ############"
+# ---------------------------------------------------------------------------
+# tools 形态：把运行时那棵树挪走
+#
+# ⚠️ 这一段必须在 `trap restore EXIT` **之后**（它在文件上方），
+#    否则一旦这里或之后的任何一步失败，树就留在 stash 里没人管。
+#
+# ⚠️ 只 `mv` 不 `cp` 也不 `rm`：`entry/libs/arm64-v8a` 有 172 MB，而
+#    **没有任何脚本能重建它**（docs/BUILDING.md 记着这个缺口）。
+#    同卷 rename 是瞬时的，所以「挪」比「拷贝一份」更快也更安全。
+# ---------------------------------------------------------------------------
+if [ "$STASH_LIBS" = yes ]; then
+    # 残留检测：stash 还在 ⇒ 上一次 tools 构建没走完。
+    # ⛔ 不自动恢复：那会在用户不知情时改动一棵 172 MB 的树，
+    #    而且「自动恢复」如果判断错了，会把树挪到更糟的地方。
+    if [ -e "$STASH_DIR" ]; then
+        echo "!! $STASH_DIR already exists -- a previous tools build did not finish." >&2
+        echo "!! Your entry/libs/arm64-v8a is probably sitting inside it." >&2
+        echo "!! Nothing here will touch it. Check and restore it by hand:" >&2
+        echo "!!     ls \"$STASH_DIR\"" >&2
+        echo "!!     mv \"$STASH_DIR/arm64-v8a\" \"$LIBS_DIR\" && rmdir \"$STASH_DIR\"" >&2
+        echo "!! then re-run. (Refusing rather than restoring automatically, because" >&2
+        echo "!! moving it while it is half-moved is worse than stopping.)" >&2
+        exit 1
+    fi
+
+    STASHED_SIG="$(libs_signature)"
+    if [ "$STASHED_SIG" = "absent" ]; then
+        echo "   entry/libs/arm64-v8a is already absent -- nothing to stash"
+        echo "   (that is a clean clone, or a tree that never ran prep_vendor.py)"
+    else
+        echo "   stashing $LIBS_DIR  ($STASHED_SIG)"
+        mkdir -p "$STASH_DIR" || exit 1
+        mv "$LIBS_DIR" "$STASH_DIR/arm64-v8a" || exit 1
+    fi
+fi
+
 bash build.sh assembleApp --mode project -p product=release -p buildMode=release --no-daemon > /tmp/store_app.log 2>&1
 if [ $? -ne 0 ] || ! grep -q "BUILD SUCCESSFUL" /tmp/store_app.log; then
     grep -Ei "BUILD (SUCCESSFUL|FAILED)" /tmp/store_app.log | head -1
@@ -347,15 +475,20 @@ fi
 # ---------------------------------------------------------------------------
 # 3. 闸门 -- 包才是被上传的东西，所以要检查包
 #
-# 两条不变式，其中第一条现在是要命的那条：
+# 两条不变式，**两条都按模式取正反两个方向**：
 #
-#   1. deviceTypes 恰好是 tablet + 2in1。正是它让 store 不会
-#      把应用提供给手机，而这正是 phone 模式被删掉的全部理由：
-#      这个应用在手机上装了也起不来。一个意外带上 "phone" 的包
+#   1. deviceTypes 恰好等于这个模式声称的那一组。
+#      tablet ⇒ tablet + 2in1：正是它让 store 不会把**带运行时**的包
+#      提供给手机（那会装得上却起不来）。一个意外带上 "phone" 的包
 #      会被提供给它服务不了的设备。
-#   2. ACL 权限确实被声明了。没有它就没有 JIT，安装后
-#      永远起不来 -- 从外面看是静默的。唯一的证据是 launcher
-#      有没有打日志 "executable memory works (probe=42)"。
+#      tools  ⇒ 含 phone：那正是这个模式存在的理由。
+#   2. 可执行内存权限的有无：
+#      tablet ⇒ **必须有**。没有它就没有 JIT，安装后永远起不来 --
+#               从外面看是静默的。唯一的证据是 launcher 有没有打日志
+#               "executable memory works (probe=42)"。
+#      tools  ⇒ **必须没有**。这个模式不带 JVM，也就不需要它；
+#               而一旦声明了它，包又会掉回「手机上装不了」--
+#               把这个模式的意义整个抵消掉。
 # ---------------------------------------------------------------------------
 echo
 echo "############ gate: the ARTIFACT has the shape mode=$MODE requires ############"
@@ -378,11 +511,14 @@ print("   deviceTypes: %s" % mod.get("deviceTypes"))
 # 检查项。
 #
 # 1. deviceTypes 与本构建声称的一致，最先检查，因为它决定
-#    这个包会被提供给谁。这里出现 "phone" 意味着 store 会把一个
-#    应用提供给跑不动它的设备。
+#    这个包会被提供给谁。⚠️ 方向随模式而反：tablet 模式下多出
+#    "phone" 意味着 store 会把一个**带运行时、跑不动**的应用
+#    提供给手机；而 tools 模式下少了 "phone" 意味着
+#    这个模式白做了 —— 它全部的价值就是能在手机上装。
 #
-# 2. 权限存在。它缺席时的那种失败，看起来像一台慢
-#    平板，而不是一个坏包。
+# 2. 权限**有无**，同样随模式而反。tablet 下它缺席时的那种失败，
+#    看起来像一台慢平板，而不是一个坏包；tools 下它**出现**
+#    则会把包又推回「手机上装不了」。
 #
 # 3. module.json5 在未注释行上声明的每一个权限，都在
 #    包里。这是通用不变式 -- manifest 被改成某种
@@ -396,11 +532,30 @@ if sorted(actual) != sorted(expected):
     sys.exit("!! mode=%s expects deviceTypes %s but the package declares %s -- do not upload"
              % (mode, expected, actual))
 
+# ⚠️ 这条**必须按 want_perm 分两臂**，不能只写「必须有」。
+#
+# 本项目原本只写「必须有」，因为那时只有 tablet 一个模式。tools 模式
+# （2026-10-03）**不要运行时、也就不该声明这条权限** ⇒ 一条写死
+# 「必须有」的检查会把 tools 构建直接打回，而报错会说「包缺了权限」、
+# 完全不提「这个模式本来就不该有它」。
+#
+# ⭐ 两臂都是**硬闸门**（方向相反，强度相同），这与 verify_hap.py 的 §6
+#    对游戏 jar 的做法一致：**「该有的必须有」与「不该有的必须没有」
+#    是同一件事的两面，少一面就等于少一道闸门。**
 has = perm in names
-if not has:
-    sys.exit("!! THE PACKAGE IS MISSING THE INJECTED PERMISSION: %s -- do not upload. "
-             "Without it there is no JIT, and the app installs and does not start." % perm)
-print("   ok: deviceTypes %s, permission declared" % sorted(actual))
+if want_perm == "yes":
+    if not has:
+        sys.exit("!! THE PACKAGE IS MISSING THE INJECTED PERMISSION: %s -- do not upload. "
+                 "Without it there is no JIT, and the app installs and does not start." % perm)
+    print("   ok: deviceTypes %s, permission declared" % sorted(actual))
+else:
+    if has:
+        sys.exit("!! the package DECLARES %s, and mode=%s must not need it -- do not upload. "
+                 "This mode carries no JVM, so it needs no executable memory; declaring the "
+                 "permission would put it back out of reach of phones, which is the whole "
+                 "point of this mode." % (perm, mode))
+    print("   ok: deviceTypes %s, no executable-memory permission (as this mode requires)"
+          % sorted(actual))
 
 # 脚本开头已经 cd 到项目根目录，所以这里本来就是正确的
 # 基准 -- 从 .app 所在目录去算 "../.." 跳转层数，正是第一版把
@@ -455,18 +610,31 @@ if [ "$GATE_RC" -eq 0 ]; then
     echo "############ OK -- upload this file ############"
     echo "   $OUTAPP"
     echo
-    echo "   tablet + 2in1, WITH the executable-memory ACL."
-    echo "   Needs the Release Profile that carries that ACL entry."
-    echo "   Phones are deliberately NOT covered: the ACL cannot reach them and the"
-    echo "   interpreted fallback does not save them, so a phone package would install"
-    echo "   and never start. Self-signed installs are how phones are served."
+    if [ "$MODE" = tools ]; then
+        echo "   phone + tablet + 2in1, NO executable-memory ACL."
+        echo "   This package carries no JVM and no game, so there is nothing in it"
+        echo "   that needs a permission phones cannot be granted -- which is the"
+        echo "   whole reason this mode exists."
+        echo
+        echo "   ⚠️ It CANNOT run games. It manages saves and data packs. Do not"
+        echo "   advertise it as the game."
+    else
+        echo "   tablet + 2in1, WITH the executable-memory ACL."
+        echo "   Needs the Release Profile that carries that ACL entry."
+        echo "   Phones are deliberately NOT covered: the ACL cannot reach them and the"
+        echo "   interpreted fallback does not save them, so a phone package would install"
+        echo "   and never start. Self-signed installs are how phones are served."
+        echo "   ⭐ For a phone-installable package, use: bash scripts/make_store_app.sh tools"
+    fi
     echo
     echo "   Signed with the RELEASE certificate, so it cannot be sideloaded and"
     echo "   cannot be tested on your own hardware. Same constraint as 2.10/2.11."
-    echo "   ⚠️ Which means the ACL is UNVERIFIED until it is in the store: if the"
-    echo "   grant does not take effect the app still runs, just interpreted -- so a"
-    echo "   failed ACL looks like a slow tablet and nothing else. The launcher log"
-    echo "   line to look for is 'executable memory works (probe=42)'."
+    if [ "$MODE" != tools ]; then
+        echo "   ⚠️ Which means the ACL is UNVERIFIED until it is in the store: if the"
+        echo "   grant does not take effect the app still runs, just interpreted -- so a"
+        echo "   failed ACL looks like a slow tablet and nothing else. The launcher log"
+        echo "   line to look for is 'executable memory works (probe=42)'."
+    fi
 else
     echo "############ GATE FAILED -- do not upload ############" >&2
 fi

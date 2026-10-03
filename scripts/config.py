@@ -147,6 +147,23 @@ LIBS = os.path.join(PROJECT_ROOT, "entry", "libs", "arm64-v8a")
 # 刻意不从"任意位置最新文件"自动检测：磁盘上有两个
 # 产物时，最新优先会悄悄开始描述另一个构建。
 PRODUCT = _env("ARK_PRODUCT", "default")
+
+# ── 构建形态 ────────────────────────────────────────────────────────────────
+# FULL    : 日常与 tablet 商店包。包里带 JDK、游戏与游戏链（Arc/LWJGL/patchjar）。
+# TOOLS   : 「管理工具」形态 —— **把整个 entry/libs/arm64-v8a/ 挪走之后再构建**
+#           ⇒ 包里没有 JDK、没有游戏、没有游戏链。它是唯一能在手机上架的形态，
+#           因为不跑 JVM 就不需要 ALLOW_WRITABLE_CODE_MEMORY，
+#           而那条 ACL 只覆盖平板与 PC/2in1（见 make_store_app.sh 的文件头）。
+#
+# ⛔⛔ **这【不是】分支身份，别把它当成第二个 SHIPS_GAME。**
+#     `SHIPS_GAME` 是**可提交的**布尔，因为它是「这个仓库是哪一版」的身份；
+#     而构建形态是**构建时**的参数，与 `make_store_app.sh` 注入 manifest 属于同一类，
+#     本来就不该提交。判断标准：**换一棵源码树还是同一个东西 ⇒ 形态；否则 ⇒ 身份。**
+# ⚠️ 它一旦取值出错，后果是**闸门方向反了**（该断言「JDK 必须在」还是「必须不在」），
+#    而报错会指向「缺条目」、完全不提这个变量 —— `hvigorfile.ts` 因此把它打进了日志。
+FORM = _env("ARK_FORM", "full")
+FORM_TOOLS = "tools"
+IS_TOOLS = (FORM == FORM_TOOLS)
 OUT_DIR = os.path.join(PROJECT_ROOT, "entry", "build", PRODUCT, "outputs", "default")
 
 # 这三者必须与 entry/build-profile.json5 的
@@ -172,7 +189,7 @@ APP_NAME = "ArkLauncher"
 # 所以开头的 "v" 属于发布 tag 和 artifact 名，从不属于
 # version name，两者安全的字符集是数字、字母、点、
 # 下划线和连字符。
-APP_VERSION = "1.3.0.1"
+APP_VERSION = "1.3.1.1"
 
 # versionCode 是平台实际据以排序安装的整数。
 #
@@ -241,7 +258,7 @@ APP_VERSION = "1.3.0.1"
 # 而不是降级，所以已装 `0.3.0.1` 的人会原地装它。反过
 # 来不成立：一旦 1.0.0 的构建发布，退回任何 0.x 都是
 # 降级，平台会拒绝。
-VERSION_CODE = 1030001
+VERSION_CODE = 1030101
 
 
 def version_code_for(version):
