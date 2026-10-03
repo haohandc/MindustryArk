@@ -11,10 +11,10 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { SymbolGlyphModifier } from '@kit.ArkUI';
 /* 底部页签换成设计系统组件 HdsTabs（2026-10-03，用户指定）。与裸 Tabs 的关键差别见 build() 里那段。 */
 import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
-import { common } from '@kit.AbilityKit';
+import { bundleManager, common } from '@kit.AbilityKit';
 /* 应用自己的显示名 —— 与游戏里那个 About 卡片同一处规则。 */
 import { appLabel } from '../utils/AppLabel';
-import { newTreeStat, copyTreeInto, removeTree, TreeStat, isDir } from '../utils/FsTree';
+import { newTreeStat, copyTreeInto, removeTree, TreeStat, isDir, pathExists } from '../utils/FsTree';
 import { externalRootPath } from '../settings/StorageRoot';
 import { picker } from '@kit.CoreFileKit';
 import { fileUri } from '@kit.CoreFileKit';
@@ -116,6 +116,25 @@ const SAVES_VIEW_VERSION: string = 'version';
  * ⛔ 「版本」不是「版本号」：两个 jar 可以是同一个版本号 ⇒ 标识必须是 jar 路径，
  * 不能是版本号（否则同号的两个 jar 会互相顶掉，列表里只剩一个）。
  * ⚠️ 也别拿 `GameJar.version` 当身份 —— 它是显示串（`v8 Build 160.5`），读不出时是空串。 */
+/* 一次「导入到多处」的汇总。⚠️ 单独一个类型而不是一串局部变量：它要在
+ * `importIntoOne`（每个目标一次）与 `confirmImport`（收尾）之间传来传去。 */
+interface ImportOutcome {
+  /** 成功落盘的目标数。 */
+  done: number;
+  /** 备份了几份（只数成功的）。 */
+  backups: number;
+  /** 有没有备份被迫落在应用沙箱里（外面拿不到）—— 那样的话「备份」这句话要加警告。 */
+  anyBackupInSandbox: boolean;
+  dirs: number;
+  files: number;
+  /** 每个失败目标一句人话（带它自己的名字）。 */
+  fails: string[];
+}
+
+function newImportOutcome(): ImportOutcome {
+  return { done: 0, backups: 0, anyBackupInSandbox: false, dirs: 0, files: 0, fails: [] };
+}
+
 interface VersionEntry {
   /** jar 的绝对路径。**同时是这一项的稳定标识**。 */
   path: string;
@@ -455,8 +474,11 @@ export struct LauncherHome {
    * ⛔ 校验没过就**不开**那个对话框 —— 让玩家对着一个坏包选目标是最坏的一种失败。 */
   @State importOpen: boolean = false;
   @State importRoot: string = '';
-  /* 这次导入的目标标签 —— 给覆盖前的备份文件起名用。 */
-  @State importLabel: string = '';
+  /* ⭐ 这次导入**勾中**的目标，按 `dataDir` 记、**去重**。
+   * ⚠️ 用 `dataDir` 而不是版本名当键：两个版本可能共用同一份数据（同一个隔离键）
+   *    ⇒ 那也是**一个**目标。写两遍不但浪费，还会让备份出现两份。
+   *    这条就是用户 2026-10-03 要的「互斥逻辑」。 */
+  @State importPicked: string[] = [];
   @State importNote: string = '';
   @State importMsg: string = '';   /* 非空 = 顶部显示一条进行中/失败的提示 */
   @State importToast: string = ''; /* 成功后的短提示 */
@@ -562,8 +584,17 @@ export struct LauncherHome {
   /* ⚠️ 名字叫 `appName` 而不是 `appLabel`：后者是 `utils/AppLabel` 导入的【函数】名。 */
   private appName: string = '';
 
-  /** 应用版本，设置页那个「关于」入口用。由 Index.ets 从 bundle 问到后传进来。 */
-  appVersion: string = '';
+  /** 应用版本号，「关于」那一页要显示它。
+   *
+   * ⛔⛔ 它原来是**普通成员**（无 `@State`），而且**实际拿到的永远是空串**：
+   *     Index 传进来的是 `Index.appVersion`，而那个字段只由**游戏侧**的 `openAbout()`
+   *     赋值（`Index.ets:727`，悬浮球菜单触发）—— 启动器自己那个「关于」从没触发过它。
+   *     ⇒ 「关于」里 `this.appVersion === ''` 恒真 ⇒ **只显示应用名、没有版本号**
+   *     ⇒ 用户 2026-10-03 报「看版本号得到设置里去看」（那里的 About 是 Index 自己的，会查）。
+   * ⭐ 两处一起改：加 `@State`（否则异步/后写的值不重绘），并由本组件自己的 `openAbout()`
+   *    在**打开时**查一次 —— 与 `Index.ets` 那条注释同一个理由：
+   *    「版本号在打开时才读，不是启动时：它要花一次包查询，而那之前没人需要它」。 */
+  @State appVersion: string = '';
 
   /* 上一次启动失败的记录；'' 表示没失败过。
    * ⚠️ 它是【上一次】的判定，不是即时的：失败发生时进程已经死了、没有界面能弹窗，唯一物证是
@@ -1236,7 +1267,14 @@ export struct LauncherHome {
   private groupTitle(g: SaveGroup): string {
     if (g.versions.length === 0) {
       /* 两种「没人读」：以前某一档留下的键 vs 未隔离的那一份本身。 */
-      return g.orphanKey === '' ? '未隔离的那一份' : ('没有版本读它（' + g.orphanKey + '）');
+      /* ⚠️ `orphanKey` 是**内部隔离键**（`b160.5` / `n8` / `_unknown`），它长得几乎就是版本号
+     *    ⇒ 原来写成「没有版本读它（b160.5）」会被读成「又一个 160.5」，而玩家可能正看着一个
+     *    真叫 160.5 的分组（内置那一份）⇒ 两条看起来完全一样，用户 2026-10-03 就是这么报的。
+     * ⛔ 键不能删 —— 它说明这份数据来自哪个槽位，是「它从哪来」的唯一线索。
+     *    ⇒ 所以只是把「这是一个内部标记」说出来，让它不再像版本号。 */
+    return g.orphanKey === ''
+      ? '未隔离的那一份'
+      : ('没有版本读它（内部键 ' + g.orphanKey + '）');
     }
     const vers: string[] = [];
     const names: string[] = [];
@@ -1510,6 +1548,28 @@ export struct LauncherHome {
   private reloadVault(): void {
     this.vaultPurgedLast = purgeExpired(Date.now());
     this.vaultEntries = listVault();
+  }
+
+  /** 打开「关于」，顺手把版本号读出来。
+   *
+   * ⭐ **按需读**（打开时才查），不是启动时读 —— 那次包查询在没人看之前没有意义，
+   *    这条与 `Index.ets:727` 的注释是同一条规则。
+   * ⚠️ 用的是**同步**那一版 `getBundleInfoForSelfSync`（`ExportDiagnostics.ets:44` 已在本项目用它），
+   *    这样值在重绘前就位，不会先闪一下没有版本号的标题。
+   * ⚠️ 读不到就留空串 —— 界面那边 `=== ''` 的分支就是兜底，⛔ 不要在这里编一个号。 */
+  private openAbout(): void {
+    this.showAbout = true;
+    if (this.appVersion !== '') {
+      return;
+    }
+    try {
+      const info: bundleManager.BundleInfo =
+        bundleManager.getBundleInfoForSelfSync(bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT);
+      this.appVersion = info.versionName;
+    } catch (e) {
+      const err = e as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'about: version lookup failed: %{public}s', err.message);
+    }
   }
 
   private openVault(): void {
@@ -2858,12 +2918,17 @@ export struct LauncherHome {
           .padding({ left: 16, right: 16, top: 12 })
         }
         .width('100%')
-        .height('100%')
         .justifyContent(FlexAlign.Start)
         .alignItems(VerticalAlign.Top)
       }
       .width('100%')
       .layoutWeight(1)
+      /* ⭐ 与「按存档」/「按版本」那两个列表写成同一形状（那两处是对的，这里原来不是）：
+       * ⛔ 内层那句 `height('100%')` 让内容高度**恒等于视口** ⇒ 可滚动余量 0 ⇒ 列表滚不动；
+       *    而它在界面上看起来只是「列表就这么长」，能藏很久（用户 2026-10-03 报的就是它）。
+       * ⚠️ 去掉之后会露出第二个毛病：`Scroll.align` **默认居中**，条目少时会停在屏幕中间
+       *    ⇒ 所以必须补上 `TopStart`。**只改一行都不够** —— 这两件事互相遮丑。 */
+      .align(Alignment.TopStart)
       .scrollBar(BarState.Off)
 
       /* 与悬浮底栏之间的留白。见 BAR_CLEARANCE_VP。 */
@@ -3161,79 +3226,171 @@ export struct LauncherHome {
     this.importOpen = true;
   }
 
-  /** 把一个**已校验**的数据根落到某个版本的数据目录。
+  /** 把若干**已校验**的数据根落到一个目标。
    * ⭐ 语义（用户 2026-10-03 定）：**每次导入都问目标**，而「覆盖 / 新建」由**目标有没有数据**决定：
    *    有 ⇒ 先整包备到垃圾站再覆盖（不可逆的事必须先留退路）；没有 ⇒ 直接写。 */
-  private applyImportTo(v: VersionEntry): void {
-    const target: string = v.dataDir;
-    /* 备份文件名用这个标签（与导出同一套命名）。 */
-    this.importLabel = v.version === '' ? v.label : ('v' + v.version);
-    if (target === '') {
-      this.importOpen = false;
-      this.showNotice('这个版本没有数据目录（读不出隔离键）。', 'import');
+  private async importIntoOne(t: VersionEntry, index: number,
+                              out: ImportOutcome): Promise<void> {
+    const label: string = t.version === '' ? t.label : ('v' + t.version);
+    if (t.dataDir === '') {
+      out.fails.push(t.label + '：没有数据目录（读不出隔离键）');
       return;
     }
-    if (!ensureDir(target)) {
-      this.importOpen = false;
-      this.showNotice('建不出目标目录：' + target, 'import');
+    if (!ensureDir(t.dataDir)) {
+      out.fails.push(t.label + '：建不出目标目录');
       return;
     }
 
     /* ⭐ 目标已有数据 ⇒ **先备份**。不清空整个目录：整包导入是**叠加**语义
      * （同名覆盖、其余保留），所以不需要先删 —— 也就没有「清空到一半失败」这个状态。 */
-    const existing: string[] = packableItems(target);
-    if (existing.length > 0) {
-      const acc: TreeStat = newTreeStat();
-      const bak: string = this.packTmpDir() + '/backup-before-import.zip';
-      /* ⚠️ 打包是异步且可能几十 MB ⇒ 交给 `backupThenCopy` 串起来，不在这里同步做。 */
-      this.backupThenCopy(target);
-      return;
+    if (packableItems(t.dataDir).length > 0) {
+      this.importMsg = '正在备份「' + t.label + '」…';
+      const bak: string = this.backupPathFor(label, index);
+      /* ⚠️ 打包是异步且可能几十 MB ⇒ 在这里 await，**逐个串行**：
+       *    并行会把内存和 IO 顶满，而且失败时说不清是哪一个目标出的问题。 */
+      const err: string = await packDataDir(t.dataDir, this.packTmpDir(), bak);
+      if (err !== '') {
+        /* ⛔ 备份失败 ⇒ **不动这一个目标**。这是「不可逆的事先留退路」的落点。
+         * ⚠️ 只跳过它，其余目标继续 —— 一个目标备不出来不该把整批停掉。 */
+        out.fails.push(t.label + '：备份失败，已跳过（它的数据没动）—— ' + err);
+        return;
+      }
+      out.backups += 1;
+      out.anyBackupInSandbox = out.anyBackupInSandbox || (this.backupsDir() === '');
     }
-    this.copyImportInto(target, '');
-  }
 
-  /** 有数据时：先打包备份，成功后再复制；备份失败就**不覆盖**。 */
-  private async backupThenCopy(target: string): Promise<void> {
-    this.importOpen = false;
-    this.importMsg = '目标已有数据，正在备份…';
-    /* ⭐ 名字与导出同一套（标签 + 时间）—— 玩家在文件管理器里一眼认得出来。
-     * ⚠️ 拿不到用户可见目录就退回沙箱，但**必须说清**（见 `backupsDir`）。 */
-    const dir: string = this.backupsDir();
-    const bak: string = dir === ''
-      ? this.packTmpDir() + '/backup-before-import.zip'
-      : dir + '/Mindustry-' + this.importLabel + '-' + stampNow() + '-backup.zip';
-    const err: string = await packDataDir(target, this.packTmpDir(), bak);
-    if (err !== '') {
-      /* ⛔ 备份失败 ⇒ **不动目标**。这是「不可逆的事先留退路」的落点。 */
-      this.showNotice('备份失败，已放弃导入（你的数据没有动）：' + err, 'import');
-      return;
-    }
-    this.copyImportInto(target, dir === '' ? ('⚠️ 备到了沙箱（外面拿不到）：' + bak) : bak);
-  }
-
-  /** 真正落地：把 `importRoot` 的内容叠加进 `target`。 */
-  private copyImportInto(target: string, backupZip: string): void {
+    this.importMsg = '正在写入「' + t.label + '」…';
     const acc: TreeStat = newTreeStat();
-    copyTreeInto(this.importRoot, target, 0, acc);
-    /* ⚠️ 把**完整路径**写出来，并告诉玩家怎么恢复 —— 否则「已备份」是一句他无法使用的话。 */
-    const backupNote: string = backupZip === '' ? ''
-      : ('\n\n覆盖前的备份：' + backupZip
-         + '\n（要恢复它：用「导入数据」再选这个文件）');
+    copyTreeInto(this.importRoot, t.dataDir, 0, acc);
+    out.dirs += acc.dirs;
+    out.files += acc.files;
     if (acc.failed > 0) {
-      this.showNotice('导入没完成（' + String(acc.failed) + ' 项失败）：' + acc.firstError
-                      + backupNote, 'import');
+      out.fails.push(t.label + '：' + acc.firstError);
       return;
     }
-    /* 清掉暂存（成功才清）。 */
+    out.done += 1;
+  }
+
+  /** 确认之后：把暂存里的数据逐个落到**每一个**勾中的目标。
+   *
+   * ⭐ 用户 2026-10-03 定的形状是「**多选 + 确认**」。所以这里先关窗、再干活 ——
+   *    从这一刻起不再需要玩家输入，窗留着只会挡住进度提示。
+   * ⛔⛔ 原来的 `applyImportTo` 有**四条出路、只有三条关窗**（目标「没有数据」那条直连
+   *    `copyImportInto`，而它从不碰 `importOpen`）⇒ 那条路上框一直开着，再点第二项就**又导入一次**。
+   *    用户报的「点完不关」就是它。 */
+  private async confirmImport(): Promise<void> {
+    const targets: VersionEntry[] = this.pickedTargets();
+    if (targets.length === 0) {
+      return;
+    }
+    this.importOpen = false;
+    this.importMsg = '正在导入…';
+
+    const out: ImportOutcome = newImportOutcome();
+    for (let i: number = 0; i < targets.length; i += 1) {
+      await this.importIntoOne(targets[i], i, out);
+    }
+
+    /* ⭐ 暂存在**全部走完之后**才清，而且只清一次。
+     * ⛔ 原来 `copyImportInto` 每落一个目标就清一次 ⇒ 多目标时第二个目标无源可拷。
+     * ⚠️ 即便有目标失败也清：暂存是这次导入的中间产物，成功的那几处已经落好了。 */
     const clean: TreeStat = newTreeStat();
     removeTree(this.importRoot, 0, clean);
     this.importRoot = '';
     this.importMsg = '';
+    this.importPicked = [];
     this.refresh();
-    /* ⚠️ **不自动消失**（用户 2026-10-03 的要求）——「需要重启游戏」这条必须留着让玩家看到，
+
+    /* ⚠️ 汇总**不自动消失**（用户 2026-10-03 的要求）—— 「需要重启游戏」这条必须留着让玩家看到，
      *    而自动消失的提示恰好会在最需要它的时候不见。它带一个 ✕ 由玩家自己关。 */
-    this.showNotice('导入完成：' + String(acc.dirs) + ' 个目录 / ' + String(acc.files)
-                    + ' 个文件' + backupNote + '。需要重启游戏才看得到。', 'toast');
+    const head: string = out.done === 0
+      ? '没有一处导入成功。'
+      /* ⚠️ 写「合计」—— 这几个数是**所有目标加起来**的。选了三处就是三倍，
+       *    不加这两个字会被读成「每个目标这么多」。 */
+      : ('已导入到 ' + String(out.done) + ' 处（合计 '
+         + String(out.dirs) + ' 个目录 / ' + String(out.files) + ' 个文件）');
+    const bakNote: string = out.backups === 0 ? ''
+      : ('\n覆盖前的备份有 ' + String(out.backups) + ' 份，在 '
+         + (out.anyBackupInSandbox
+            ? '⚠️ 应用沙箱里（外面拿不到），「导入数据」也够不着它'
+            : this.backupsDir())
+         + ' —— 要恢复就用「导入数据」再选那个文件。');
+    const failNote: string = out.fails.length === 0 ? ''
+      : ('\n有 ' + String(out.fails.length) + ' 处没成功：' + out.fails.join('；'));
+    this.showNotice(head + bakNote + failNote + '\n需要重启游戏才看得到。', 'toast');
+  }
+
+  /** 勾中的目标，按 `dataDir` **去重** —— 两个版本共用同一份数据时只算一个目标。 */
+  private pickedTargets(): VersionEntry[] {
+    const all: VersionEntry[] = [this.liveImportTarget()];
+    for (const v of this.versions) {
+      all.push(v);
+    }
+    const out: VersionEntry[] = [];
+    const seen: string[] = [];
+    for (const t of all) {
+      if (this.importPicked.indexOf(t.dataDir) < 0) {
+        continue;
+      }
+      if (t.dataDir === '' || seen.indexOf(t.dataDir) >= 0) {
+        continue;
+      }
+      seen.push(t.dataDir);
+      out.push(t);
+    }
+    return out;
+  }
+
+  private isImportPicked(dir: string): boolean {
+    return dir !== '' && this.importPicked.indexOf(dir) >= 0;
+  }
+
+  private toggleImportPick(dir: string): void {
+    if (dir === '') {
+      return;   /* 读不出数据目录的目标选不了 —— 行里已经写明原因了。 */
+    }
+    const i: number = this.importPicked.indexOf(dir);
+    if (i < 0) {
+      this.importPicked = this.importPicked.concat([dir]);
+      return;
+    }
+    const next: string[] = this.importPicked.slice();
+    next.splice(i, 1);
+    this.importPicked = next;
+  }
+
+  /** 「全选」= 所有**互不相同**的数据目录。 */
+  private pickAllImportTargets(): void {
+    const all: VersionEntry[] = [this.liveImportTarget()];
+    for (const v of this.versions) {
+      all.push(v);
+    }
+    const out: string[] = [];
+    for (const t of all) {
+      if (t.dataDir !== '' && out.indexOf(t.dataDir) < 0) {
+        out.push(t.dataDir);
+      }
+    }
+    this.importPicked = out;
+  }
+
+  /** 备份文件的落点。
+   * ⛔⛔ **不能只靠 `stampNow()` 区分** —— 它只精确到**分钟**（`DataPack.ets:58`），
+   *    所以同一分钟内、同名标签的两次备份会拼出同一个名字，而**备份被覆盖等于没备份**。
+   *    这里加两重保险：批内序号 `index`，以及撞到已有文件时再加 `-2`/`-3`。 */
+  private backupPathFor(label: string, index: number): string {
+    const base: string = 'Mindustry-' + label + '-' + stampNow()
+                         + (index > 0 ? '-' + String(index + 1) : '');
+    const dir: string = this.backupsDir();
+    if (dir === '') {
+      /* 拿不到用户可见目录 ⇒ 退回沙箱。⚠️ 调用方**必须如实说明**落在了哪（见 `backupsDir`）。 */
+      return this.packTmpDir() + '/' + base + '-backup.zip';
+    }
+    let p: string = dir + '/' + base + '-backup.zip';
+    for (let n: number = 2; pathExists(p) && n < 1000; n += 1) {
+      p = dir + '/' + base + '-' + String(n) + '-backup.zip';
+    }
+    return p;
   }
 
   /** 关掉提示条。⚠️ 三个字段都要清 —— 它们共用同一个框（见 `PackNotice`）。 */
@@ -3340,7 +3497,9 @@ export struct LauncherHome {
             Row() {
               Column() {
                 Text('未隔离的那一份')
-                  .fontSize(15).fontColor($r('sys.color.font_primary'))
+                  .fontSize(15)
+                  .fontColor(this.isImportPicked(this.liveImportTarget().dataDir)
+                             ? $r('sys.color.brand') : $r('sys.color.font_primary'))
                   .width('100%')
                 Text('所有版本共用它（隔离关着时就是这里）'
                      + (this.liveImportTarget().hasData
@@ -3352,13 +3511,18 @@ export struct LauncherHome {
                   .width('100%').margin({ top: 3 })
               }
               .alignItems(HorizontalAlign.Start).layoutWeight(1)
+              /* ⭐ 勾中的样子**复用本项目已有的那套**（文字变 brand 色 + 右侧 ✓），
+               * ⛔ 不引入 `Checkbox` —— 它有自己的一套主题与获焦行为，本项目在焦点上栽过。 */
+              if (this.isImportPicked(this.liveImportTarget().dataDir)) {
+                Text('✓').fontSize(16).fontColor($r('sys.color.brand'))
+              }
             }
             .width('100%')
             .padding({ left: 16, right: 16, top: 12, bottom: 12 })
             .backgroundColor($r('app.color.launcher_card'))
             .borderRadius(CARD_RADIUS_VP)
             .margin({ top: 8 })
-            .onClick(() => { this.applyImportTo(this.liveImportTarget()); })
+            .onClick(() => { this.toggleImportPick(this.liveImportTarget().dataDir); })
 
             /* ⚠️ 一个版本都没有时，上面那一项就是唯一的目标 —— 而那正是「管理工具」形态。
              *    不要在这里写「请先导入一个游戏」：管存档本来就不需要游戏。 */
@@ -3366,7 +3530,9 @@ export struct LauncherHome {
               Row() {
                 Column() {
                   Text(v.label + (v.version === '' ? '' : '  ' + v.version))
-                    .fontSize(15).fontColor($r('sys.color.font_primary'))
+                    .fontSize(15)
+                    .fontColor(this.isImportPicked(v.dataDir)
+                               ? $r('sys.color.brand') : $r('sys.color.font_primary'))
                     .width('100%')
                   /* ⭐ 后果写在行里 —— 有数据就会先备份再覆盖，没数据就是新建。 */
                   Text(v.hasData
@@ -3378,7 +3544,10 @@ export struct LauncherHome {
                 }
                 .alignItems(HorizontalAlign.Start).layoutWeight(1)
                 if (v.isCurrent) {
-                  Text('当前').fontSize(12).fontColor($r('sys.color.brand'))
+                  Text('当前').fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                }
+                if (this.isImportPicked(v.dataDir)) {
+                  Text('✓').fontSize(16).fontColor($r('sys.color.brand'))
                 }
               }
               .width('100%')
@@ -3386,7 +3555,7 @@ export struct LauncherHome {
               .backgroundColor($r('app.color.launcher_card'))
               .borderRadius(CARD_RADIUS_VP)
               .margin({ top: 8 })
-              .onClick(() => { this.applyImportTo(v); })
+              .onClick(() => { this.toggleImportPick(v.dataDir); })
             }, (v: VersionEntry) => v.path)
           }
           .width('100%')
@@ -3399,9 +3568,44 @@ export struct LauncherHome {
         .align(Alignment.TopStart)
         .margin({ top: 10 })
 
+        /* ---- 选择控制 + 确认 ----
+         * ⭐ 用户 2026-10-03 定的形状：**多选 + 确认**。原来点一行就立刻导入，
+         *    而那样在「同一份数据」上有歧义 —— 点两行算导入两次还是一次？
+         *    ⇒ 现在先勾、再确认；同一个 `dataDir` 只写一次（见 `pickedTargets`）。 */
+        Row() {
+          Text('全选')
+            .fontSize(13).fontColor($r('sys.color.brand'))
+            .padding({ top: 12, bottom: 6, right: 20 })
+            .onClick(() => { this.pickAllImportTargets(); })
+          Text('全不选')
+            .fontSize(13).fontColor($r('sys.color.font_secondary'))
+            .padding({ top: 12, bottom: 6 })
+            .onClick(() => { this.importPicked = []; })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+
+        /* ⚠️ 条数用 `importPicked.length` 就够：它按构造就是**互不相同且非空**的 `dataDir`
+         *    （勾选时查重、全选时也去重）⇒ 与 `pickedTargets()` 的条数恒等，
+         *    而后者每次调用都要摸一次文件系统（`liveImportTarget` 会 stat）。 */
+        Text(this.importPicked.length === 0
+             ? '请先选目标'
+             : ('导入到 ' + String(this.importPicked.length) + ' 处'))
+          .fontSize(15)
+          .fontColor(this.importPicked.length === 0
+                     ? $r('sys.color.font_tertiary') : $r('sys.color.brand'))
+          .padding({ top: 14, bottom: 6 })
+          .onClick(() => {
+            /* ⛔ 一个都没勾时什么都不做 —— 但按钮的样子已经写着「请先选目标」，
+             *    所以这不是静默失败。 */
+            if (this.importPicked.length > 0) {
+              this.confirmImport();
+            }
+          })
+
         Text('取消')
           .fontSize(14).fontColor($r('sys.color.font_secondary'))
-          .padding({ top: 14, bottom: 4 })
+          .padding({ top: 8, bottom: 4 })
           .onClick(() => { this.importOpen = false; })
       }
       .width('86%')
@@ -4074,7 +4278,7 @@ export struct LauncherHome {
         .backgroundColor($r('app.color.launcher_card'))
         .borderRadius(CARD_RADIUS_VP)
         .margin({ top: 8 })
-        .onClick(() => { this.showAbout = true; })
+        .onClick(() => { this.openAbout(); })
       }
       .width('100%')
       .padding({ left: 20, right: 20, top: 20, bottom: BAR_CLEARANCE_VP })
