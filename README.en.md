@@ -1,169 +1,185 @@
-# Ark Launcher
+[简体中文](README.md) | **English**
 
-**English** | [简体中文](README.md)
+<div align="center">
+  <p>
+    <img src="./assets/icon-mindustry-ark-216.png" width="112" height="112" alt="Mindustry Ark icon">
+    &nbsp;&nbsp;
+    <img src="./assets/icon-ark-launcher-216.png" width="112" height="112" alt="Ark Launcher icon">
+  </p>
+  <h1>Mindustry Ark (Ark Launcher)</h1>
+  <p><strong>A Mindustry launcher for HarmonyOS</strong></p>
+  <p>
+    <img src="https://img.shields.io/badge/HarmonyOS-7%20%2F%20API%2026-008577?style=flat-square" alt="HarmonyOS 7 / API 26">
+    <img src="https://img.shields.io/github/v/release/haohandc/MindustryArk?style=flat-square&label=release" alt="Latest release">
+    <img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="Licence">
+    <img src="https://img.shields.io/github/stars/haohandc/MindustryArk?style=flat-square&label=stars" alt="GitHub stars">
+  </p>
+  <p>
+    <a href="https://github.com/haohandc/MindustryArk/releases/latest">Download</a> ·
+    <a href="docs/BUILDING.md">Build from source</a> ·
+    <a href="docs/FAQ.md">FAQ</a> ·
+    <a href="docs/LIMITATIONS.md">Known limitations</a> ·
+    <a href="PRIVACY.md">Privacy</a> ·
+    <a href="https://github.com/haohandc/MindustryArk/issues">Issues</a>
+  </p>
+</div>
 
-> [!IMPORTANT]
-> **This branch is the `lite` branch of
-> [`MindustryArk`](https://github.com/haohandc/MindustryArk).** Its **only**
-> difference from `master` is that **the package carries no game** — the player
-> supplies the `.jar`. So **the first launch stops at the launcher screen** (there
-> is no jar yet): drop Mindustry's `.jar` into the folder the screen prints,
-> pull to refresh, pick it, then press "Launch game". Everything else —
-> device requirements, known limitations, how to build, licence — is
-> **identical to `master`**.
+## About
 
-Run **Mindustry** on HarmonyOS / OpenHarmony, using a self-built launcher instead
-of an existing emulation layer.
+Runs **Mindustry** on HarmonyOS / OpenHarmony: the launcher embeds a JDK, creates a JVM
+from native code, and hands the game a real SDL3 window.
 
-The launcher embeds a JDK, creates a JVM from native code, and hands the game a
-real SDL3 window. This repository is the launcher.
+**The game is the upstream build, unmodified.** What is patched is the framework beneath it;
+the patch is compiled into a separate jar that is loaded before the game.
 
-⛔ **The game is not in the package** (the one difference from `master`) — you supply a `.jar`
-and **it is not modified; the launcher only reads its version number.**
-What gets patched is the framework underneath it: ten of the twelve sources under
-`arc/backend/sdl/` are ours (seven modified, three that exist only in this build:
-`GLBootstrap`, `GLDiag`, `GLDispatchFix`), plus `arc/graphics/gl/`. They are
-recompiled into **a patch jar of their own** (26 class entries), loaded ahead of
-the game.
-⚠️ The patch has to come **first** on the class path — JVM resolution takes the
-first match, so the other order makes the patch silently do nothing.
+| Form | Branch | Ships the game |
+|---|---|---|
+| **Mindustry Ark** | `master` | Yes — a bundled Mindustry |
+| **Ark Launcher** | [`lite`](https://github.com/haohandc/MindustryArk/tree/lite) | No — you supply the `.jar` |
 
-> [!IMPORTANT]
-> **Unofficial.** Not affiliated with, endorsed by, or supported by the Mindustry
-> project or Anuken. See [THIRD-PARTY.md](THIRD-PARTY.md).
+Two distributions of the same launcher; the difference is only whether the game is in the
+package. With Ark Launcher, put your own `.jar` into the folder the launcher shows.
 
----
+## Repository contents
 
-## Status
-
-Working on HarmonyOS 7 / API 26 devices — a HUAWEI MatePad Pro 12.2" 2025 tablet
-and a HUAWEI Mate 80 Pro phone. The main menu renders, the mobile layout is used,
-audio plays through OHAudio, and touch and physical keyboard both work.
-
-⭐ **Which devices can run it**: **HarmonyOS 7 / API 26 or later**, tablet **or phone**. Install it
-self-signed (see the release notes) and it runs at full speed on either. Full-speed operation
-depends on the app getting anonymous executable memory, and from API 26 the system supplies it to
-a **debug** profile on a phone as well as a tablet — which is also why **there is no phone package
-in the store**: a store (release) signature never gets it. ⚠️ **HarmonyOS 5 / 6**: no automatic ACL grant, so the store route does not apply, and a self-signed install is untested.
-
-| Area | State |
+| Path | What it is |
 |---|---|
-| JVM startup | Works — the launcher must pass `-XX:UseSVE=0`. Without it the JIT emits SVE instructions this device cannot execute and the process dies with SIGILL |
-| Graphics | OpenGL ES via SDL3 |
-| Audio | OHAudio, through a self-built `libarcarm64.so` with an SDL3 backend |
-| Touch | Works, including two-finger pinch zoom |
-| Keyboard | Works (physical keyboard; WASD and ESC). Typing into game text fields uses an on-screen field with full input-method support — see [limitations](docs/LIMITATIONS.md) |
-| Gamepad / mouse | Mouse works. Gamepad untested |
-| Save import/export | Via the app's folder in Download, using the picker — **measured working on both devices, and it needs no permission at all**. The game's **own file browser** reads that same path too — **measured** — see [limitations](docs/LIMITATIONS.md) |
-| Mods | Work. Import them with the **game's own "import mod" button** — that is the only way in, and it needs no restart. The app deliberately does **not** take files from Downloads by itself; drop one in `Download/Ark Launcher/` and pick it in that browser. See [limitations](docs/LIMITATIONS.md) |
-| Desktop/mobile mode switch | Switches, but needs an app restart — see the [FAQ](docs/FAQ.md) |
-| Networking / multiplayer | **The platform side works** — `socket`, `epoll`, DNS, TCP, TLS and HTTP all measured working here. **LAN, public-server search and hosting on the device have each been tested, and a match has actually been played** (2026-09-23) |
+| [`entry/`](entry/) | The app: ArkTS screens, the native (C) launcher, the bundled runtime and game |
+| [`AppScope/`](AppScope/) | App-level configuration and icons |
+| [`scripts/`](scripts/) | Build, packaging and verification scripts |
+| [`docs/`](docs/) | FAQ / limitations / building / permissions / layout |
+| [`payload-src/`](payload-src/) | What the build inputs are, and a manifest |
+| [`helper-src/`](helper-src/) | Source for the launcher's helper jar |
+| [`tools/`](tools/) | A probe mod |
+| [`release-notes/`](release-notes/) | English release notes per version |
+| [`assets/`](assets/) | Icons |
+| [`RELEASE.md`](RELEASE.md) | Downloading and installing |
+| [`RELEASE-MAINTENANCE.md`](RELEASE-MAINTENANCE.md) | Maintainer's handbook |
+| [`THIRD-PARTY.md`](THIRD-PARTY.md) | Per-component licence obligations |
 
-## The launcher: game versions and save management
+## Features
 
-The launcher has a UI of its own — **Home / Saves / Settings** — which is
-independent of the game and **usable without starting it**.
+| Item | State |
+|---|---|
+| JVM startup | Works |
+| Graphics | OpenGL ES, through SDL3 |
+| Audio | OHAudio, through our own `libarcarm64.so` |
+| Touch | Works, pinch-to-zoom included |
+| Keyboard | Physical keyboards work; in-game text uses a pop-up input field |
+| Mouse / gamepad | Mouse works; gamepad untested |
+| Save import and export | Through the app folder under Downloads |
+| Mods | Imported with the game's own "Import mod" button; no restart |
+| Desktop / mobile mode | Switchable; needs a restart |
+| Networking | LAN and internet multiplayer work |
+
+**Requires** HarmonyOS 7 / API 26 or newer. Tablet and phone both work.
+
+## The launcher: versions and saves
+
+The launcher has its own screens (**Home / Saves / Settings**) and is independent of the game —
+**it works without ever launching the game**.
 
 | What you can do | How it works |
 |---|---|
-| Pick a game version | Drop any number of jars into `Download/Ark Launcher/games/` and choose between them. The version is read out of the jar, not guessed from the file name |
-| **Version isolation** | Each game version gets its own set of game data. Four tiers: off (the factory setting) / major version / build / patch |
-| **Save management** | Lists the saves of **every** version (grouped by which versions share the same data), shows the metadata (version / map / playtime / mods), and copies, moves or carries them across versions |
-| Delete = vault | A delete is not an erase: the save moves to a vault for 3 / 7 / 30 days, or is **archived** (never auto-removed). It can be put back at any time |
-| Launch mode | Show the launcher first each time, or go straight into the game |
-
-⭐ One guarantee about isolation: **the first copy of the data is never moved** — no
-change of jar, tier or version can make it disappear.
+| Pick a game version | One is bundled, and any number of jars can be dropped into `Download/Mindustry Ark/games/` |
+| **Version isolation** | Each game version gets its own set of game data, at one of four granularities |
+| **Save management** | Every version's saves in one list, with metadata, copied or moved across versions |
+| Delete means vault | Deleting moves a save into a vault: kept 3 / 7 / 30 days or archived, restorable at any time |
+| Startup mode | Either the launcher first, or straight into the game |
 
 > [!NOTE]
-> Isolation is something the player **turns on** — the factory setting is off. Turning
-> it on offers either copying the existing data across or starting empty.
+> Isolation is turned on by the player; it is off out of the box.
 
-## How to download and install
+## Download and install
 
-Prebuilt artifacts are on the
-**[Releases page](https://github.com/haohandc/MindustryArk/releases)**:
-the unsigned HAP (the app) and a payload zip (only needed to build from source).
+The artifacts on the **[releases page](https://github.com/haohandc/MindustryArk/releases)** are
+**Mindustry Ark**: an unsigned HAP and a payload zip (needed only to build from source).
+**Ark Launcher is the version headed for app stores, and is not published as a release here** —
+build it from the [`lite`](https://github.com/haohandc/MindustryArk/tree/lite) branch if you need it.
 
-An unsigned HAP will not install. Two ways around that:
+**An unsigned HAP cannot be installed directly.**
 
-**① An installer tool (no dev environment needed, recommended)**
+**① Use an installer tool (no development environment needed; recommended)**
 
 | Tool | What it does |
 |---|---|
-| [小白调试助手 (Auto-Installer)](https://github.com/likuai2010/auto-installer/releases/latest) | Free cross-platform HarmonyOS debugging tool — **signing and installing in one step** |
-| [HoKit](https://github.com/yabi-zzh/HoKit/releases/latest) | **One-click re-signing**, device mirroring, perf monitoring, file management. Windows / macOS / Linux |
+| [小白调试助手](https://github.com/likuai2010/auto-installer/releases/latest) | A free cross-platform HarmonyOS debug tool: signs and installs in one step |
+| [HoKit](https://github.com/yabi-zzh/HoKit/releases/latest) | Re-signing, screen mirroring, performance monitoring, file management |
 
-> This project is also listed in
-> [Zitann/HarmonyOS-Haps](https://github.com/Zitann/HarmonyOS-Haps), a HarmonyOS Next HAP collection.
+> ⚠️ Using them to **sign or install** is fine — but **do not use them to open the app's "game
+> mode"**: that pins the app to 60 fps and the interface will look choppy. Start it normally.
 
-**② Sign it yourself with DevEco Studio**
+This project is also listed in [Zitann/HarmonyOS-Haps](https://github.com/Zitann/HarmonyOS-Haps).
 
-Open the project, **File → Project Structure → Signing Configs → Automatically
-generate signature**, then `bash deploy.sh`.
+**② Sign it yourself in DevEco Studio**
 
-> Install only, without building: drop the downloaded HAP into
+Open this project in DevEco Studio → **File → Project Structure → Signing Configs →
+Automatically generate signature** → `bash deploy.sh`.
+
+> ⚠️ `bash deploy.sh` **uninstalls before installing** (`hdc uninstall`), so **the app's data
+> is wiped** — saves, and the Downloads-folder authorisation. To update without losing data,
+> use `hdc install -r <the signed hap>`.
+
+> To install without building: drop the downloaded HAP into
 > `entry/build/default/outputs/default/` and run `bash deploy.sh`.
 
-More detail, including what must **not** be published, is in [RELEASE.md](RELEASE.md).
+**App stores (planned)**: three packages, by region and device.
+
+| Region | Phone | Tablet / PC · 2-in-1 |
+|---|---|---|
+| Mainland China | **Ark Launcher, tool build** — a management tool; **cannot run the game** | **Ark Launcher** |
+| Elsewhere | same as above | **Mindustry Ark** |
+
+The phone build carries no game runtime, so it manages saves and mods only. A build that can
+run the game needs a system permission that **covers tablets and PC / 2-in-1 only**, and so
+cannot be installed on a phone.
+
+## Building from source
+
+The repository root is the project — open it in DevEco Studio. Building a complete package
+needs the build inputs gathered first, as described in [`payload-src/`](payload-src/);
+the payload zip on the releases page exists for exactly that.
+
+Toolchain versions, steps and common errors are in [`docs/BUILDING.md`](docs/BUILDING.md).
 
 ## Documentation
 
-Everything below is a separate document. **The files under `docs/` are bilingual —
-Chinese section first, then English, in the same file.**
+Files under `docs/` are bilingual — Chinese first, English after, in the same file.
 
-| Document | Open it when |
+| Document | When to read it |
 |---|---|
-| **[docs/FAQ.md](docs/FAQ.md)** | You have a specific question — start here |
-| **[docs/LIMITATIONS.md](docs/LIMITATIONS.md)** | Before reporting a bug: is this known? |
-| **[docs/BUILDING.md](docs/BUILDING.md)** | You want to build it from source |
+| **[docs/FAQ.md](docs/FAQ.md)** | You have a specific question |
+| **[docs/LIMITATIONS.md](docs/LIMITATIONS.md)** | Before reporting a bug, to check it is not known behaviour |
+| **[docs/BUILDING.md](docs/BUILDING.md)** | You want to build from source |
 | **[docs/PERMISSIONS.md](docs/PERMISSIONS.md)** | You want to know what it asks for |
-| **[PRIVACY.md](PRIVACY.md)** | You want to know what data it collects (answer: none) |
-| **[docs/LAYOUT.md](docs/LAYOUT.md)** | You just cloned it and can't find things |
-| [RELEASE.md](RELEASE.md) | You downloaded a build: which file, how to install, what's verified |
-| [RELEASE-MAINTENANCE.md](RELEASE-MAINTENANCE.md) | You're cutting a release |
-| [THIRD-PARTY.md](THIRD-PARTY.md) | You're auditing licences |
-| [payload-src/README.md](payload-src/README.md) | You're assembling the build's inputs |
+| **[PRIVACY.md](PRIVACY.md)** | You want to know what it collects (nothing) |
+| **[docs/LAYOUT.md](docs/LAYOUT.md)** | You just cloned it and cannot find things |
+| [RELEASE.md](RELEASE.md) | You are cutting the next release |
+| [THIRD-PARTY.md](THIRD-PARTY.md) | You are auditing licences |
+| [payload-src/README.md](payload-src/README.md) | You are gathering build inputs |
 
-## Licence
+## Code and licence
 
-**GPL-3.0** — see [LICENSE](LICENSE).
+Our own code is **[GPL-3.0](LICENSE)**. Copyright (C) 2026 Haohandc and contributors.
+Derivative works must also be distributed under GPL-3.0, so a closed-source product
+**cannot** be built on this project. Per-component obligations are in
+[THIRD-PARTY.md](THIRD-PARTY.md).
 
-Copyright (C) 2026 Haohandc and contributors.
-
-**Note in particular**: derivative works must also be distributed under GPL-3.0, so
-this **cannot** be used as the basis of a closed-source product.
-
-Per-component obligations are in [THIRD-PARTY.md](THIRD-PARTY.md).
+**Unofficial project.** Not affiliated with the Mindustry project or its author Anuken,
+and not endorsed by them; also unaffiliated with Huawei Device Co., Ltd.
+Mindustry and related names and marks belong to their respective owners.
 
 ## Credits
 
-- [**Mindustry**](https://github.com/Anuken/Mindustry) — by Anuken, the game (**not bundled in this branch — you supply it**), **loaded unmodified**
-- [**Arc**](https://github.com/Anuken/Arc) — by Anuken, the game framework; this platform's patches live in it
-- [**SDL3**](https://github.com/libsdl-org/SDL) — the windowing / input / audio layer
-- [**LWJGL**](https://github.com/LWJGL/lwjgl3) — the JNI bindings for OpenGL and SDL
+- [**Mindustry**](https://github.com/Anuken/Mindustry) — the game, by Anuken
+- [**Arc**](https://github.com/Anuken/Arc) — the game framework, by Anuken
+- [**SDL3**](https://github.com/libsdl-org/SDL) — window, input and audio
+- [**LWJGL**](https://github.com/LWJGL/lwjgl3) — JNI bindings for OpenGL and SDL
 - [**OpenJDK 21**](https://github.com/openjdk/jdk) — the runtime
-- [**AMCL**](https://github.com/LZZLHY/amcl) — a **reference implementation** of a peer project.
-
-  Note it is **not** a dependency of this project and **no code from it is bundled** — not one line was
-  copied. But several things here were only attempted after reading it, and each one below points at
-  where in its repository it came from:
-
-  - The bottom tab bar uses HarmonyOS's design-system component **`HdsTabs`** (`@kit.UIDesignKit`) rather
-    than a bare `Tabs`, with the immersive material coming from `barFloatingStyle` +
-    `systemMaterialEffect` (its `components/LauncherTabsStyle.ets`)
-  - Writing the selected index back from **`onAnimationStart`** (its `pages/Index.ets`) — this is how the
-    "the bar's highlight lags a beat while swiping" defect here was fixed
-  - Making **the game data root a single source of truth** (its `GameStorage.resolveMcDir`): every place
-    that needs the data directory asks one resolver instead of hard-coding its own path
-  - **How to obtain external storage**: a folder **named after the bundle** (`Download/<bundle>`) gets
-    "owner-style" access that survives restarts without `persistPermission`; and the relevant APIs are
-    unavailable on phones, where a picker in `DOWNLOAD` mode is used to *learn* the path once
-  - **Probe discipline**: its `StorageProbe` states that ArkTS being able to write does **not** mean
-    native code can — which is why this project probes writability with **bare POSIX** before switching
-    the data directory
-  - The idea of **per-version data isolation** (each game version gets its own data directory)
+- [**AMCL**](https://github.com/LZZLHY/amcl) — a reference implementation of the same idea.
+  A few of our approaches were inspired by it; it is not a dependency, and none of its code
+  is in our artifacts.
 
 > [!NOTE]
-> Most of the code, phrases and documents in this repository were written with AI assistance
-> (Claude via Cherry Studio, model deepseek-flash v4.1).
+> Almost all of the code, documentation and prose in this repository was produced with AI
+> assistance (Claude via Cherry Studio, model deepseek-flash v4.1).
