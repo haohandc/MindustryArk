@@ -2683,3 +2683,64 @@ same build on a phone during development (`hdc install -r`, launched, and its hi
 `resolved=… source=bundled` with no "no runtime" line), and on the tablet earlier — but the file
 that was uploaded has not itself been downloaded, installed and driven. And it has never been
 exercised from the payload zip.
+
+### ✅ Verified as published — v1.3.2.1, 2026-10-03
+
+⭐ **Read back from the API, not assumed.** Both digests came from `release.assets[].digest` and
+both match the local artifacts byte for byte, sizes included.
+
+| | |
+|---|---|
+| Release id | **`402549465`** |
+| Tag | **`v1.3.2.1`** |
+| Target | **`6aa45fcc7563a0cd8d1ab9c87da8ebd6ea94c294`** — `docs: the warning names the game mode, not the tool` |
+| Pre-release | **false** (and `draft` false) |
+| Published | **`2026-10-03T14:47:54Z`** = 2026-10-03 22:47:54 +08:00 |
+| Assets | two, and **neither is the signed HAP** ✅ |
+
+| Asset | bytes | sha256 (from the API) | matches local |
+|---|---|---|---|
+| `…-1.3.2.1-unsigned.hap` | 276,058,353 | `8840146c047294eebd4f8a8b71950428d669e118d199bf110dab2f2108914916` | ✅ |
+| `…-1.3.2.1-payload.zip` | 149,339,785 | `911c3832fc9a08bbc8ffc68d1933532994ca771e628c5d44ab949b1a4239bd6a` | ✅ |
+
+⭐ **The payload's digest is IDENTICAL to v1.3.1.1's** — not merely the same size: the same
+`911c3832…`. Seven consecutive builds have now moved nothing under `entry/libs/`.
+
+⚠️ **v1.3.1.1 stays a pre-release**, checked rather than assumed: `prerelease: true` on the API.
+So `releases/latest` — which now resolves to `v1.3.2.1` — skips it, and that is the intent.
+
+---
+
+⚠️⚠️ **A CLAIM IN AN EARLIER DRAFT OF THIS RELEASE'S NOTES WAS WRONG, AND THE USER CAUGHT IT**
+
+The draft said v1.3.1.1 had been withdrawn because a complete package reported itself as having
+no runtime. **It did not.** Verified from git rather than argued:
+
+    v1.3.1.1's tag target   = f6a7faf   -- which IS the fix for that defect
+    f6a7faf descends from 9bc66b8       -- which introduced it
+    ⇒ the published 1.3.1.1 contains the fix and cannot exhibit the defect
+
+What actually happened is a distinction worth keeping: **an intermediate build had the bug.**
+Built at 20:22, staged at 20:35, and installed on the maintainer's phone — which is where the
+"阉割版本" report came from. The staging was redone from the 20:48 post-fix build, and **that** is
+what was published. The defect was then described as a property of the release, which it was
+never true of, and it was listed under Fixed in the notes.
+
+Corrected in four files before publication, and the row was removed from Fixed entirely: the
+defect never shipped, so no reader has experienced it, and a fix list is read by someone who has
+just arrived. Recorded here because **the same confusion can be produced by any future release
+whose build directory contains an older, unfixed artifact.**
+
+⭐ The rule: **to describe a published version, read the tree its tag points at — not the
+artifact sitting in the build directory.**
+
+**How this block was closed**
+
+```bash
+curl -s https://api.github.com/repos/haohandc/MindustryArk/releases/tags/v1.3.2.1 | grep -E '"id"|"tag_name"|"prerelease"|"digest"|"size"'
+```
+
+⚠️ **What is NOT verified: nobody has run the released artifact.** The maintainer exercised the
+same build on both devices during development, and the fixes in it were reviewed on the tablet —
+but the uploaded file has not itself been downloaded, installed and driven, and it has never been
+exercised from the payload zip.
