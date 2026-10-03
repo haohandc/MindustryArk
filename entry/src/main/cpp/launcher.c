@@ -21,6 +21,10 @@
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
+/* ⛔ 这一行别删：`setenv` 只在 <stdlib.h> 里声明，而本文件没有别的地方会带进它。
+ *    删掉**不会**编译失败 —— 它会走 C99 已不允许的隐式声明，只报一条 -Wimplicit-function-declaration。
+ *    同类的还有 `pthread_getname_np`，那个的修法在 CMakeLists.txt 的 `_GNU_SOURCE` 那段。 */
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
