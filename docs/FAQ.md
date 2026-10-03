@@ -59,25 +59,37 @@
 
 ## 启动器界面切页签有点顿，是性能问题吗？
 
-**不是。这一条在设备上量过，结论是「应用无能为力」，写在这里免得别人再走一遍。**
+**不是性能问题 —— 是【启动方式】的问题。**
 
-**鸿蒙的 ArkUI 应用无法向系统请求屏幕刷新率 —— 面板是跟着应用走的，不是反过来。**
+> [!WARNING]
+> **不要用「小白调试助手」这类工具去【启动】本应用。**
+> 用它**签名 / 安装**没问题，但**要从桌面图标或最近任务里打开**。
+>
+> ⭐ 那类工具会以「**游戏模式**」启动应用，**把应用锁在 60 帧**。表现是启动器界面上
+> **一切动画都顿**，而且**怎么改代码都没用**。这一点本项目付过代价：为此查了十几轮 ——
+> 滚动、动画曲线、换组件、逐条动画声明帧率范围，**一条都没有效果**，
+> 因为原因**根本不在应用里**。
+>
+> 换回从桌面打开，问题就没有了。
 
-Mate 80 Pro 上实测：
+Mate 80 Pro 上实测（**当时应用正是被那个工具启动的**）：
 
 - 这块屏支持的档位是 `[30, 36, 40, 45, 60, 72, 90, 120]` Hz；
 - **应用启动前**，面板停在 **120 Hz**；**应用一进前台，面板就落到 60 Hz，并一直待着**；
 - 我们渲染的是**精准的 60 fps** —— 帧间隔恒定 16.6 ms、零抖动。
-  也就是说**不是渲染不过来**，而是**面板本来就在 60**；
+  也就是说**不是渲染不过来**，而是**面板被按在 60**；
 - 试过在动画上声明 `expectedFrameRateRange = {60, 120, 120}`，
   **连一条持续 3 秒的动画也抬不动它**，面板全程 60、fps 全程 60。
 
-鸿蒙**没有**公开的「设置刷新率」接口：`@ohos.display` 只有**读**的字段（当前档位、支持的档位），
-`settings.openScreenRefreshRateSettingsPage()` 只是把**系统设置页**打开给用户，不是设置 API。
+> [!IMPORTANT]
+> **订正：** 上面那几条曾经被解读成「鸿蒙应用请求不了刷新率 ⇒ 应用无能为力」。
+> **那个归因是错的。** 面板落到 60 是**那个启动工具**造成的，不是应用的属性。
+> 「应用请求不了刷新率」这句本身仍然成立（见下），但它**不是**这个现象的原因，
+> **也不必为此去固定屏幕刷新率**。
 
-⇒ **如果你觉得切页签不够顺，把屏幕刷新率固定成 60 Hz 会改善**（实测有效）。
-原因大概是：智能刷新模式下，面板会在档位之间**移动**（启动时从 120 落到 60、触摸时又可能升上去），
-而**每一次档位切换本身就会丢一帧**；固定住之后它就不动了。
+鸿蒙**确实没有**公开的「设置刷新率」接口：`@ohos.display` 只有**读**的字段（当前档位、支持的档位），
+`settings.openScreenRefreshRateSettingsPage()` 只是把**系统设置页**打开给用户，不是设置 API。
+⇒ 所以应用侧**没有杠杆**，唯一的正解就是**别用会锁帧的方式启动**。
 
 ⚠️ 这条只影响**启动器的界面动画**，**不影响游戏本身**。
 
@@ -200,32 +212,43 @@ affect it.
 
 ## The launcher's UI stutters a little when I switch tabs. Is it a performance problem?
 
-**No. This was measured on the device, and the conclusion is "the app cannot fix it". It is
-written down here so the next person does not have to walk the same path.**
+**No -- it is not a performance problem, it is a problem with HOW the app was launched.**
 
-**A HarmonyOS ArkUI app cannot ask the system for a refresh rate -- the panel follows the app,
-not the other way around.**
+> [!WARNING]
+> **Do not LAUNCH this app with an installer/debug tool such as 小白调试助手.**
+> Using it to **sign or install** is fine -- but **open the app from its icon or from recent
+> apps**.
+>
+> ⭐ Those tools can start an app in a "**game mode**" that **locks it to 60 fps**. Every
+> animation in the launcher then looks rough, and **no code change helps**. This project paid
+> for that lesson: a dozen rounds went into scrolling, animation curves, swapping components and
+> per-animation frame-rate declarations, and **none of it made a difference**, because the cause
+> was never in the app.
+>
+> Launch it normally and the problem is gone.
 
-Measured on a Mate 80 Pro:
+Measured on a Mate 80 Pro (**with the app launched by that tool**):
 
 - The display supports `[30, 36, 40, 45, 60, 72, 90, 120]` Hz;
 - **Before the app starts** the panel sits at **120 Hz**; **as soon as the app comes to the
   foreground the panel drops to 60 Hz and stays there**;
 - We render a **precise 60 fps** -- 16.6 ms between frames, no jitter at all.
-  So this is **not** "we cannot keep up"; the panel is simply at 60;
+  So this is **not** "we cannot keep up"; the panel is being held at 60;
 - Declaring `expectedFrameRateRange = {60, 120, 120}` on an animation **did not raise it**,
   not even with an animation that ran for 3 seconds -- the panel stayed at 60 and so did the
   frame rate.
 
-HarmonyOS exposes **no** public "set the refresh rate" API: `@ohos.display` only has readable
-fields (the current step and the supported steps), and
-`settings.openScreenRefreshRateSettingsPage()` merely opens the **system settings page** for the
-user rather than setting anything.
+> [!IMPORTANT]
+> **Correction:** those measurements used to be read as "a HarmonyOS app cannot ask for a
+> refresh rate, so the app cannot fix this". **That attribution was wrong.** The panel drops to
+> 60 because of **the launch tool**, not because of anything the app is or does. The statement
+> below is still true, but it is **not** the cause of this, and **pinning the refresh rate is
+> not a fix**.
 
-=> **If the tab switch feels rough to you, pinning the display to 60 Hz improves it** (measured).
-The likely reason: in adaptive-refresh mode the panel **moves** between steps (it drops from 120
-to 60 when the app starts, and may rise again on touch), and **every step change costs a frame**.
-Pinned, it stops moving.
+HarmonyOS genuinely exposes **no** public "set the refresh rate" API: `@ohos.display` only has
+readable fields, and `settings.openScreenRefreshRateSettingsPage()` merely opens the **system
+settings page**. So there is **no lever on the app side** -- which is why the only real answer is
+"do not launch it in a way that locks the frame rate".
 
 Note this only affects the **launcher's own animations**, **not the game itself**.
 

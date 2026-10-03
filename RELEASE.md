@@ -153,6 +153,7 @@ bash deploy.sh          # 构建 + 校验 + 安装 + 启动 + 收日志
 | **整包导出** | 把某个版本的一整套游戏数据（存档、模组、蓝图、设置）打成一个 zip |
 | **整包导入** | 选一个 zip 导入。导入前会**自动把现有数据备份一份** |
 | **导入可选多处** | 一次勾选多个目标再确认；带「全选 / 全不选」。同一份数据只写一次 |
+| **一键清空垃圾站** | 垃圾站里可以一次全清掉，**有二次确认**；归档的会单独点出来 |
 | **导出与备份的位置** | 都在 `Mindustry Ark/` 文件夹下；文件名带版本与时间 |
 | **启动器进场动效 / 异形屏适配 / 底部导航栏** | 启动器界面重做：过渡动效、避开挖孔与曲面边缘、底栏换成系统的悬浮材质 |
 
@@ -558,6 +559,7 @@ repeated here in full, so anyone coming straight from 1.3.0.1 does not have to r
 | **Whole-package export** | One version's entire game data — saves, mods, schematics, settings — packed into a single zip |
 | **Whole-package import** | Pick a zip and it is applied. The existing data is **backed up automatically** first |
 | **Import to several places** | Pick as many targets as you like and confirm once, with select-all and clear-all. A single set of data is written once |
+| **Clear the whole vault** | Empty the vault in one go, behind a confirmation; archived entries are called out separately |
 | **Where exports and backups go** | Both under `Mindustry Ark/`, named after the version and the time |
 | **Launcher interface** | Entry transitions, cutout and curved-edge handling, and the system's floating-material bottom bar |
 
