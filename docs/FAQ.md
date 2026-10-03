@@ -62,15 +62,15 @@
 **不是性能问题 —— 是【启动方式】的问题。**
 
 > [!WARNING]
-> **不要用「小白调试助手」这类工具去【启动】本应用。**
-> 用它**签名 / 安装**没问题，但**要从桌面图标或最近任务里打开**。
+> **不要用「小白调试助手」这类工具去打开应用的「游戏模式」。**
+> 用它**签名 / 安装**没问题，但**要用正常方式启动**（桌面图标，或最近任务）。
 >
-> ⭐ 那类工具会以「**游戏模式**」启动应用，**把应用锁在 60 帧**。表现是启动器界面上
+> ⭐ 以「**游戏模式**」启动应用，会**把应用锁在 60 帧**。表现是启动器界面上
 > **一切动画都顿**，而且**怎么改代码都没用**。这一点本项目付过代价：为此查了十几轮 ——
 > 滚动、动画曲线、换组件、逐条动画声明帧率范围，**一条都没有效果**，
 > 因为原因**根本不在应用里**。
 >
-> 换回从桌面打开，问题就没有了。
+> 换回正常启动，问题就没有了。
 
 Mate 80 Pro 上实测（**当时应用正是被那个工具启动的**）：
 
@@ -215,17 +215,17 @@ affect it.
 **No -- it is not a performance problem, it is a problem with HOW the app was launched.**
 
 > [!WARNING]
-> **Do not LAUNCH this app with an installer/debug tool such as 小白调试助手.**
-> Using it to **sign or install** is fine -- but **open the app from its icon or from recent
-> apps**.
+> **Do not use an installer/debug tool such as 小白调试助手 to open the app's "game mode".**
+> Using it to **sign or install** is fine -- but **start the app the normal way** (its icon, or
+> from recent apps).
 >
-> ⭐ Those tools can start an app in a "**game mode**" that **locks it to 60 fps**. Every
-> animation in the launcher then looks rough, and **no code change helps**. This project paid
-> for that lesson: a dozen rounds went into scrolling, animation curves, swapping components and
-> per-animation frame-rate declarations, and **none of it made a difference**, because the cause
-> was never in the app.
+> ⭐ Starting the app in **game mode** **locks it to 60 fps**. Every animation in the launcher
+> then looks rough, and **no code change helps**. This project paid for that lesson: a dozen
+> rounds went into scrolling, animation curves, swapping components and per-animation
+> frame-rate declarations, and **none of it made a difference**, because the cause was never in
+> the app.
 >
-> Launch it normally and the problem is gone.
+> Start it normally and the problem is gone.
 
 Measured on a Mate 80 Pro (**with the app launched by that tool**):
 
