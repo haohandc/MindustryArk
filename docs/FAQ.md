@@ -57,6 +57,30 @@
 **② 游戏画面** —— 那是**游戏自带**的：设置里有「**适应刘海显示**」开关，
 另有一个安全区边距值可调。请在那里调。⛔ 启动器那条滑条管不到它。
 
+## 启动器界面切页签有点顿，是性能问题吗？
+
+**不是。这一条在设备上量过，结论是「应用无能为力」，写在这里免得别人再走一遍。**
+
+**鸿蒙的 ArkUI 应用无法向系统请求屏幕刷新率 —— 面板是跟着应用走的，不是反过来。**
+
+Mate 80 Pro 上实测：
+
+- 这块屏支持的档位是 `[30, 36, 40, 45, 60, 72, 90, 120]` Hz；
+- **应用启动前**，面板停在 **120 Hz**；**应用一进前台，面板就落到 60 Hz，并一直待着**；
+- 我们渲染的是**精准的 60 fps** —— 帧间隔恒定 16.6 ms、零抖动。
+  也就是说**不是渲染不过来**，而是**面板本来就在 60**；
+- 试过在动画上声明 `expectedFrameRateRange = {60, 120, 120}`，
+  **连一条持续 3 秒的动画也抬不动它**，面板全程 60、fps 全程 60。
+
+鸿蒙**没有**公开的「设置刷新率」接口：`@ohos.display` 只有**读**的字段（当前档位、支持的档位），
+`settings.openScreenRefreshRateSettingsPage()` 只是把**系统设置页**打开给用户，不是设置 API。
+
+⇒ **如果你觉得切页签不够顺，把屏幕刷新率固定成 60 Hz 会改善**（实测有效）。
+原因大概是：智能刷新模式下，面板会在档位之间**移动**（启动时从 120 落到 60、触摸时又可能升上去），
+而**每一次档位切换本身就会丢一帧**；固定住之后它就不动了。
+
+⚠️ 这条只影响**启动器的界面动画**，**不影响游戏本身**。
+
 ## 怎么切换 PC 模式 / 触屏模式？
 
 点**悬浮球** → 菜单里的「**切换**」→ **重启应用**后生效。
@@ -173,6 +197,37 @@ of usable width were being thrown away. A device that needs the bottom too can d
 **② The game's picture** — that one belongs to the **game**: there is an **"adapt to notch"** toggle
 in its settings, plus an adjustable safe-area padding value. ⛔ The launcher's slider does not
 affect it.
+
+## The launcher's UI stutters a little when I switch tabs. Is it a performance problem?
+
+**No. This was measured on the device, and the conclusion is "the app cannot fix it". It is
+written down here so the next person does not have to walk the same path.**
+
+**A HarmonyOS ArkUI app cannot ask the system for a refresh rate -- the panel follows the app,
+not the other way around.**
+
+Measured on a Mate 80 Pro:
+
+- The display supports `[30, 36, 40, 45, 60, 72, 90, 120]` Hz;
+- **Before the app starts** the panel sits at **120 Hz**; **as soon as the app comes to the
+  foreground the panel drops to 60 Hz and stays there**;
+- We render a **precise 60 fps** -- 16.6 ms between frames, no jitter at all.
+  So this is **not** "we cannot keep up"; the panel is simply at 60;
+- Declaring `expectedFrameRateRange = {60, 120, 120}` on an animation **did not raise it**,
+  not even with an animation that ran for 3 seconds -- the panel stayed at 60 and so did the
+  frame rate.
+
+HarmonyOS exposes **no** public "set the refresh rate" API: `@ohos.display` only has readable
+fields (the current step and the supported steps), and
+`settings.openScreenRefreshRateSettingsPage()` merely opens the **system settings page** for the
+user rather than setting anything.
+
+=> **If the tab switch feels rough to you, pinning the display to 60 Hz improves it** (measured).
+The likely reason: in adaptive-refresh mode the panel **moves** between steps (it drops from 120
+to 60 when the app starts, and may rise again on touch), and **every step change costs a frame**.
+Pinned, it stops moving.
+
+Note this only affects the **launcher's own animations**, **not the game itself**.
 
 ## How do I switch between PC mode and touch mode?
 
