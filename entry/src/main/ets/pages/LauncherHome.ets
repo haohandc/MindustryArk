@@ -2242,19 +2242,24 @@ export struct LauncherHome {
   @Builder
   SaveActionRow() {
     Row() {
+      /* ⭐ 顺序是**删除 / 复制 / 移动**（2026-10-03 用户：「看着更顺眼」）。
+       * ⚠️ 删除排第一、且是这一排里唯一的**破坏性**动作 ⇒ 它自己带底色与警示色，
+       * 与另外两个拉开；靠右那一端留给「移动」这种收尾动作。
+       * ⛔ 三个都在同一个 `Row` 里靠右，改动顺序时**别动 `margin({ left: 8 })` 的分布** ——
+       * 第一个按钮不能再有左间距，否则整排会往右缩 8vp。 */
+      Button('删除')
+        .fontSize(BUTTON_FONT_VP)
+        .fontColor($r('sys.color.warning'))
+        .backgroundColor($r('app.color.launcher_bg'))
+        .onClick(() => { this.askDelete(); })
       Button('复制')
         .fontSize(BUTTON_FONT_VP)
+        .margin({ left: 8 })
         .onClick(() => { this.askTransfer('copy'); })
       Button('移动')
         .fontSize(BUTTON_FONT_VP)
         .margin({ left: 8 })
         .onClick(() => { this.askTransfer('move'); })
-      Button('删除')
-        .fontSize(BUTTON_FONT_VP)
-        .fontColor($r('sys.color.warning'))
-        .backgroundColor($r('app.color.launcher_bg'))
-        .margin({ left: 8 })
-        .onClick(() => { this.askDelete(); })
     }
     /* ⭐ **靠右**（2026-10-02：「复制、移动、删除按钮应该在界面最右边，这样更符合人点击习惯」）。
      * ⚠️ 用 `justifyContent(FlexAlign.End)` 而不是塞一个 `Blank()` 占位 —— 靠右由**布局**保证，
