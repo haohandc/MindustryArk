@@ -154,6 +154,13 @@ include_directories(${NATIVEAPP_ROOT_PATH}
 
 # This is libmain.so -- the library name must be "main"
 add_library(main SHARED launcher.c)
+# [A] `_GNU_SOURCE`：`pthread_getname_np` 在 pthread.h 里是被 `#ifdef _GNU_SOURCE`
+#     包着的（实测 openharmony sysroot 的 pthread.h:361），不定义它就拿不到声明。
+#     ⛔ 走**编译定义**而不是在 .c 里 `#define`：命令行 -D 天然在所有 #include 之前，
+#     所以不会因为以后有人在上面插一个 include 而静默失效。
+#     ⚠ 实测：不定义时只报 warning（隐式声明假定 `int f()`），AArch64 上恰好能链接、
+#     也能跑对 —— 但那是巧合，而 clang 16+ 在 C99+ 下把它默认当 error。
+target_compile_definitions(main PRIVATE _GNU_SOURCE)
 # A one-function bridge so ArkTS can ask the platform about Secure Shield mode
 # before it creates the XComponent that starts the game. Deliberately NOT folded
 # into the SDL3 module: that is upstream code this project already patches, and
