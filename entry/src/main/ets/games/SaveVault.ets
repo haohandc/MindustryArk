@@ -160,14 +160,30 @@ export function vaultDelete(save: SaveEntry, savesDir: string, days: number, now
   if (save.files.length === 0) {
     return '这个存档里没有文件。';
   }
-  const id: string = String(nowMs) + '-' + slug(save.label);
-  const dir: string = VAULT_ROOT + '/' + id;
-  const filesDst: string = dir + '/' + FILES_DIR;
-
-  /* 同毫秒重名（理论上可能：连点两次）⇒ 直接拒绝，别覆盖别人的条目。 */
-  if (pathExists(dir)) {
-    return '垃圾站里已经有同名的条目，请稍后再试。';
+  /* ⭐ 撞名**不拒绝，加序号**。
+   *
+   * ⛔ 这里原来对已存在的目录直接返回「请稍后再试」—— 但那条路在多选删除里是**必然**触发的：
+   *    `deleteMultiToVault()` 在循环【外】只取一次 `Date.now()`（LauncherHome.ets:1669），
+   *    所以同一批里每个条目共用同一个毫秒戳；两个**同名**存档拼出同一个 id，第二个就被拒。
+   *    而「同名」在本应用里是常态（每个版本下都有 `0.msav` / `1.msav` …）
+   *    ⇒ 跨版本多选删除必中，用户 2026-10-03 报的正是它。
+   * ⚠️ 顺带解掉另一个较少见的撞法：`slug()` 把标签截到 40 字符（见它自己的注释），
+   *    两个前 40 字符相同的长标签也会撞 —— 加序号同样管用。
+   * ⭐ 原来那条注释的**意图**（绝不覆盖别人的条目）照旧成立：始终新建兄弟目录，只是名字多个序号。
+   * ⚠️ id 只被本文件解析 —— UI 那边明确不解析它（LauncherHome.ets:1720 的注释写明了），
+   *    所以改拼法是安全的。 */
+  const stem: string = String(nowMs) + '-' + slug(save.label);
+  let id: string = stem;
+  let dir: string = VAULT_ROOT + '/' + id;
+  /* 上限只是防呆：同毫秒 + 同标签撞上一千次不可能，但一个不设上限的循环不值得留。 */
+  for (let n: number = 2; pathExists(dir) && n < 1000; n += 1) {
+    id = stem + '-' + String(n);
+    dir = VAULT_ROOT + '/' + id;
   }
+  if (pathExists(dir)) {
+    return '垃圾站里这个名字已经用过太多次了，请稍后再试。';
+  }
+  const filesDst: string = dir + '/' + FILES_DIR;
 
   /* ---- ① 复制 ---- */
   const cp: TreeStat = newTreeStat();
