@@ -405,6 +405,8 @@ export struct LauncherHome {
      * 而玩家看到的还是那张多选列表。 */
     if (this.multiMode) { this.exitMulti(); return true; }
     if (this.showDeleteAsk) { this.showDeleteAsk = false; return true; }
+    /* 清空垃圾站的确认框。⚠️ 与上面那些同理 —— 一个能永久删东西的窗必须能被返回键关掉。 */
+    if (this.showVaultClearAsk) { this.showVaultClearAsk = false; return true; }
     if (this.transferOp !== '') { this.transferOp = ''; this.transferNote = ''; return true; }
     if (this.isolationConfirm !== '') { this.isolationConfirm = ''; return true; }
     if (this.showIsolationAsk) {
@@ -449,6 +451,10 @@ export struct LauncherHome {
 
   /** 垃圾站视图开着吗。⛔ 它不是第三种「视图」—— 它是**另一个地方**，进出靠一个返回。 */
   @State showVault: boolean = false;
+  /* 「清空垃圾站」的二次确认框开着没有。
+   * ⛔⛔ 这个动作**不可逆**（`vaultPurge` 是真删，不是搬去别处）⇒ 必须过确认，
+   *     和单个存档的删除走同一条规矩（那边的理由见 `showDeleteAsk`）。 */
+  @State showVaultClearAsk: boolean = false;
   /** 垃圾站里现在有什么。`refresh()` 里读一次，渲染只用它。 */
   @State vaultEntries: VaultEntry[] = [];
   /** 保留期（天）。⭐ 全局设置。 */
@@ -1545,6 +1551,49 @@ export struct LauncherHome {
    * 后面那些 `@State` 就一个都不会被赋值 —— 而玩家看到的正是「点了没反应」⇒ 垃圾站的动作先走
    * 这条**短**路，界面立刻是对的，`refresh()` 再去做剩下的（「取消归档和放回点了 UI 不刷新」有一半
    * 是这个形状：磁盘上确实发生了，而界面没跟上）。 */
+  /** 垃圾站里**归档**的条数。清空之前要说出来 —— 那几条本来是不会自动消失的
+   * （归档的定义就是「不参与自动清理，只能手动删或放回」），所以「清空」对它们是一次明确的推翻。 */
+  private vaultArchivedCount(): number {
+    let n: number = 0;
+    for (const e of this.vaultEntries) {
+      if (e.archived) {
+        n += 1;
+      }
+    }
+    return n;
+  }
+
+  /** 一键清空：逐个走 `vaultPurge`。
+   *
+   * ⛔ **不要**自己拼一个 `removeTree(VAULT_ROOT)` 一把删掉：那样绕过了这个模块自己的日志，
+   *    而且**失败时说不清是哪一个条目出的问题** —— 而「少了几个、不知道为什么」正是垃圾站最不该有的状态。
+   * ⭐ 即便有失败也重新读一遍列表：成功的那些确实已经没了，界面必须跟上，
+   *    否则玩家会看着一堆已经不存在的东西。失败的那几个则**具名**写在 `vaultNote` 里。 */
+  private clearVaultAll(): void {
+    this.showVaultClearAsk = false;
+    const total: number = this.vaultEntries.length;
+    let done: number = 0;
+    const fails: string[] = [];
+    for (const e of this.vaultEntries) {
+      const err: string = vaultPurge(e.id);
+      if (err === '') {
+        done += 1;
+      } else {
+        fails.push(e.label + '：' + err);
+      }
+    }
+    /* ⛔ **只在失败时写 `vaultNote`**，两重理由：
+     * ① 那个字段在界面里是 `$r('sys.color.warning')` —— 它是**错误通道**（别的调用点写进去的都是错），
+     *    把「已清空 N 个」放进去会用警示色报一件成功的事。
+     * ② 全部成功时**列表变空本身就是反馈**（那一屏会显示「垃圾站是空的」），
+     *    再补一句话是冗余。而失败必须说，否则玩家只看到少了几个、不知道剩下的为什么还在。 */
+    this.vaultNote = fails.length === 0
+      ? ''
+      : ('清掉了 ' + String(done) + ' 个；有 ' + String(fails.length) + ' 个没删掉：' + fails.join('；'));
+    hilog.info(DOMAIN, TAG, 'vault: cleared %{public}d of %{public}d entry(ies)', done, total);
+    this.reloadVault();
+  }
+
   private reloadVault(): void {
     this.vaultPurgedLast = purgeExpired(Date.now());
     this.vaultEntries = listVault();
@@ -2805,6 +2854,15 @@ export struct LauncherHome {
           .layoutWeight(1)
         Text(this.vaultEntries.length === 0 ? '空' : (String(this.vaultEntries.length) + ' 项'))
           .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+        /* ⭐ 一键清空。**只在有东西时出现** —— 空的时候放一个永远点不动的按钮是纯噪音。
+         * ⛔ 它真删、不可逆，所以只**开窗**，删除在 `VaultClearAskDialog` 里确认之后才发生。
+         * ⚠️ 用 `warning` 色而不是 `brand`：这一屏上 `brand` 是「点进去看」，而这个是「删掉」。 */
+        if (this.vaultEntries.length > 0) {
+          Text('清空')
+            .fontSize(13).fontColor($r('sys.color.warning'))
+            .padding({ left: 14, right: 4, top: 6, bottom: 6 })
+            .onClick(() => { this.showVaultClearAsk = true; })
+        }
       }
       .width('100%')
       .padding({ left: 12, right: 16, top: 16, bottom: 8 })
@@ -3041,6 +3099,67 @@ export struct LauncherHome {
     .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
                top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
     /* 整层淡入（遮罩 + 卡片一起）。 */
+    .transition(enterFade())
+  }
+
+  /** 清空垃圾站的二次确认。
+   *
+   * ⭐ 与 `DeleteAskDialog` 的写法**不同**，而且这里是有意的：那个窗把区别写在**按钮标签**上就够
+   * （「放进垃圾站」vs「归档」是两种去向）；而这里**没有第二种去向可选** ——
+   * 玩家唯一需要知道的是**它不可撤销**，那只能写成一句话。
+   * ⚠️ 那句话不能省：「删到垃圾站」这一整套设计一直在告诉玩家「删了还能找回」，
+   * 所以「这一次找不回」必须由界面主动说，⛔ 不能指望他自己推断出来。 */
+  @Builder
+  VaultClearAskDialog() {
+    Column() {
+      Column() {
+        Text('清空垃圾站？')
+          .fontSize(17).fontColor($r('sys.color.font_primary'))
+          .width('100%').textAlign(TextAlign.Center)
+
+        Text('这 ' + String(this.vaultEntries.length) + ' 个存档会被永久删除，不能撤销。'
+             + '\n垃圾站之外没有第二份。')
+          .fontSize(13).fontColor($r('sys.color.font_secondary'))
+          .width('100%').margin({ top: 12 })
+
+        if (this.vaultArchivedCount() > 0) {
+          Text('其中 ' + String(this.vaultArchivedCount())
+               + ' 个是归档的 —— 归档本来不会自动清理，只有你手动删它才会消失。')
+            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+            .width('100%').margin({ top: 8 })
+        }
+
+        Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
+
+        /* 按钮标签上再把「永久」和数量说一遍 —— 它在视觉上就是那个动作本身。 */
+        Button('永久删除这 ' + String(this.vaultEntries.length) + ' 个')
+          .fontSize(15)
+          .width('72%').alignSelf(ItemAlign.Center)
+          .margin({ top: 16 })
+          .onClick(() => { this.clearVaultAll(); })
+
+        Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
+        Button('取消')
+          .fontSize(14)
+          .width('25%').alignSelf(ItemAlign.Center)
+          .margin({ top: 12 })
+          .onClick(() => { this.showVaultClearAsk = false; })
+      }
+      .width('100%')
+      .constraintSize({ maxWidth: this.dialogWidthVp() })
+      .padding(20)
+      .backgroundColor($r('app.color.launcher_card'))
+      .borderRadius(CARD_RADIUS_VP)
+      .alignItems(HorizontalAlign.Start)
+      /* 吞掉落在卡片上的点击 —— 与另外几个确认窗同一处理由（`DeleteAskDialog` 的注释）。 */
+      .onClick(() => {})
+    }
+    .width('100%').height('100%')
+    .backgroundColor('#80000000')
+    .justifyContent(FlexAlign.Center)
+    /* 异形屏避让，与另外几个确认窗逐字相同 —— ⛔ 别在这里另发明一套边距。 */
+    .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
+               top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
     .transition(enterFade())
   }
 
@@ -4763,6 +4882,12 @@ export struct LauncherHome {
      * （多选态下单条动作行整个藏了），所以顺序只是防御性的。 */
     if (this.showMultiAsk) {
       this.MultiDeleteAskDialog()
+    }
+
+    /* 清空垃圾站的确认。⚠️ 它只在垃圾站那一屏出现，与别的确认框不可能同时开着 ——
+     * 排在这里只是防御性顺序（Stack 里后声明的在上）。 */
+    if (this.showVaultClearAsk) {
+      this.VaultClearAskDialog()
     }
 
     if (this.launchFault !== '' && !this.faultAck) {
