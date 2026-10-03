@@ -7,6 +7,8 @@ import { window } from '@kit.ArkUI';
 import { ensureModFolder, modFolderPath } from '../mods/ModImporter';
 /* 应用自己的显示名 —— 与启动器那些页面同一处规则，⛔ 别在这里写死。 */
 import { appLabel } from '../utils/AppLabel';
+/* 入场动画（退场刻意不做 —— 见那个文件的开头）。 */
+import { enterFade } from '../utils/Motion';
 /* 导出它，是为了让本页在那个文件夹真正存在之后再写一次桥接文件。见调用处。 */
 import { writeUserDirs } from '../entryability/EntryAbility';
 /* 崩溃在 ability 的 onCreate 捕获（必须赶在原生代码 unlink 之前），在这里发布 ——
@@ -1481,6 +1483,10 @@ struct Index {
         .borderColor('#44ffffff')
         .position({ x: this.ballMenuX(), y: this.ballMenuY() })
         .focusable(false)
+        /* ⭐ 淡入出现（用户 2026-10-03 点名）。⚠️ 挂在这里而不是整层：菜单是 position 定位的
+         * 一张卡、没有全屏遮罩，所以淡入的就是它自己。⛔ 别把 transition 挪到 `.focusable(false)`
+         * **之前** —— 那是同一个节点，位置无所谓；但**不要**给它加任何可获焦的东西（见上面那条规则）。 */
+        .transition(enterFade(80))
       }
     /* About 卡片 —— Stack 子节点，盖住一切包括悬浮球。任何地方都没有可聚焦组件：对话框或 Button
      * 会从 XComponent 夺走焦点，游戏然后就看不到键盘，所以变暗的区域本身就是关闭按钮。那些地址是
@@ -1571,6 +1577,8 @@ struct Index {
         }
         .width('100%').height('100%').backgroundColor('#B0000000')
         .justifyContent(FlexAlign.Center).focusable(false)
+        /* 整层淡入（遮罩 + 卡片一起）。 */
+        .transition(enterFade())
         .onClick(() => {
           const ctx = getContext(this) as common.UIAbilityContext;
           ctx.terminateSelf().catch((err: BusinessError) => {

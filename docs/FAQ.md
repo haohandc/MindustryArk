@@ -31,15 +31,55 @@
 **分两块，两块都能调：**
 
 **① 启动器自己的界面**（首页 / 存档 / 设置，以及那些弹窗）——
-应用会**自己探测**挖孔与曲面边缘（`display.getCutoutInfo()`），首次启动时按探测结果给一个避让值。
-要调就去 **设置 → 界面避让（异形屏）**，那里有一条滑条，**四边统一**，0 到 64 vp。
-⭐ 滑条是**最终值**（不是「在自动的基础上再加」）：拖到多少就是多少，拖回建议值就等于用自动的。
+应用会**自己探测挖孔 / 刘海**（`window.getWindowAvoidArea(TYPE_CUTOUT)`），
+并把结果**自动**用在界面上，不需要你做什么。
+⛔ **曲面屏边缘不避让** —— 那是显示特征不是洞，像素是在的，内容本来就该铺到那儿。
 
-⚠️ **多数平板探测出来是 0**（没有挖孔、也不是曲面屏），那就什么都不用做。
-个别圆角很大、内容被切到的平板，探测不到 —— **用手动滑条补**。
+要调就去 **设置 → 界面避让（异形屏）**：
+
+| 控件 | 作用 |
+|---|---|
+| **自动避让**（出厂就是开的） | 每次启动都按本机探测结果来 |
+| **滑条**（0 – 64 vp） | 自己定一个值。⚠️ **一动滑条，自动就关掉了** —— 那是「我要自己定」最自然的表达 |
+
+⭐ 想回到自动：把「自动避让」开关重新打开，值立刻回到探测结果。
+
+**这个值作用在哪几边：**
+
+| 探测结果 | 作用在 |
+|---|---|
+| 命中了一边或几边（例如顶部一个挖孔） | **只让那几边** —— 其余边不需要，让了是浪费 |
+| **什么都没探测到** | **只让上边** —— 按最常见的形状（顶部一个孔）假定 |
+
+⚠️ 第二行在 2026-10-03 改成只让上边：原来让四边，用户当场指出「左右避让干啥啊」——
+顶部那个孔根本没碰到左右，白白少了两条可用宽度。要上下都让的机器请自己拖滑条。
 
 **② 游戏画面** —— 那是**游戏自带**的：设置里有「**适应刘海显示**」开关，
 另有一个安全区边距值可调。请在那里调。⛔ 启动器那条滑条管不到它。
+
+## 启动器界面切页签有点顿，是性能问题吗？
+
+**不是。这一条在设备上量过，结论是「应用无能为力」，写在这里免得别人再走一遍。**
+
+**鸿蒙的 ArkUI 应用无法向系统请求屏幕刷新率 —— 面板是跟着应用走的，不是反过来。**
+
+Mate 80 Pro 上实测：
+
+- 这块屏支持的档位是 `[30, 36, 40, 45, 60, 72, 90, 120]` Hz；
+- **应用启动前**，面板停在 **120 Hz**；**应用一进前台，面板就落到 60 Hz，并一直待着**；
+- 我们渲染的是**精准的 60 fps** —— 帧间隔恒定 16.6 ms、零抖动。
+  也就是说**不是渲染不过来**，而是**面板本来就在 60**；
+- 试过在动画上声明 `expectedFrameRateRange = {60, 120, 120}`，
+  **连一条持续 3 秒的动画也抬不动它**，面板全程 60、fps 全程 60。
+
+鸿蒙**没有**公开的「设置刷新率」接口：`@ohos.display` 只有**读**的字段（当前档位、支持的档位），
+`settings.openScreenRefreshRateSettingsPage()` 只是把**系统设置页**打开给用户，不是设置 API。
+
+⇒ **如果你觉得切页签不够顺，把屏幕刷新率固定成 60 Hz 会改善**（实测有效）。
+原因大概是：智能刷新模式下，面板会在档位之间**移动**（启动时从 120 落到 60、触摸时又可能升上去），
+而**每一次档位切换本身就会丢一帧**；固定住之后它就不动了。
+
+⚠️ 这条只影响**启动器的界面动画**，**不影响游戏本身**。
 
 ## 怎么切换 PC 模式 / 触屏模式？
 
@@ -128,20 +168,66 @@ the floating ball → **"launcher"** to go back to the launcher UI and exit from
 **Two separate things, and both are adjustable:**
 
 **① The launcher's own UI** (Home / Saves / Settings, and the dialogs) —
-the app **detects cutouts and curved edges itself** (`display.getCutoutInfo()`) and seeds an inset
-from that on first launch. To change it: **Settings → 界面避让（异形屏）**, a slider,
-**the same value on all four edges**, 0 to 64 vp.
-⭐ The slider is the **final value**, not an amount added on top of the automatic one: whichever
-value it sits at is what gets used, so dragging it back to the detected value is the same as
-letting the detection win.
+the app **detects cutouts and notches itself** (`window.getWindowAvoidArea(TYPE_CUTOUT)`) and
+applies the result **automatically**; there is nothing to do.
+⛔ **Curved edges are not avoided** -- that is a display feature, not a hole: the pixels are there,
+and content is meant to extend under it.
 
-⚠️ **On most tablets the detection returns 0** (no cutout, not a curved display), and then there is
-nothing to do. The few tablets where a large corner radius clips the content will not be detected --
-**use the slider**.
+To change it: **Settings → 界面避让（异形屏）**:
 
+| Control | What it does |
+|---|---|
+| **自动避让** (on by default) | re-applies this machine's detection on every launch |
+| **the slider** (0 – 64 vp) | your own value. ⚠️ **Touching the slider turns auto off** -- the most natural way to say "I will decide" |
+
+⭐ To go back to automatic, turn the toggle on again; the value returns to the detection at once.
+
+**Which edges the value applies to:**
+
+| Detection | Applies to |
+|---|---|
+| one or more edges (a top-centred cutout, say) | **only those edges** -- the rest do not need it, and the space would be wasted |
+| **nothing at all** | **the top edge only** -- the most common shape (one hole at the top) |
+
+⚠️ The second row became top-only on 2026-10-03. It used to be all four, and the user pointed out
+on the spot that a top-centred hole has nothing to do with the left and right edges -- two strips
+of usable width were being thrown away. A device that needs the bottom too can drag the slider.
+
+**② The game's picture**
 **② The game's picture** — that one belongs to the **game**: there is an **"adapt to notch"** toggle
 in its settings, plus an adjustable safe-area padding value. ⛔ The launcher's slider does not
 affect it.
+
+## The launcher's UI stutters a little when I switch tabs. Is it a performance problem?
+
+**No. This was measured on the device, and the conclusion is "the app cannot fix it". It is
+written down here so the next person does not have to walk the same path.**
+
+**A HarmonyOS ArkUI app cannot ask the system for a refresh rate -- the panel follows the app,
+not the other way around.**
+
+Measured on a Mate 80 Pro:
+
+- The display supports `[30, 36, 40, 45, 60, 72, 90, 120]` Hz;
+- **Before the app starts** the panel sits at **120 Hz**; **as soon as the app comes to the
+  foreground the panel drops to 60 Hz and stays there**;
+- We render a **precise 60 fps** -- 16.6 ms between frames, no jitter at all.
+  So this is **not** "we cannot keep up"; the panel is simply at 60;
+- Declaring `expectedFrameRateRange = {60, 120, 120}` on an animation **did not raise it**,
+  not even with an animation that ran for 3 seconds -- the panel stayed at 60 and so did the
+  frame rate.
+
+HarmonyOS exposes **no** public "set the refresh rate" API: `@ohos.display` only has readable
+fields (the current step and the supported steps), and
+`settings.openScreenRefreshRateSettingsPage()` merely opens the **system settings page** for the
+user rather than setting anything.
+
+=> **If the tab switch feels rough to you, pinning the display to 60 Hz improves it** (measured).
+The likely reason: in adaptive-refresh mode the panel **moves** between steps (it drops from 120
+to 60 when the app starts, and may rise again on touch), and **every step change costs a frame**.
+Pinned, it stops moving.
+
+Note this only affects the **launcher's own animations**, **not the game itself**.
 
 ## How do I switch between PC mode and touch mode?
 

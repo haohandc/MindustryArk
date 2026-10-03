@@ -7,20 +7,33 @@
  * ③ 漏改 import 调用点会让整个文件语法分析失败（真错在错误列表最后一条），而 `build.log`
  * 是追加的、混着历次错误 ⇒ 只信命令当场打印的那几行。 */
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
-import { SymbolGlyphModifier, uiMaterial } from '@kit.ArkUI';
+import { BusinessError } from '@kit.BasicServicesKit';
+import { SymbolGlyphModifier } from '@kit.ArkUI';
+/* 底部页签换成设计系统组件 HdsTabs（2026-10-03，用户指定）。与裸 Tabs 的关键差别见 build() 里那段。 */
+import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { common } from '@kit.AbilityKit';
 /* 应用自己的显示名 —— 与游戏里那个 About 卡片同一处规则。 */
 import { appLabel } from '../utils/AppLabel';
+import { newTreeStat, copyTreeInto, removeTree, TreeStat, isDir } from '../utils/FsTree';
+import { externalRootPath } from '../settings/StorageRoot';
+import { picker } from '@kit.CoreFileKit';
+import { fileUri } from '@kit.CoreFileKit';
+import {
+  packDataDir, ensureDir, readUriToFile, copyLocalFile, stampNow,
+  unpackZip, locateDataRoot, validatePack, packableItems, countPackable,
+} from '../games/DataPack';
 import { GameJar, GameResolution, listGameJars, readSelection, writeSelection,
          resolveGame, gameJarDir, ensureGameJarDir,
          bundledGameVersion, hasBundledGame, bundledGamePath } from '../games/GameLibrary';
 /* 界面偏好（启动后进哪里）。⛔ 内容宽度**不再**在这里 —— 见 gamesWidthVp。 */
 import { readLaunchMode, writeLaunchMode,
          LAUNCH_MODE_HOME, LAUNCH_MODE_GAME,
-         readSafeVp, writeSafeVp, hasSafeVp, SAFE_VP_MAX, SAFE_VP_STEP } from '../settings/LauncherPrefs';
-/* 异形屏探测（挖孔 / 曲面边缘）。⛔ 游戏画面不归它管，只用于启动器自己的界面。 */
-import { SafeInsets, detectInsets, uniformOf, describeInsets } from '../utils/SafeArea';
+         SafePref, readSafePref, writeSafePref, SAFE_VP_MAX, SAFE_VP_STEP } from '../settings/LauncherPrefs';
+/* 异形屏探测（挖孔 / 刘海）。⛔ 游戏画面不归它管，只用于启动器自己的界面。 */
+import { SafeInsets, detectInsets, uniformOf, edgesOf, dumpSafeArea } from '../utils/SafeArea';
+/* 入场动画（退场刻意不做 —— 见那个文件的开头）。 */
+import { enterFade, enterPop } from '../utils/Motion';
+/* ⚠️ 临时：帧率探针。排查完连同这一行一起删。 */
 /* 版本隔离：四档粒度、键的计算、以及打开时的那次复制。
  * ⛔ 实际的 `-Duser.home=` 在 native 侧 —— 这里只负责【决定】并把结论写进桥。 */
 /* 存档：一个存档 = 一个星球的一组 msav（或一个手动存档）。 */
@@ -219,7 +232,17 @@ const BAR_BOTTOM_MARGIN_VP = 24;
  * 多给只是底部空一点，少给才会压住按钮 ⇒ 取偏大值。 */
 const BAR_CLEARANCE_VP = 96;
 
+/* 滑条展开后的高度（vp）= 滑条自身 40 + 它与上面那行的 6 间距。
+ * ⚠️ 必须有这个数：高度动画要在 0 和它之间插值，而「内容多高」要到布局期才算得出来。 */
+const SAFE_REVEAL_VP = 46;
+
 /** 圆角。卡片和列表项共用，免得两处漂移。 */
+/** 导入对话框里「未隔离的那一份」的伪路径（它不是真版本，但复用同一套渲染）。 */
+const LIVE_TARGET_PATH: string = '__live__';
+
+/** 提示条自动收掉的时间（ms）。用户 2026-10-03 要求 3~5 秒。 */
+const NOTICE_MS: number = 4000;
+
 const CARD_RADIUS_VP = 14;
 
 /** 按钮字号。**显式给**，因为不给会按各自标签长度自适应，两个按钮的字不一样大。 */
@@ -251,24 +274,6 @@ const DIALOG_MIN_VP = 320;
  * 用半透明的白而非固定灰：弹窗底是硬编码的深色（`#F01C1C1C`），半透明灰在那上面读得出。 */
 const SECONDARY_BG = '#2EFFFFFF';
 const SECONDARY_FG = '#B0FFFFFF';
-
-/** 底部页签的材质；拿不到返回 undefined，界面退回普通样式。
- * ⚠️ 判断本身也在 try 里：`uiMaterial` 起始 26.0.0 而 compatibleSdkVersion 是 6.1.1(24)，
- * 在 API 24 的设备上抛异常的正是 `isImmersiveMaterialSupported()` 这一句，而不是它的返回值。 */
-function immersiveBarMaterial(): uiMaterial.Material | undefined {
-  try {
-    if (uiMaterial.isImmersiveMaterialSupported()) {
-      return new uiMaterial.ImmersiveMaterial({
-        style: uiMaterial.ImmersiveStyle.ULTRA_THIN,
-      });
-    }
-    hilog.info(DOMAIN, TAG, 'launcher: the device reports no immersive material support');
-  } catch (e) {
-    const err = e as BusinessError;
-    hilog.info(DOMAIN, TAG, 'launcher: immersive material unavailable (%{public}s)', err.message);
-  }
-  return undefined;
-}
 
 /** 人类可读的大小。就是给人看的，所以用 MB/KB 而不是字节。 */
 function formatSize(bytes: number): string {
@@ -311,7 +316,17 @@ export struct LauncherHome {
   @State games: GameJar[] = [];
   @State selected: string = '';
   @State resolution: GameResolution = { path: '', source: 'none' };
-  @State currentTab: number = 0;
+  /* ⚠️⚠️ **2026-10-03：从 @State 降成普通字段，这是一次一行实验 —— 别急着改回去。**
+   *
+   * 它是一个**只写不读**的遗留字段：全工程没有任何地方读它（当年的 `Tabs({index: this.currentTab})`
+   * 绑定已经撤掉）。但它是 `@State` ⇒ **每次赋值都让这个 4100 行的组件变脏** ⇒ `build()` 整棵重跑
+   * ⇒ 而三个页签是 `@Builder`（内容内联在 build() 里）⇒ **两千多行的构造代码每次切页签重跑一遍**。
+   * ⭐ 这正好解释用户报的「所有页签都一样、稳定地卡」：代价与切到哪个页签无关。
+   * ⭐ 对照 AMCL：它也在 onAnimationStart 里写同名字段（`Index.ets:2854`），但它的页签是**独立
+   *    `@Component`** ⇒ 父组件重跑时子组件不重新执行 ⇒ 所以它不卡。
+   * ⇒ 如果降级后不卡了，说明链条成立，下一步是把三个 @Builder 拆成独立 @Component（AMCL 的结构）。 */
+  private currentTab: number = 0;
+
   /** 模组那个 Downloads 文件夹的路径提示；拿不到时为 ''。 */
   @State jarDirHint: string = '';
 
@@ -325,14 +340,18 @@ export struct LauncherHome {
   /** 启动后进哪里。设置里那个开关写盘，启动时由 Index.ets 读。 */
   @State launchMode: string = LAUNCH_MODE_HOME;
 
-  /* 异形屏避让量（vp，四边统一）。作用在**启动器自己的界面**上：三个页签的内容与所有弹窗。
-   * ⭐ 语义是**覆盖**（用户 2026-10-03 选的）：这个数就是最终值，探测只用来给**首次**播种。
-   * ⚠️ 0 是合法值（「不让」），所以「有没有存过」不能用 0 来判断 —— 见 hasSafeVp()。 */
+  /* 异形屏避让量（vp）。作用在**启动器自己的界面**上：三个页签的内容与所有弹窗。
+   * ⭐ 谁在定由 `safeAuto` 说了算：开着 ⇒ 每次启动重新采用探测值；关着 ⇒ 用这个数。
+   * ⚠️ 0 是合法值（「不让」），所以「玩家定过没有」不能靠 0 判断 —— 判据是**文件里的模式**，
+   *    见 LauncherPrefs 的 readSafePref()。 */
   @State safeVp: number = 0;
   /** 这台机器探测出来的建议值（vp，四边取最大）。只用于设置页的提示与日志。 */
   @State detectedSafeVp: number = 0;
-  /** 探测到的四边明细，设置页里显示出来 —— 「探测不到」和「探测到了但没生效」要能分开。 */
-  @State detectedDetail: string = '';
+  /** 探测**命中**了哪几边。⭐ 滑条的值只作用在这里面列的边上（用户 2026-10-03 定）。 */
+  @State detectedEdges: string[] = [];
+  /** 自动避让开着没有。⭐ 开着时每次启动**都重新采用探测结果**；关着时用玩家拖出来的值。
+   *  ⚠️ 玩家一动滑条就自动关掉 —— 那是最自然的「我要自己定」的表达方式。 */
+  @State safeAuto: boolean = true;
 
   /** 玩家点过「知道了」。只活这一次会话 —— 不再是失败状态就不会再显示。 */
   @State faultAck: boolean = false;
@@ -430,6 +449,18 @@ export struct LauncherHome {
   /* 已选中的目标（`v.path` 或 `DUP_KEY`）。**先选、再按确定**（见 TransferDialog）。
    * ⚠️ 复制可以多选；移动**只会有一个**（在 `toggleTransferPick` 里强制）。 */
   @State transferPicked: string[] = [];
+
+  /* ── 整包导入 / 导出 ────────────────────────────────────────────────
+   * `importRoot` 是**已解压且已校验过**的那个数据根（在沙箱暂存里）。
+   * ⛔ 校验没过就**不开**那个对话框 —— 让玩家对着一个坏包选目标是最坏的一种失败。 */
+  @State importOpen: boolean = false;
+  @State importRoot: string = '';
+  /* 这次导入的目标标签 —— 给覆盖前的备份文件起名用。 */
+  @State importLabel: string = '';
+  @State importNote: string = '';
+  @State importMsg: string = '';   /* 非空 = 顶部显示一条进行中/失败的提示 */
+  @State importToast: string = ''; /* 成功后的短提示 */
+  @State exportMsg: string = '';
 
   /* 选中那个存档的元数据：在【选中】时读一次存下来（右侧栏要显示「哪个版本写的」），而不是点开弹窗才读。
    * ⚠️ 存的是**排好的行**而非 `SaveMeta` 原样：读它要**解压**（saveMetaText 走 zlib），常驻原始字段会让
@@ -539,10 +570,19 @@ export struct LauncherHome {
    * native 在游戏入口前留下的东西，要等**下一次启动**才被读到。 */
   launchFault: string = '';
 
-  /* 底部页签的悬浮样式（沉浸光感生效处）是 @since 26.0.0。更低 API 上那个属性方法不存在，
-   * 调用它会抛 —— 而那发生在 build() 里、catch 不到 ⇒ 按运行期 API 级别分两条分支，不靠 try。 */
-  private canFloat: boolean = deviceInfo.sdkApiVersion >= 26;
-  private barMaterial: uiMaterial.Material | undefined = immersiveBarMaterial();
+  /* 底部页签换成 HdsTabs（鸿蒙设计系统组件）之后，原来那两个字段都不需要了：
+   *
+   *   · canFloat（sdkApiVersion >= 26 的门槛）—— 裸 Tabs 的 barFloatingStyle 是 @since 26.0.0，
+   *     而 HdsTabs 的 barFloatingStyle 是 @since 6.0.0(20)（逐条核过本机 SDK 的
+   *     @hms.hds.hdsBaseComponent.d.ets）⇒ 我们 compatibleSdkVersion 24 ⇒ 门槛不存在了，
+   *     原来那两条分支因此合成一条（同一份内容复制两遍，本文件已为「只改一处」吃过苦）。
+   *   · barMaterial（uiMaterial.Material）—— 换成 systemMaterialEffect 里的两个枚举，
+   *     由系统按设备与主题自适应，比我们原先自己挑一个材质更稳。
+   * ⚠️ hdsMaterial 本身是 @since 6.1.0(23) ⇒ 仍要求 API 23+，与 compatibleSdkVersion(24) 相容。
+   *
+   * ⚠️ 控制器必须与 HdsTabs 配套（HdsTabsOptions.controller 收的是 HdsTabsController，
+   *    不是 TabsController）—— AMCL 也单独持有它。 */
+  private tabController: HdsTabsController = new HdsTabsController();
 
   aboutToAppear(): void {
     this.launchMode = readLaunchMode(this.filesDir);
@@ -557,6 +597,36 @@ export struct LauncherHome {
     this.refresh();
   }
 
+  /** 让开的边，翻成中文给玩家看。⭐ 用 effectiveEdges()（实际生效的那几边），
+   * 不是 detectedEdges —— 探测为空时生效的是「只上边」，界面必须说「上」，否则它在骗人。 */
+  private edgeNames(): string {
+    const n: string[] = [];
+    for (const e of this.effectiveEdges()) {
+      n.push(e === 'top' ? '上' : (e === 'bottom' ? '下' : (e === 'left' ? '左' : '右')));
+    }
+    return n.join('/');
+  }
+
+  /* 某一条边最终让开多少 vp。⭐⭐ 三条规则，按顺序：
+   *
+   *   ① 避让量为 0        ⇒ 四边都不让（玩家明确选了「不让」）
+   *   ② 探测**没命中任何边** ⇒ **只让上边**
+   *   ③ 探测命中了那几边   ⇒ **只让那几边**（用户 2026-10-03：「保留一个滑条，但只用在探测到的那几边」）
+   *
+   * ⛔ ② 曾经是「四边都让」，**那是错的**（用户 2026-10-03 当场指出：「左右避让干啥啊」）。
+   *    左右两条边在这台机器上白白少了一截可用宽度，而顶部那个孔根本没碰到它们。
+   *    ⇒ 探测不到时按**最常见的形状**假定：顶部一个挖孔。要上下都让的机器由玩家自己拖。
+   * ⚠️ 仍是猜测，但它的代价是「上边多让一点」而不是「左右各少一截」，而且**上边本来就最先被挡**。 */
+  private edgeVp(edge: string): number {
+    if (this.safeVp <= 0) {
+      return 0;
+    }
+    if (this.detectedEdges.length === 0) {
+      return edge === 'top' ? this.safeVp : 0;
+    }
+    return this.detectedEdges.indexOf(edge) >= 0 ? this.safeVp : 0;
+  }
+
   /* 异形屏避让的初始化。⭐ 语义是**覆盖**（用户 2026-10-03 的选择）：
    *   玩家自己设过 ⇒ **完全听他的**，探测值只用来在设置页里显示作参考；
    *   没设过     ⇒ 用这次探测的结论**播种**一次，之后那也成了「玩家的选择」。
@@ -564,27 +634,38 @@ export struct LauncherHome {
   private async initSafeArea(): Promise<void> {
     let ins: SafeInsets = { top: 0, right: 0, bottom: 0, left: 0 };
     try {
-      ins = await detectInsets();
+      ins = await detectInsets(getContext(this) as common.Context);
     } catch (e) {
       /* detectInsets 自己吞掉异常并返回 0；这一层只是不让它拖垮 aboutToAppear。 */
     }
     this.detectedSafeVp = uniformOf(ins);
-    this.detectedDetail = describeInsets(ins);
+    this.detectedEdges = edgesOf(ins);
 
-    if (hasSafeVp(this.filesDir)) {
-      this.safeVp = Math.max(0, readSafeVp(this.filesDir));
-      hilog.info(DOMAIN, TAG,
-                 'safearea: using the stored value %{public}d vp (detected %{public}d)',
-                 this.safeVp, this.detectedSafeVp);
-      return;
-    }
-    /* 首次：用探测值播种并落盘。
-     * ⚠️ **不播种也要落盘**（探测为 0 时写 0）—— 否则「没设过」这个状态会一直留着，
-     * 下次启动又探测一遍；而玩家如果在设置页里把滑条拖到 0 表示「我不要」，那也该被记住。 */
-    this.safeVp = this.detectedSafeVp;
-    writeSafeVp(this.filesDir, this.safeVp);
-    hilog.info(DOMAIN, TAG, 'safearea: first run -- seeded %{public}d vp from detection',
-               this.safeVp);
+    /* ⭐⭐ 自动 / 手动的判定。
+     * ⛔ 第一版是「只播种一次」（文件不在就把探测值写进去，之后永远用文件里的值）——
+     *    那个设计**坏过**：前一版探测本身有 bug、永远得 0，而那唯一一次播种把 0 固化了，
+     *    从此探测值再也不被采用。用户 2026-10-03 报的「自动设置好异形屏避让没做」就是它。
+     * ⇒ 改成**状态**：只要玩家没动过滑条（文件里写着 auto），每次启动都重新采用探测结果。 */
+    const pref: SafePref = readSafePref(this.filesDir);
+    this.safeAuto = pref.auto;
+    this.safeVp = pref.auto ? this.detectedSafeVp : pref.vp;
+
+    /* 每次都写回：auto 时值是探测的、user 时值是玩家的；写回也让这个文件自己可读（诊断用）。 */
+    writeSafePref(this.filesDir, this.safeAuto, this.safeVp);
+
+    /* 这一段落盘是**唯一**能离开设备的东西 —— 本应用的 hilog 实测读不到（见 SafeArea.ets）。 */
+    dumpSafeArea('\n--- prefs ---\nauto=' + this.safeAuto
+                 + '  applied=' + this.safeVp + ' vp\nfile='
+                 + (pref.auto ? 'auto' : 'user') + ' ' + pref.vp
+                 + '\napplied edges=' + JSON.stringify(this.effectiveEdges()) + '\n', true);
+    hilog.info(DOMAIN, TAG,
+               'safearea: auto=%{public}s applied=%{public}d vp (detected %{public}d)',
+               String(this.safeAuto), this.safeVp, this.detectedSafeVp);
+  }
+
+  /** 滑条真正作用在哪几边（探测为空时是「只上边」，见 edgeVp）。 */
+  private effectiveEdges(): string[] {
+    return this.detectedEdges.length === 0 ? ['top'] : this.detectedEdges;
   }
 
   /* ====================================================================
@@ -1957,6 +2038,28 @@ export struct LauncherHome {
            * 问题 ⇒ 必须能出去：一个「仍然尝试启动」的入口。没有它，一次路径判断失误就把应用变成
            * 永远打不开游戏的启动器，而玩家没有任何办法绕过去（本项目为「门关上了却没有开的路径」付过代价）。 */
           Column() {
+            /* ⛔⛔ **先分叉：这个包到底带不带运行时。**
+             *  `resolution.source === 'no-runtime'` 由 `resolveGame()` 给出，而那是
+             *  **运行期文件探测**（`hasRuntime()`，查包里有没有 `libjvm_real.so`），
+             *  ⛔ 不是编译期常量 ⇒ 三种形态（master / lite / tools）的 ArkTS 因此可以逐字节相同。
+             *
+             *  ⚠️ 为什么这里非分叉不可：这个空状态原本一律说「把 .jar 放进文件夹」——
+             *     而那对**没有运行时的包**是**空头承诺**：jar 放进来了也跑不起来
+             *     （包里没有 JVM）。玩家会照做、然后发现「点了没反应」，
+             *     而那是最难查的一种失败。⇒ 这个分支的**全部价值就是不给那条错指引**。 */
+            if (this.resolution.source === 'no-runtime') {
+              Text('这个包不能运行游戏')
+                .fontSize(18).fontColor($r('sys.color.font_primary'))
+              Text('它只能管理存档与数据包 —— 包里没有游戏运行时。')
+                .fontSize(13).fontColor($r('sys.color.font_secondary'))
+                .margin({ top: 8 })
+                .textAlign(TextAlign.Center)
+              /* ⭐ 给出**出路**，不只是一句「不行」。没有这一句，玩家只知道坏掉了。 */
+              Text('要玩 Mindustry，请安装带游戏的完整版本；\n这个版本可以用「导入数据」接管它的存档。')
+                .fontSize(13).fontColor($r('sys.color.font_secondary'))
+                .margin({ top: 12 })
+                .textAlign(TextAlign.Center)
+            } else {
             /* ⚠️ 标题**据实**说，别一律说「没有找到游戏」。进入条件是 `games.length === 0`，
              * 而 `games` 是 `listGameJars()` 列出来的 —— 也就是**玩家自己放在 Download 里的 jar**，
              * 内置那份不在里面 ⇒ 内置在时写「没有找到游戏」会和下面的「内置游戏：有」**自相矛盾**，
@@ -1991,6 +2094,7 @@ export struct LauncherHome {
             Text('内置游戏：' + (this.hasBundled ? '有' : '无'))
               .fontSize(12).fontColor($r('sys.color.font_secondary'))
               .margin({ top: 12 })
+            }
           }
           .width('100%')
           .padding({ left: 24, right: 24, top: 40, bottom: 24 })
@@ -2617,10 +2721,12 @@ export struct LauncherHome {
     .justifyContent(FlexAlign.Center)
     /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
      * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
-     * ⚠️ 竖向原本就是 0（卡片靠 justifyContent 居中），所以这里也只加 safeVp ——
-     *    safeVp = 0 时布局与从前**逐像素相同**。 */
-    .padding({ left: 32 + this.safeVp, right: 32 + this.safeVp,
-               top: this.safeVp, bottom: this.safeVp })
+     * ⚠️ 四边的 32 是**卡片自己的**边距（原本就有，只作用在左右），与避让无关，所以两者相加而不是覆盖。
+     * ⚠️ 避让为 0 时这里与从前**逐像素相同**。 */
+    .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
+               top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
+    /* 整层淡入（遮罩 + 卡片一起）。 */
+    .transition(enterFade())
   }
 
   @Builder
@@ -2865,10 +2971,12 @@ export struct LauncherHome {
     .justifyContent(FlexAlign.Center)
     /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
      * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
-     * ⚠️ 竖向原本就是 0（卡片靠 justifyContent 居中），所以这里也只加 safeVp ——
-     *    safeVp = 0 时布局与从前**逐像素相同**。 */
-    .padding({ left: 32 + this.safeVp, right: 32 + this.safeVp,
-               top: this.safeVp, bottom: this.safeVp })
+     * ⚠️ 四边的 32 是**卡片自己的**边距（原本就有，只作用在左右），与避让无关，所以两者相加而不是覆盖。
+     * ⚠️ 避让为 0 时这里与从前**逐像素相同**。 */
+    .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
+               top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
+    /* 整层淡入（遮罩 + 卡片一起）。 */
+    .transition(enterFade())
   }
 
   @Builder
@@ -2919,13 +3027,427 @@ export struct LauncherHome {
     .justifyContent(FlexAlign.Center)
     /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
      * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
-     * ⚠️ 竖向原本就是 0（卡片靠 justifyContent 居中），所以这里也只加 safeVp ——
-     *    safeVp = 0 时布局与从前**逐像素相同**。 */
-    .padding({ left: 32 + this.safeVp, right: 32 + this.safeVp,
-               top: this.safeVp, bottom: this.safeVp })
+     * ⚠️ 四边的 32 是**卡片自己的**边距（原本就有，只作用在左右），与避让无关，所以两者相加而不是覆盖。
+     * ⚠️ 避让为 0 时这里与从前**逐像素相同**。 */
+    .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
+               top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
+    /* 整层淡入（遮罩 + 卡片一起）。 */
+    .transition(enterFade())
+  }
+
+  /* ====================================================================
+   * 整包导入 / 导出
+   * ==================================================================== */
+
+  /** 临时目录（沙箱内）—— 打包与解包都在这里做。
+   * ⚠️ 必须钉在 `NATIVE_FILES` 那条路径上（`exportDiagnostics` 的说明：ArkTS 的 `ctx.filesDir`
+   *    是 HAP 级目录，两处不通用）。 */
+  private packTmpDir(): string {
+    return '/data/storage/el2/base/files/.temp/datapack';
+  }
+
+  /** 本应用在 Downloads 里的数据根 —— **就是那个【包名】文件夹本身**。
+   *
+   * ⭐⭐ **必须用包名，不能自己起名字。** 这条是从参考项目 AMCL 那儿学来的、也是本项目
+   *     写在 README 致谢里的一条：**文件夹用【包名】命名，系统才认作本应用的
+   *     （「所有权式访问」），跨重启有效**；自取的名字（它早期用的 `AMCL`）系统认不出来。
+   * ⛔ 我第一版正是踩了这个坑：拿**显示名**建了个新顶层文件夹 `Download/MindustryArk`
+   *     ⇒ 建不出来 ⇒ 导出直接失败（用户 2026-10-03 当场报）。**「Mindustry Ark」是
+   *     玩家看到的名字，不是磁盘上的名字。**
+   *
+   * ⭐ 布局（用户 2026-10-03 定）—— 与 `games/` **并列**、⛔不塞进它里面：
+   *     ```
+   *     <Download>/<包名>/games/     游戏 jar（模组那边建立的，游戏自带浏览器打开它）
+   *     <Download>/<包名>/exports/   导出的数据包      ← 本次新增
+   *     <Download>/<包名>/backups/   覆盖导入前的备份  ← 本次新增
+   *     ```
+   *
+   * ⚠️ 直接就用 `externalRootPath()` 那个值（平台报给我们、且**探针实测能写**的那个），
+   *    不自己拼 Download 的绝对路径 —— 设备之间不一样。
+   * ⚠️ 拿不到时返回 `''`，调用方要**如实说明**落在了哪，不要静默换地方。 */
+  private packRoot(): string {
+    const base: string = externalRootPath(this.filesDir);
+    if (base === '') {
+      return '';
+    }
+    /* ⚠️ 它必须**已经存在** —— 这里只确认，不新建（新建顶层文件夹会失败，见上）。
+     * 那个文件夹由模组那条路建立（`ModImporter.ensureModFolder`）。 */
+    return isDir(base) ? base : '';
+  }
+
+  /** 导出的数据包放哪。拿不到用户可见位置时返回 `''`。 */
+  private exportsDir(): string {
+    const root: string = this.packRoot();
+    if (root === '') {
+      return '';
+    }
+    const dir: string = root + '/exports';
+    return ensureDir(dir) ? dir : '';
+  }
+
+  /** 覆盖导入前的自动备份放哪。
+   *
+   * ⛔⛔ **不能放在沙箱里** —— 我第一版放在 `.temp/datapack/`，用户当场问
+   *     「存沙箱我没看到怎么恢复啊」。**一个恢复不了的备份等于没有备份**，
+   *     而且它还会让人以为有退路。
+   * ⭐ 现在放用户可见的 `MindustryArk/backups/`：拷得出来，
+   *    而**恢复的方式就是「导入数据」再选它一遍** —— 不需要任何新的恢复 UI。 */
+  private backupsDir(): string {
+    const root: string = this.packRoot();
+    if (root === '') {
+      return '';
+    }
+    const dir: string = root + '/backups';
+    return ensureDir(dir) ? dir : '';
+  }
+
+  /** 导入：选 zip → 拷进沙箱 → 解压 → 定位数据根 → 校验 → 问目标。
+   *
+   * ⚠️ 每一步失败都**在这一层就停**，并给一句人话 —— 不要带着半成品去问「你要覆盖哪个版本」。 */
+  private async startImport(): Promise<void> {
+    this.importMsg = '';
+    let uri: string = '';
+    try {
+      const opts: picker.DocumentSelectOptions = new picker.DocumentSelectOptions();
+      /* ⭐ 只让选 zip。⚠️ 这是本项目第一次用 `select()` —— 现有的 picker 用法只有「保存」模式。 */
+      opts.fileSuffixFilters = ['.zip'];
+      opts.maxSelectNumber = 1;
+      const view: picker.DocumentViewPicker = new picker.DocumentViewPicker(getContext(this) as common.Context);
+      const uris: Array<string> = await view.select(opts);
+      if (uris === undefined || uris.length === 0 || uris[0] === '') {
+        return;   /* 玩家取消了 —— 不是错误，别弹提示。 */
+      }
+      uri = uris[0];
+    } catch (e) {
+      const err = e as BusinessError;
+      this.showNotice('打不开文件选择器：' + err.message + ' (code=' + err.code + ')', 'import');
+      return;
+    }
+
+    const tmp: string = this.packTmpDir();
+    if (!ensureDir(tmp)) {
+      this.showNotice('建不出临时目录。', 'import');
+      return;
+    }
+    /* ⚠️ 扩展名必须逐字是 `.zip`（`decompressFile` 的硬要求），所以落地名由我们定，不用原名。 */
+    const localZip: string = tmp + '/import.zip';
+    /* ⚠️ 与 `packDataDir` 的内部暂存（`packing`）**必须不同** —— 见那边的说明。 */
+    const staging: string = tmp + '/incoming';
+    this.importMsg = '正在读取压缩包…';
+
+    const copyErr: string = readUriToFile(uri, localZip);
+    if (copyErr !== '') { this.showNotice(copyErr, 'import'); return; }
+
+    const acc: TreeStat = newTreeStat();
+    removeTree(staging, 0, acc);
+    this.importMsg = '正在解压…';
+    const unErr: string = await unpackZip(localZip, staging);
+    if (unErr !== '') { this.showNotice(unErr, 'import'); return; }
+
+    this.importMsg = '正在检查内容…';
+    const root: string = locateDataRoot(staging);
+    if (root === '') {
+      this.showNotice('这个包里找不到游戏数据（既没有 saves/，也没有 mods/ 或 settings.bin），'
+                      + '或者里面有好几个候选目录、分不清哪个才是。', 'import');
+      return;
+    }
+    const vErr: string = validatePack(root);
+    if (vErr !== '') { this.showNotice(vErr, 'import'); return; }
+
+    /* 到这一步才允许问「放到哪」—— 见这个方法的说明。 */
+    this.importRoot = root;
+    this.importNote = countPackable(root);
+    this.importMsg = '';
+    this.importOpen = true;
+  }
+
+  /** 把一个**已校验**的数据根落到某个版本的数据目录。
+   * ⭐ 语义（用户 2026-10-03 定）：**每次导入都问目标**，而「覆盖 / 新建」由**目标有没有数据**决定：
+   *    有 ⇒ 先整包备到垃圾站再覆盖（不可逆的事必须先留退路）；没有 ⇒ 直接写。 */
+  private applyImportTo(v: VersionEntry): void {
+    const target: string = v.dataDir;
+    /* 备份文件名用这个标签（与导出同一套命名）。 */
+    this.importLabel = v.version === '' ? v.label : ('v' + v.version);
+    if (target === '') {
+      this.importOpen = false;
+      this.showNotice('这个版本没有数据目录（读不出隔离键）。', 'import');
+      return;
+    }
+    if (!ensureDir(target)) {
+      this.importOpen = false;
+      this.showNotice('建不出目标目录：' + target, 'import');
+      return;
+    }
+
+    /* ⭐ 目标已有数据 ⇒ **先备份**。不清空整个目录：整包导入是**叠加**语义
+     * （同名覆盖、其余保留），所以不需要先删 —— 也就没有「清空到一半失败」这个状态。 */
+    const existing: string[] = packableItems(target);
+    if (existing.length > 0) {
+      const acc: TreeStat = newTreeStat();
+      const bak: string = this.packTmpDir() + '/backup-before-import.zip';
+      /* ⚠️ 打包是异步且可能几十 MB ⇒ 交给 `backupThenCopy` 串起来，不在这里同步做。 */
+      this.backupThenCopy(target);
+      return;
+    }
+    this.copyImportInto(target, '');
+  }
+
+  /** 有数据时：先打包备份，成功后再复制；备份失败就**不覆盖**。 */
+  private async backupThenCopy(target: string): Promise<void> {
+    this.importOpen = false;
+    this.importMsg = '目标已有数据，正在备份…';
+    /* ⭐ 名字与导出同一套（标签 + 时间）—— 玩家在文件管理器里一眼认得出来。
+     * ⚠️ 拿不到用户可见目录就退回沙箱，但**必须说清**（见 `backupsDir`）。 */
+    const dir: string = this.backupsDir();
+    const bak: string = dir === ''
+      ? this.packTmpDir() + '/backup-before-import.zip'
+      : dir + '/Mindustry-' + this.importLabel + '-' + stampNow() + '-backup.zip';
+    const err: string = await packDataDir(target, this.packTmpDir(), bak);
+    if (err !== '') {
+      /* ⛔ 备份失败 ⇒ **不动目标**。这是「不可逆的事先留退路」的落点。 */
+      this.showNotice('备份失败，已放弃导入（你的数据没有动）：' + err, 'import');
+      return;
+    }
+    this.copyImportInto(target, dir === '' ? ('⚠️ 备到了沙箱（外面拿不到）：' + bak) : bak);
+  }
+
+  /** 真正落地：把 `importRoot` 的内容叠加进 `target`。 */
+  private copyImportInto(target: string, backupZip: string): void {
+    const acc: TreeStat = newTreeStat();
+    copyTreeInto(this.importRoot, target, 0, acc);
+    /* ⚠️ 把**完整路径**写出来，并告诉玩家怎么恢复 —— 否则「已备份」是一句他无法使用的话。 */
+    const backupNote: string = backupZip === '' ? ''
+      : ('\n\n覆盖前的备份：' + backupZip
+         + '\n（要恢复它：用「导入数据」再选这个文件）');
+    if (acc.failed > 0) {
+      this.showNotice('导入没完成（' + String(acc.failed) + ' 项失败）：' + acc.firstError
+                      + backupNote, 'import');
+      return;
+    }
+    /* 清掉暂存（成功才清）。 */
+    const clean: TreeStat = newTreeStat();
+    removeTree(this.importRoot, 0, clean);
+    this.importRoot = '';
+    this.importMsg = '';
+    this.refresh();
+    /* ⚠️ **不自动消失**（用户 2026-10-03 的要求）——「需要重启游戏」这条必须留着让玩家看到，
+     *    而自动消失的提示恰好会在最需要它的时候不见。它带一个 ✕ 由玩家自己关。 */
+    this.showNotice('导入完成：' + String(acc.dirs) + ' 个目录 / ' + String(acc.files)
+                    + ' 个文件' + backupNote + '。需要重启游戏才看得到。', 'toast');
+  }
+
+  /** 关掉提示条。⚠️ 三个字段都要清 —— 它们共用同一个框（见 `PackNotice`）。 */
+  private closePackNotice(): void {
+    this.importMsg = '';
+    this.exportMsg = '';
+    this.importToast = '';
+  }
+
+  /** 显示一条提示，并**在几秒后自动收掉**（用户 2026-10-03 定的：3~5s）。
+   * ⭐ 保留 ✕ 让人**立刻**关掉 —— 自动关闭负责「不挡路」，✕ 负责「不想等」。
+   * ⛔ 定时器必须**带身份校验**：不加的话，先弹的那条会在几秒后把**后来那条**清掉
+   *    （两条提示连着出现时就会这样，而失败提示被提前清掉最难查）。 */
+  private showNotice(text: string, kind: string): void {
+    if (kind === 'import') { this.importMsg = text; }
+    else if (kind === 'toast') { this.importToast = text; }
+    else { this.exportMsg = text; }
+    setTimeout(() => {
+      const now: string = kind === 'import' ? this.importMsg
+                       : (kind === 'toast' ? this.importToast : this.exportMsg);
+      if (now === text) { this.closePackNotice(); }
+    }, NOTICE_MS);
+  }
+
+  /** 导出：把某个版本的数据打成 zip，再让玩家选存到哪。 */
+  private async exportVersion(v: VersionEntry): Promise<void> {
+    this.exportMsg = '';
+    const tmp: string = this.packTmpDir();
+    const zip: string = tmp + '/export.zip';
+    this.exportMsg = '正在打包…';
+    const err: string = await packDataDir(v.dataDir, tmp, zip);
+    if (err !== '') { this.exportMsg = err; return; }
+
+    /* ⭐ 名字 = **版本号 + 导出时间**（用户 2026-10-03 定）。只有版本号的话，
+     * 同一个版本导两次出来的两个包分不出先后；时间能。 */
+    const who: string = v.version === '' ? v.label : v.version;
+    const outName: string = 'Mindustry-' + who + '-' + stampNow() + '.zip';
+
+    /* ⭐⭐ **直接写到我们自建的 `MindustryArk/exports/`，不弹 picker**（用户 2026-10-03 定）。
+     *    这样少一次交互，而且位置是**可预期的** —— 玩家看一遍提示就知道东西在哪，
+     *    下次不必再找。
+     * ⛔ 曾经用 `DocumentSaveOptions` + `pickerMode = DOWNLOAD`，踩过两个坑（都记在这里免得重走）：
+     *    ① 不给 `pickerMode` 就是 `DEFAULT(=0)` = **应用沙箱** ⇒ 玩家在文件管理器里根本找不到；
+     *    ② 给了 `DOWNLOAD` 之后，它返回的是**目录**不是文件
+     *       （SDK 原文：「The **directories** created in DOWNLOAD mode are used only to save files.」）
+     *       ⇒ 拿它当文件去写必然失败。
+     *    ⇒ 现在干脆不经 picker。⚠️ 若哪天要恢复「让玩家自己选位置」，必须按 ② 的语义写。 */
+    const dir: string = this.exportsDir();
+    if (dir === '') {
+      /* ⚠️ 拿不到用户可见位置时**如实说**，不要默默丢进沙箱（那等于玩家拿不到）。
+       * 见 `packRoot()` 的说明。 */
+      this.showNotice('导出失败：拿不到用户可见的文件夹（下载目录里本应用的那个）。'
+                      + '如果这个提示反复出现，请把它截图发我 —— 我需要知道是「文件夹不存在」'
+                      + '还是「不允许写」。', 'export');
+      return;
+    }
+    const outPath: string = dir + '/' + outName;
+    const wErr: string = copyLocalFile(zip, outPath);
+    this.showNotice(wErr === '' ? '已导出：' + outPath : wErr, 'export');
+  }
+  /** 一个**永远存在**的导入目标：未隔离的那一份数据目录。
+   *
+   * ⭐⭐ 为什么需要它（用户 2026-10-03）：「单纯导入存档，**即便没有任何版本**」——
+   *    他打算拆出一个**管理工具**形态的包（手机上不装游戏）。那种形态下 `versions` 是空的，
+   *    而导入对话框若只列版本 ⇒ **导入功能直接死掉**。
+   * ⚠️ 这份目录就是隔离关着时所有版本共用的那个（`liveGameDataDir()`），
+   *    它在没有任何 jar 的时候**照样存在** —— 游戏数据与游戏本体是两回事。 */
+  private liveImportTarget(): VersionEntry {
+    const dir: string = liveGameDataDir();
+    const c: GameDataCounts = countsOf(dir);
+    return {
+      path: LIVE_TARGET_PATH,
+      source: 'live',
+      label: '未隔离的那一份',
+      version: '',
+      key: '',
+      dataDir: dir,
+      isCurrent: false,
+      saveCount: c.sectorSaves + c.manualSaves,
+      hasData: gameDataExists(dir),
+    };
+  }
+
+  /* 整包导入：选一个目标版本。
+   * ⭐⭐ **每一行都是「版本 + 后果」的形状**（与 `TransferDialog` 同款，那是用户 2026-10-02 的硬要求）：
+   *    光列版本名，玩家不知道点了会发生什么。这里必须说清「会覆盖 / 会新建」。 */
+  @Builder
+  ImportTargetDialog() {
+    Column() {
+      Column() {
+        Text('导入到哪一份数据？')
+          .fontSize(17).fontColor($r('sys.color.font_primary'))
+          .width('100%').textAlign(TextAlign.Center)
+
+        Text('这个包里是：' + (this.importNote === '' ? '（读不出内容清单）' : this.importNote))
+          .fontSize(12).fontColor($r('sys.color.font_secondary'))
+          .width('100%').textAlign(TextAlign.Center)
+          .margin({ top: 8 })
+
+        Scroll() {
+          Column() {
+            /* ⭐ **未隔离的那一份排在最前面**：它是唯一在「一个版本都没有」时也能用的目标，
+             * 也是所有版本共用的那一份（隔离关着时就是它）。 */
+            Row() {
+              Column() {
+                Text('未隔离的那一份')
+                  .fontSize(15).fontColor($r('sys.color.font_primary'))
+                  .width('100%')
+                Text('所有版本共用它（隔离关着时就是这里）'
+                     + (this.liveImportTarget().hasData
+                        ? '　已有 ' + String(this.liveImportTarget().saveCount) + ' 个存档'
+                        : '　还没有数据'))
+                  .fontSize(12)
+                  .fontColor(this.liveImportTarget().hasData
+                             ? $r('sys.color.font_secondary') : $r('sys.color.brand'))
+                  .width('100%').margin({ top: 3 })
+              }
+              .alignItems(HorizontalAlign.Start).layoutWeight(1)
+            }
+            .width('100%')
+            .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+            .backgroundColor($r('app.color.launcher_card'))
+            .borderRadius(CARD_RADIUS_VP)
+            .margin({ top: 8 })
+            .onClick(() => { this.applyImportTo(this.liveImportTarget()); })
+
+            /* ⚠️ 一个版本都没有时，上面那一项就是唯一的目标 —— 而那正是「管理工具」形态。
+             *    不要在这里写「请先导入一个游戏」：管存档本来就不需要游戏。 */
+            ForEach(this.versions, (v: VersionEntry) => {
+              Row() {
+                Column() {
+                  Text(v.label + (v.version === '' ? '' : '  ' + v.version))
+                    .fontSize(15).fontColor($r('sys.color.font_primary'))
+                    .width('100%')
+                  /* ⭐ 后果写在行里 —— 有数据就会先备份再覆盖，没数据就是新建。 */
+                  Text(v.hasData
+                       ? ('已有数据（' + String(v.saveCount) + ' 个存档）—— 会先备份再覆盖')
+                       : '没有数据 —— 会新建一份')
+                    .fontSize(12)
+                    .fontColor(v.hasData ? $r('sys.color.font_secondary') : $r('sys.color.brand'))
+                    .width('100%').margin({ top: 3 })
+                }
+                .alignItems(HorizontalAlign.Start).layoutWeight(1)
+                if (v.isCurrent) {
+                  Text('当前').fontSize(12).fontColor($r('sys.color.brand'))
+                }
+              }
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+              .backgroundColor($r('app.color.launcher_card'))
+              .borderRadius(CARD_RADIUS_VP)
+              .margin({ top: 8 })
+              .onClick(() => { this.applyImportTo(v); })
+            }, (v: VersionEntry) => v.path)
+          }
+          .width('100%')
+        }
+        .height(300)
+        .scrollBar(BarState.Off)
+        /* ⛔ `Scroll` 的 `align` **默认是 Center** —— 内容比视口矮时会**垂直居中**，
+         *    表现就是「列表浮在中间」（用户 2026-10-03 报的）。
+         *    ⚠️ 本文件在存档列表上踩过同一个坑（那边的注释写着「两行都改才平」）。 */
+        .align(Alignment.TopStart)
+        .margin({ top: 10 })
+
+        Text('取消')
+          .fontSize(14).fontColor($r('sys.color.font_secondary'))
+          .padding({ top: 14, bottom: 4 })
+          .onClick(() => { this.importOpen = false; })
+      }
+      .width('86%')
+      .constraintSize({ maxWidth: 460 })
+      .padding(16)
+      .backgroundColor($r('app.color.launcher_bg'))
+      .borderRadius(CARD_RADIUS_VP)
+    }
+    .width('100%').height('100%')
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor('#F01C1C1C')
+    .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
+               top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
+    .transition(enterFade())
+  }
+
+  /* 导入 / 导出 / 完成 的提示条。
+   * ⚠️ 它不是弹窗（不挡操作），因为导入是**异步且可能几秒**的 —— 而盖住界面的等待框
+   *    在失败时会把「为什么失败」也一起藏起来。 */
+  @Builder
+  PackNotice() {
+    /* ⛔ **不要用 `width('100%')` + 左右 margin** —— 那两样叠在一起会让它**溢出**，
+     *    表现就是「占满左右」（用户 2026-10-03 报的）。用百分比宽度 + 上限，让 Stack 居中它。 */
+    Row() {
+      Text(this.importToast !== '' ? this.importToast
+           : (this.importMsg !== '' ? this.importMsg : this.exportMsg))
+        .fontSize(13).fontColor($r('sys.color.font_primary'))
+        .layoutWeight(1)
+      /* ⚠️ 用文字 ✕ 而不是 `Button`：本项目有硬规矩 —— **浮层里不能放可获焦的组件**
+       * （`Button` 自带点击手势，会和外层 `onClick` 竞争）。一个 `Text` 就够。 */
+      Text('✕')
+        .fontSize(15).fontColor($r('sys.color.font_secondary'))
+        .padding({ left: 14, right: 2, top: 2, bottom: 2 })
+        .onClick(() => { this.closePackNotice(); })
+    }
+    .width('86%')
+    .constraintSize({ maxWidth: 420 })
+    .padding({ left: 16, right: 12, top: 12, bottom: 12 })
+    .backgroundColor($r('app.color.launcher_card'))
+    .borderRadius(CARD_RADIUS_VP)
+    .margin({ top: this.edgeVp('top') + 12 })
+    .transition(enterFade())
   }
 
   @Builder
+
   SavesTab() {
     Column() {
       /* ⭐ 垃圾站是**另一个地方**，所以在最外层就分开了 —— 进去之后看不到分段控件、也看不到
@@ -3003,6 +3525,24 @@ export struct LauncherHome {
              * ⚠️ 空的时候也显示（写「垃圾站」而不写「(0)」）—— 一个数字 0 只会让人以为坏了；
              * 而**空垃圾站本身有说明作用**（删掉的东西会去哪）。 */
             Blank()
+            /* ⭐ 导出。**只在「按版本」视图、且选中了某个版本时出现** ——
+             * 导出必须有明确的对象；放在这里而不是列表行里，是为了不和「点行=选中」抢手势
+             * （本项目有过手势竞争的坑：子组件的点击不会触发外层的 onClick）。 */
+            if (this.savesView === SAVES_VIEW_VERSION && this.selectedVersionEntry() !== undefined) {
+              Text('导出')
+                .fontSize(13).fontColor($r('sys.color.brand'))
+                .padding({ left: 4, right: 12, top: 7, bottom: 7 })
+                .onClick(() => {
+                  const v: VersionEntry | undefined = this.selectedVersionEntry();
+                  if (v !== undefined) { this.exportVersion(v); }
+                })
+            }
+            /* ⭐ 整包导入。⚠️ 放在**这一行**（对整个列表的操作），不塞进 `SaveActionRow` ——
+             * 那个是零参 `@Builder`、被「按存档 / 按版本」两个面板共用，而导入不针对选中项。 */
+            Text('导入数据')
+              .fontSize(13).fontColor($r('sys.color.brand'))
+              .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+              .onClick(() => { this.startImport(); })
             Text(this.vaultEntries.length === 0
                  ? '垃圾站'
                  : ('垃圾站 ' + String(this.vaultEntries.length)))
@@ -3407,63 +3947,98 @@ export struct LauncherHome {
         .margin({ top: 8 })
 
         /* ================= 异形屏避让 ================= */
-        Row() {
-          Column() {
-            Text('界面避让（异形屏）')
-              .fontSize(14).fontColor($r('sys.color.font_primary'))
-            /* ⭐ 两行都要：第一行是**建议值**，第二行是**明细**。
-             * ⛔ 只说「建议 0」是不够的 —— 「没探测到」和「探测到了但界面没吃进去」在屏幕上
-             *    长得一样，而这两件事的修法完全不同（一个调滑条、一个是布局的 bug）。 */
-            Text(this.detectedSafeVp === 0
-                 ? '本机未探测到挖孔 / 曲面边缘'
-                 : ('本机探测建议 ' + this.detectedSafeVp + ' vp'))
-              .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-              .margin({ top: 4 })
-            if (this.detectedDetail !== '') {
-              Text(this.detectedDetail + '（上/右/下/左，vp）')
-                .fontSize(11).fontColor($r('sys.color.font_tertiary'))
-                .margin({ top: 2 })
+        /* ⛔ 卡片容器是必须的 —— 第一版我漏了它，于是这一段和上面那张卡片贴在一起、
+         *    在界面上根本看不出是两块（用户 2026-10-03 当场指出）。
+         * ⭐ 版式与「启动时直接进游戏」那张卡一致：一行标题 + 一个控件、整块一个底框。 */
+        Column() {
+          Row() {
+            Column() {
+              Text('异形屏避让')
+                .fontSize(14).fontColor($r('sys.color.font_primary'))
+              /* 副标题一行说清两件事：**谁在定** + **现在让多少**。
+               * ⛔ 不再分开写「本机探测到 …」和「自动避让 …」两行 —— 那两行都在报同一个数，
+               *    而且标题里也报一遍（用户 2026-10-03：这些数值重复了）。 */
+              Text(this.safeAuto
+                   ? (this.detectedSafeVp === 0 ? '自动 · 无需避让'
+                      : ('自动 · ' + this.edgeNames() + ' ' + this.safeVp + ' vp'))
+                   : ('手动 · ' + this.edgeNames() + ' ' + this.safeVp + ' vp'))
+                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                .margin({ top: 4 })
             }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+
+            /* 「开」= 跟着探测走（默认）；关掉 = 用滑条的值。
+             * ⚠️ 拖滑条会**自动关掉它** —— 表达「我要自己定」最自然的方式。 */
+            Toggle({ type: ToggleType.Switch, isOn: this.safeAuto })
+              .onChange((on: boolean) => {
+                /* ⭐ 高度变化必须包在 animateTo 里 —— 见下面那个容器的说明。 */
+                this.getUIContext().animateTo(
+                  { duration: 200, curve: Curve.FastOutSlowIn }, () => {
+                    this.safeAuto = on;
+                    /* 打开自动 ⇒ 立刻回到探测值；关掉 ⇒ 保留当前值，等玩家去拖。 */
+                    if (on) {
+                      this.safeVp = this.detectedSafeVp;
+                    }
+                  });
+                writeSafePref(this.filesDir, this.safeAuto, this.safeVp);
+              })
           }
-          .alignItems(HorizontalAlign.Start)
-          .layoutWeight(1)
-
-          Text(this.safeVp === 0 ? '不让' : (this.safeVp + ' vp'))
-            .fontSize(14).fontColor($r('sys.color.font_secondary'))
+          .width('100%')
+          /* ⛔ **不能用 `if` 来做这个显隐**。原因是动画而非风格：
+           *    `if` 会把节点整棵建/拆，而 `animateTo` 是在**两帧之间插值** —— 节点刚建出来时没有
+           *    上一帧，高度就从 0 直接跳到目标值，看着还是瞬移。
+           * ⇒ 让它**一直留在树里**，只改高度：`0`（收起）⇄ `SAFE_REVEAL_VP`（展开）。
+           * ⭐ 这也顺带做对了「上下出入」的手感：收回是往上收，不是原地淡出。
+           * ⛔ 开关本身**必须**一直在 —— 它是这一段唯一的出入口。 */
+          Column() {
+            Slider({
+              value: this.safeVp,
+              min: 0,
+              max: SAFE_VP_MAX,
+              step: SAFE_VP_STEP,
+              style: SliderStyle.OutSet
+            })
+              .width('100%')
+              .margin({ top: 6 })
+              .onChange((v: number, mode: SliderChangeMode) => {
+                const nv: number = Math.round(v);
+                /* ⚠️ 只在**手指离开**时写盘（`End` / `Click`）—— 拖动中每次变化都写会写上百次，
+                 * 而这是一块闪存。`Moving` 时只改内存里的值，界面照常实时预览。 */
+                const end: boolean = (mode === SliderChangeMode.End
+                                      || mode === SliderChangeMode.Click);
+                /* ⛔⛔ 这个守卫【不能】把 `end` 那次也挡掉 —— 它挡掉过一次，代价是**手动值永远存不下来**：
+                 *      拖动时 `Moving` 已经把 safeAuto 置 false、safeVp 跟到终点，于是 `End` 那一刻
+                 *      `nv === safeVp && !safeAuto` 成立 ⇒ 直接 return ⇒ `writeSafePref` 一次都没执行。
+                 *      内存里是对的（界面看着正常），文件里还是旧值，重启就回去了。
+                 * ⭐ 「跳过没变化的更新」与「只在结束时写盘」是两条各自合理的规则，
+                 *    叠在一起时**后者成了前者的受害者**。⇒ 写盘那一路必须从守卫里豁免。 */
+                if (nv === this.safeVp && !this.safeAuto && !end) {
+                  return;
+                }
+                /* ⚠️ 一动滑条就接管。 */
+                this.safeAuto = false;
+                this.safeVp = nv;
+                if (end) {
+                  writeSafePref(this.filesDir, false, nv);
+                  dumpSafeArea('\n--- slide ---\nwrote user ' + nv + ' vp\n', true);
+                }
+              })
+          }
+          .width('100%')
+          .height(this.safeAuto ? 0 : SAFE_REVEAL_VP)
+          /* ⛔ 承重：不给 clip 的话，高度收到 0 时**内容还在画**，只是被容器框住而已。 */
+          .clip(true)
         }
-        .width('100%')
-
-        /* ⭐ 滑条 = **最终值**（用户 2026-10-03 选的「覆盖」语义）：拖到哪就是多少，
-         * 探测只在**首次**用来给初值。⚠️ 所以它不需要「自动」开关 —— 拖回建议值就等于自动。
-         * ⚠️ 沉浸模式下挖孔会直接压在内容上，所以这项默认值来自探测、而不是写死 0。 */
-        Slider({
-          value: this.safeVp,
-          min: 0,
-          max: SAFE_VP_MAX,
-          step: SAFE_VP_STEP,
-          style: SliderStyle.OutSet
-        })
-          .width('100%')
-          .margin({ top: 10 })
-          .onChange((v: number, mode: SliderChangeMode) => {
-            const nv: number = Math.round(v);
-            if (nv === this.safeVp) {
-              return;
-            }
-            this.safeVp = nv;
-            /* ⚠️ 只在**手指离开**时写盘（`End` / `Click`）—— 拖动过程中每次变化都写会写上百次，
-             * 而这是一块闪存。`Moving` 时只改内存里的值，界面照常实时预览。 */
-            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
-              writeSafeVp(this.filesDir, nv);
-            }
-          })
-
-        /* 滑条下方的说明。⛔ 不写「自动探测」这个词 —— 语义是覆盖，说成自动会让人以为拖了没用。 */
-        Text('数值越大，启动器四周让开越多。四边统一。⛔ 只管启动器自己的界面；'
-             + '游戏画面由游戏自带的「适应刘海显示」负责。')
-          .fontSize(11).fontColor($r('sys.color.font_tertiary'))
-          .margin({ top: 6 })
-          .width('100%')
+        /* ⛔ 四边一样，且**与其它卡片同一个值**（16）。
+         *   我为了「滑条行高大」把这里改成过不对称的 top 14 / bottom 10 —— 那是错的：
+         *   ① 自动开着时滑条**不显示**，卡片里只剩一行标题+开关 ⇒ 上下就不对称了；
+         *   ② 而上下对称、且等于 16，才是这一页所有卡片共有的形状（用户 2026-10-03 两次指出）。
+         * ⭐ 滑条与上面那行之间的间隔归**滑条自己的 margin** 管，不是归卡片的内边距管。 */
+        .width('100%').padding(16)
+        .backgroundColor($r('app.color.launcher_card'))
+        .borderRadius(CARD_RADIUS_VP)
+        .margin({ top: 8 })
 
         /* ================= 关于 ================= */
         Text('关于')
@@ -3525,68 +4100,71 @@ export struct LauncherHome {
      * 宽度上，必然横跨这两块的边界。 */
 
     Navigation() {
-      /* 两条分支只差悬浮样式那一块，理由见 canFloat 的注释。⚠️ 页签内容走 @Builder，没有第二份。 */
-      if (this.canFloat) {
-        Tabs({ barPosition: BarPosition.End }) {
-          TabContent() { this.GamesTab() }.tabBar(this.tabItem($r('sys.symbol.house_fill'), '首页'))
-          TabContent() { this.SavesTab() }.tabBar(this.tabItem($r('sys.symbol.doc_text'), '存档'))
-          TabContent() { this.SettingsTab() }.tabBar(this.tabItem($r('sys.symbol.gearshape_fill'), '设置'))
-        }
-        .barFloatingStyle({
-          /* 左右同一个留白 ⇒ 居中由构造保证。见 BAR_MAX_VP。 */
-          barSideMargin: this.sideMargin(),
-          /* 把栏从屏幕下沿抬起来 —— 悬浮观感的另一半。 */
-          barBottomMargin: BAR_BOTTOM_MARGIN_VP,
-          systemMaterial: this.barMaterial,
-          maskColor: Color.Transparent,
-        })
-        /* ⚠️ 这一行 = 「悬浮」本身，**不要改成 false**。我改过一次（理由「栏压住『启动游戏』」），
-         * 用户报回来的第一句就是「底栏现在不悬浮，和左边融为一体了」—— 悬浮样式就是靠它生效的。
-         * 官方示例与 AMCL 都是 true，AMCL 的注释明说「旧 API 仍覆盖在全屏内容上，不退回挤占
-         * TabContent 高度的布局」。⇒ 「栏压住按钮」的正解是**给内容留出底部空间**（BAR_CLEARANCE_VP），
-         * 不是关掉重叠 —— 关掉重叠同时失去悬浮观感，代价比问题本身大。 */
-        .barOverlap(true)
-        /* ⚠️ 这一行是「首页 / 设置 两页之间切换跳变」的修复（AMCL 同款）。SDK 文档说自定义 tabBar 不设时
-         * 默认就是 300，但实测是跳的 ⇒ 显式写上。⛔ 更关键的是上面那处改动：Tabs 的 `index` 绑定已经去掉 ——
-         * 原来 `Tabs({ index: this.currentTab })` 而 `onAnimationStart` 会回写 `this.currentTab` ⇒ **把值
-         * 灌回 `index`** ⇒ 等于在动画中途重新请求一次切换，那一下就是「跳」。
-         * ⚠️ `animationCurve` 不设时滑动切换的时长由默认曲线 `interpolatingSpring(-1, 1, 228, 30)` 自己决定
-         * ⇒ 这一行对「点击页签」和「滑动」作用方式不完全一样，别以为是万能旋钮。 */
-        .animationDuration(300)
-        .barBackgroundColor(Color.Transparent)
-        /* ⚠️ 这里要的是 onAnimationStart，**不是 onChange** —— 这一行就是「滑动换页时底栏高亮有延迟」
-         * 的修复：onChange【在切换完成之后】才触发，手指滑动的那一整段时间高亮还停在旧页签上
-         * （看起来「慢半拍」）；onAnimationStart【在动画一开始】就给出 targetIndex，高亮跟着手势走。
-         * ⭐ 参考项目 AMCL 用的就是它，而用户报的正是「AMCL 就没有」这个延迟。
-         * onChange 保留作兜底（动画被跳过时仍会把值纠正回来），两者写同一字段、都幂等，不冲突。 */
-        .onAnimationStart((_index: number, targetIndex: number) => {
-          this.currentTab = targetIndex;
-        })
-        .onChange((index: number) => { this.currentTab = index; })
-        .width('100%')
-        .height('100%')
-      } else {
-        /* 低于 API 26 的退路。没有悬浮材质，但**仍然重叠**（同上），用 `barBackgroundBlurStyle`
-         * 换个毛玻璃 —— 它从 API 7 就有。同一个做法见 AMCL 的 LauncherTabsStyle.ets。 */
-        Tabs({ barPosition: BarPosition.End }) {
-          TabContent() { this.GamesTab() }.tabBar(this.tabItem($r('sys.symbol.house_fill'), '首页'))
-          TabContent() { this.SavesTab() }.tabBar(this.tabItem($r('sys.symbol.doc_text'), '存档'))
-          TabContent() { this.SettingsTab() }.tabBar(this.tabItem($r('sys.symbol.gearshape_fill'), '设置'))
-        }
-        .barOverlap(true)
-        /* 同上：显式给切换时长，与 AMCL 对齐。 */
-        .animationDuration(300)
-        .barBackgroundBlurStyle(BlurStyle.COMPONENT_THICK)
-        /* 同上面那条：要 onAnimationStart（在动画一开始就给出 targetIndex、高亮跟着手势走），
-         * **不是 onChange**（切换完成之后才触发 ⇒ 滑动时高亮停在旧页签、「慢半拍」）。
-         * onChange 保留作兜底（动画被跳过时仍会把值纠正回来），两者写同一字段、都幂等。 */
-        .onAnimationStart((_index: number, targetIndex: number) => {
-          this.currentTab = targetIndex;
-        })
-        .onChange((index: number) => { this.currentTab = index; })
-        .width('100%')
-        .height('100%')
+      /* 2026-10-03：从裸 Tabs 换成 HdsTabs（鸿蒙设计系统组件，@kit.UIDesignKit）。三条依据：
+       *   ① 参考项目 AMCL 用的就是它（Index.ets:2567），而用户对它的评价是「AMCL 就没有（掉帧）」；
+       *   ② 裸 Tabs 的切换动效没有旋钮 —— TabsAttribute 里能碰的只有 animationCurve /
+       *      animationDuration（逐条列过），而 HdsTabs 是设计系统组件，切换动效由系统那套实现；
+       *   ③ 它让两条分支合成一条（理由见 tabController 那处）。
+       *
+       * ✅ 2026-10-03 **已定案：就用 HdsTabs**（用户实测「差不多」，且外观有变但他接受）。
+       *    用户另给了一条长期口径：**后续同类的底部导航一律走沉浸光感**（即 HdsTabs 这套）。
+       *
+       * ⛔ 已知的取舍（我记录在案，不再当作「待观察」）：HdsTabs 没有 animationCurve ——
+       *    逐条核过本机 SDK 的 HdsTabsAttribute 全部方法，确实没有。⇒ 我们那条显式曲线
+       *    （实测让滑动顺畅了一些）在 HdsTabs 上设不了，切换节奏改由组件自己决定。
+       * ⚠️ 也就是说：**这次是「拿掉一个已知有效的改动，换组件级实现，手感持平」**。
+       *    用户是在知情下选的它，理由是设计系统组件是平台推荐路径、且要统一口径。
+       *    改动前的整份文件备份在项目外（不在 git 里）：
+       *    MindustryArkDocs/_backup_launcher_home_20261003/LauncherHome.ets.pre-hdstabs。
+       *
+       * ⚠️ 页签内容仍然走 @Builder（没有第二份）。⚠️ currentTab 现在是普通字段、不是 @State，
+       *    见它自己的注释 —— 那是一次一行实验，别顺手改回去。 */
+      HdsTabs({ barPosition: BarPosition.End, controller: this.tabController }) {
+        TabContent() { this.GamesTab() }.tabBar(this.tabItem($r('sys.symbol.house_fill'), '首页'))
+        TabContent() { this.SavesTab() }.tabBar(this.tabItem($r('sys.symbol.doc_text'), '存档'))
+        TabContent() { this.SettingsTab() }.tabBar(this.tabItem($r('sys.symbol.gearshape_fill'), '设置'))
       }
+      .barFloatingStyle({
+        /* 左右同一个留白 ⇒ 居中由构造保证。见 BAR_MAX_VP。 */
+        barSideMargin: this.sideMargin(),
+        /* 把栏从屏幕下沿抬起来 —— 悬浮观感的另一半。 */
+        barBottomMargin: BAR_BOTTOM_MARGIN_VP,
+        /* ⛔ 字段名与裸 Tabs 不同，别照抄旧代码：
+         *   · 旧：systemMaterial: uiMaterial.Material  +  maskColor: Color.Transparent
+         *   · 新：systemMaterialEffect: { materialType, materialLevel }
+         * ⛔ HdsTabsFloatingStyle 没有 maskColor（逐条核过字段表）⇒ 那一项去掉。
+         * ⭐ ADAPTIVE 的官方释义就是「Follow system material policy / level」——
+         *   交给系统按设备性能与主题自适应。⚠️ 这两个枚举是 @since 6.1.0(23)。 */
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE,
+        },
+      })
+      /* ⚠️ 这一行 = 「悬浮」本身，不要改成 false。我不小心改过一次，用户报回来的第一句
+       * 就是「底栏现在不悬浮，和左边融为一体了」—— 悬浮观感靠它生效。官方示例与 AMCL 都是 true。
+       * ⇒ 「栏压住按钮」的正解是给内容留出底部空间（BAR_CLEARANCE_VP），不是关掉重叠。 */
+      .barOverlap(true)
+      /* ⚠️ 显式 300：SDK 说自定义 tabBar 不设时默认就是 300，但实测是跳的。
+       * ⛔ 这里【不能】再写 animationCurve —— HdsTabs 没有这个方法（见上面那条取舍）。
+       * ⚠️ 也因此，裸 Tabs 上「滑动走 spring、点击走贝塞尔」的那个不一致，
+       *    在 HdsTabs 上由组件自己统一 —— 我们不再能（也不需要）干预。 */
+      /* ⭐ 与 AMCL 对齐的那一行（`LauncherTabsStyle.ets:20`）。
+       * ⛔ 我一度判定它「等于默认值、是噪音」—— **那个判断是错的**：我引的是【裸 Tabs】的文档
+       *    （`tabs.d.ts:1591`：「不设时全部缓存」），而 **HdsTabs 自己的文档【没有】写默认值**
+       *    （本机 `@hms.hds.hdsBaseComponent.d.ets` 里这条只有参数说明）⇒ 对 HdsTabs 不能假定。
+       * ⇒ 既然 AMCL 显式写了、且它对结果满意，而 `.ets` 里的 `TabsCacheMode` 是全局声明
+       *    （AMCL 也没 import 它），这一行的代价为零。 */
+      .cachedMaxCount(2, TabsCacheMode.CACHE_BOTH_SIDE)
+      .animationDuration(300)
+      .barBackgroundColor(Color.Transparent)
+      /* ⚠️ 要 onAnimationStart 而不是 onChange：onChange 在切换【完成之后】才触发 ⇒
+       * 滑动的那一整段时间底栏高亮还停在旧页签上（「慢半拍」）。onChange 留作兜底、两者幂等。 */
+      .onAnimationStart((_index: number, targetIndex: number) => {
+        this.currentTab = targetIndex;
+      })
+      .onChange((index: number) => { this.currentTab = index; })
+      .width('100%')
+      .height('100%')
     }
     /* ⭐ 走资源。拿不到时给空串 —— 标题栏宁可空着，也不要显示另一个应用的名字。 */
     .title(this.appName)
@@ -3607,8 +4185,8 @@ export struct LauncherHome {
      * ⛔ 那个区别是承重的：几个弹窗的遮罩是 `.width('100%').height('100%')` 的**兄弟节点**，
      *    如果把 padding 加在 Stack 上，遮罩就只盖住缩进后的框，四周露出一圈没被压暗的条。
      *    ⇒ 内容在 Navigation 上避让，遮罩各自的 padding 里再加一份（见各弹窗）。 */
-    .padding({ top: this.safeVp, bottom: this.safeVp,
-               left: this.safeVp, right: this.safeVp })
+    .padding({ top: this.edgeVp('top'), bottom: this.edgeVp('bottom'),
+               left: this.edgeVp('left'), right: this.edgeVp('right') })
     .width('100%')
     .height('100%')
     /* 唯一的任务是把窗口宽度学回来，好让底部栏能算出对称的左右留白。见 sideMargin()。 */
@@ -3754,10 +4332,12 @@ export struct LauncherHome {
       .justifyContent(FlexAlign.Center)
       /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
      * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
-     * ⚠️ 竖向原本就是 0（卡片靠 justifyContent 居中），所以这里也只加 safeVp ——
-     *    safeVp = 0 时布局与从前**逐像素相同**。 */
-    .padding({ left: 32 + this.safeVp, right: 32 + this.safeVp,
-               top: this.safeVp, bottom: this.safeVp })
+     * ⚠️ 四边的 32 是**卡片自己的**边距（原本就有，只作用在左右），与避让无关，所以两者相加而不是覆盖。
+     * ⚠️ 避让为 0 时这里与从前**逐像素相同**。 */
+    .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
+               top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
+    /* 整层淡入（遮罩 + 卡片一起）。 */
+    .transition(enterFade())
       /* ⚠️ 这里【不】让点遮罩等于取消：这个窗比「关于」重（它会改数据位置），
        * 而一个手滑点空白就消失的确认框，比没有确认框更糟。出口只有「取消」。 */
     }
@@ -3865,10 +4445,12 @@ export struct LauncherHome {
       .justifyContent(FlexAlign.Center)
       /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
      * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
-     * ⚠️ 竖向原本就是 0（卡片靠 justifyContent 居中），所以这里也只加 safeVp ——
-     *    safeVp = 0 时布局与从前**逐像素相同**。 */
-    .padding({ left: 32 + this.safeVp, right: 32 + this.safeVp,
-               top: this.safeVp, bottom: this.safeVp })
+     * ⚠️ 四边的 32 是**卡片自己的**边距（原本就有，只作用在左右），与避让无关，所以两者相加而不是覆盖。
+     * ⚠️ 避让为 0 时这里与从前**逐像素相同**。 */
+    .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
+               top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
+    /* 整层淡入（遮罩 + 卡片一起）。 */
+    .transition(enterFade())
     }
 
     if (this.showAbout) {
@@ -3942,10 +4524,12 @@ export struct LauncherHome {
       .justifyContent(FlexAlign.Center)
       /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
      * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
-     * ⚠️ 竖向原本就是 0（卡片靠 justifyContent 居中），所以这里也只加 safeVp ——
-     *    safeVp = 0 时布局与从前**逐像素相同**。 */
-    .padding({ left: 32 + this.safeVp, right: 32 + this.safeVp,
-               top: this.safeVp, bottom: this.safeVp })
+     * ⚠️ 四边的 32 是**卡片自己的**边距（原本就有，只作用在左右），与避让无关，所以两者相加而不是覆盖。
+     * ⚠️ 避让为 0 时这里与从前**逐像素相同**。 */
+    .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
+               top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
+    /* 整层淡入（遮罩 + 卡片一起）。 */
+    .transition(enterFade())
       /* 点卡片【外面】的空白处也关。与右上角那个 ✕ 并存 —— 两个都是出口，出口多一点比少一点安全。 */
       .onClick(() => { this.showAbout = false; })
     }
@@ -3953,6 +4537,16 @@ export struct LauncherHome {
     /* 复制/移动的目标选择。同上：只读的窗可以盖在别的东西上，启动失败不能。 */
     if (this.transferOp !== '') {
       this.TransferDialog()
+    }
+
+    /* 整包导入的目标选择。⭐ 用户定的是「每次导入时问我」。 */
+    if (this.importOpen) {
+      this.ImportTargetDialog()
+    }
+
+    /* 导入/导出/进行中的提示条。⚠️ 只读提示，所以放在浮层链的最前面（最下层）。 */
+    if (this.importMsg !== '' || this.exportMsg !== '' || this.importToast !== '') {
+      this.PackNotice()
     }
 
     /* 删除确认。⚠️ 排在「上次没能启动成功」**前面** —— Stack 里后声明的在上层，而启动失败是必须
@@ -4034,10 +4628,12 @@ export struct LauncherHome {
       .justifyContent(FlexAlign.Center)
       /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
      * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
-     * ⚠️ 竖向原本就是 0（卡片靠 justifyContent 居中），所以这里也只加 safeVp ——
-     *    safeVp = 0 时布局与从前**逐像素相同**。 */
-    .padding({ left: 32 + this.safeVp, right: 32 + this.safeVp,
-               top: this.safeVp, bottom: this.safeVp })
+     * ⚠️ 四边的 32 是**卡片自己的**边距（原本就有，只作用在左右），与避让无关，所以两者相加而不是覆盖。
+     * ⚠️ 避让为 0 时这里与从前**逐像素相同**。 */
+    .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
+               top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
+    /* 整层淡入（遮罩 + 卡片一起）。 */
+    .transition(enterFade())
     }
     }
   }

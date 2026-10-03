@@ -127,5 +127,23 @@ Copyright (C) 2026 Haohandc and contributors.
 - [**SDL3**](https://github.com/libsdl-org/SDL) —— 窗口 / 输入 / 音频层
 - [**LWJGL**](https://github.com/LWJGL/lwjgl3) —— OpenGL 与 SDL 的 JNI 绑定
 - [**OpenJDK 21**](https://github.com/openjdk/jdk) —— 运行时
+- [**AMCL**](https://github.com/LZZLHY/amcl) —— 同类项目的**参考实现**。
+
+  ⚠️ **它不是本项目的依赖，也不包含在产物里**（没有一行它的代码被复制进来）。
+  但本项目有若干做法是**先读了它才敢做**的，特此致谢 —— 下面每条都能对应到它仓库里的位置：
+
+  - **底部页签**用鸿蒙的设计系统组件 `HdsTabs`（`@kit.UIDesignKit`）而不是裸 `Tabs`，
+    沉浸光感材质走 `barFloatingStyle` + `systemMaterialEffect`（它的 `components/LauncherTabsStyle.ets`）
+  - **`onAnimationStart` 里回写选中索引**这个写法（它 `pages/Index.ets`）—— 本项目据此修掉了
+    「滑动换页时底栏高亮慢半拍」
+  - **「游戏数据根」做成单一真相源**的设计（它的 `GameStorage.resolveMcDir`）：所有需要数据目录的
+    地方都走一个解析器，而不是各自硬编码
+  - **外部存储怎么拿**：用**包名命名的文件夹**（`Download/<包名>`）取得「所有权式访问」，
+    跨重启有效、不需要 `persistPermission`；以及 `Environment.getUserDownloadDir()` 在手机上会报
+    801（设备不支持）、要改用 picker 的 `DOWNLOAD` 模式「学」一次路径并落盘
+  - **探针纪律**：它的 `StorageProbe` 里写着「ArkTS 能写**不代表** native 能写」——
+    本项目因此在切换数据目录之前，先用**裸 POSIX** 探了一次可写性
+  - **版本隔离**的思路（每个游戏版本一份独立数据目录）
+
 > [!NOTE]
 > 本仓库绝大部分代码、文档和文字由 AI 辅助完成（Claude via Cherry Studio，模型 deepseek-flash v4.1）。

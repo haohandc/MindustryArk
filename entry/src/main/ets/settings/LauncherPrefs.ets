@@ -82,61 +82,76 @@ export function writeLaunchMode(filesDir: string, mode: string): void {
 
 const SAFE_FILE_NAME = 'launcher_safe_vp.txt';
 
-/** 滑条上限（vp）。挖孔通常 20~30vp，曲面屏边缘也在这个量级；64 已经是很宽的余量。 */
+/** 滑条上限（vp）。挖孔通常 20~30vp；64 已经是很宽的余量。 */
 export const SAFE_VP_MAX = 64;
 /** 滑条步长。4 的倍数足够细，又不会让手指难以停在整数上。 */
 export const SAFE_VP_STEP = 4;
 
-/** 有没有存过用户的选择。
- * ⭐ 它决定「首次」那一次：没存过才用探测值**播种**；存过就**完全听用户的**（覆盖语义）。
- * ⛔ 不能用「值等于 0」当没存过的判据 —— 用户可能就是想设成 0。 */
-export function hasSafeVp(filesDir: string): boolean {
-  try {
-    return fs.accessSync(filesDir + '/' + SAFE_FILE_NAME);
-  } catch (e) {
-    return false;
-  }
+/** 避让设置。`auto` = 跟着探测走（玩家没管过），`vp` = 玩家自己定的值。 */
+export interface SafePref {
+  auto: boolean;
+  vp: number;
 }
 
-/** 读用户设定的避让量；没存过时返回 −1（调用方据此走「用探测值播种」那条路）。 */
-export function readSafeVp(filesDir: string): number {
+/* 文件里一行两个词：`auto 24` / `user 32`。
+ *
+ * ⛔ **为什么需要这个标记，而不是「有文件就用文件里的值」**（那是第一版，坏了）：
+ *    第一版是「只播种一次」—— 文件不存在时把探测结果写进去，之后就永远用文件里的值。
+ *    而**前一版探测本身是坏的**（顶部的判据算错，永远得 0），于是那唯一一次播种
+ *    把 0 写了进去 ⇒ 从此 `hasSafeVp()` 恒为真、**探测值再也不被采用**，
+ *    界面上「建议 24」与滑条停在 0 同时成立。用户 2026-10-03 报的就是这个：
+ *    「自动设置好异形屏避让没做」。
+ * ⭐ 教训：一个「只发生一次」的动作，如果它的输入可能是错的，那它就会把错误永久固化。
+ *    ⇒ 改成**状态**而不是**事件**：只要玩家没动过滑条，每次启动都重新采用探测结果。
+ *
+ * ⚠️ 旧格式（单独一个数字，没有标记）会被当成 `auto`。这是**刻意的迁移**：
+ *    这个功能只存在过几小时，而唯一存在的旧文件正是那份被错误播种的 0。 */
+
+function parseSafe(raw: string): SafePref {
+  const parts: string[] = raw.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    const v: number = Number.parseInt(parts[1], 10);
+    if (parts[0] === 'user' && !Number.isNaN(v) && v >= 0 && v <= SAFE_VP_MAX) {
+      return { auto: false, vp: v };
+    }
+    if (parts[0] === 'auto' && !Number.isNaN(v) && v >= 0 && v <= SAFE_VP_MAX) {
+      return { auto: true, vp: v };
+    }
+  }
+  /* 旧格式 / 读不懂 ⇒ 自动。见上面那段迁移说明。 */
+  return { auto: true, vp: 0 };
+}
+
+/** 读避让设置。文件不在或读不懂 ⇒ 自动。 */
+export function readSafePref(filesDir: string): SafePref {
   const path: string = filesDir + '/' + SAFE_FILE_NAME;
   try {
     if (!fs.accessSync(path)) {
-      return -1;
+      return { auto: true, vp: 0 };
     }
-    const raw: string = fs.readTextSync(path).trim();
-    const v: number = Number.parseInt(raw, 10);
-    if (Number.isNaN(v) || v < 0 || v > SAFE_VP_MAX) {
-      hilog.warn(DOMAIN, TAG, 'prefs: safe vp "%{public}s" is not usable -- re-detecting', raw);
-      return -1;
-    }
-    return v;
+    return parseSafe(fs.readTextSync(path));
   } catch (e) {
     const err = e as BusinessError;
-    hilog.warn(DOMAIN, TAG, 'prefs: reading the safe vp failed (%{public}s)', err.message);
-    return -1;
+    hilog.warn(DOMAIN, TAG, 'prefs: reading the safe pref failed (%{public}s)', err.message);
+    return { auto: true, vp: 0 };
   }
 }
 
-/** 写避让量。越界一律拒绝（滑条不会越界，但文件是玩家能碰到的）。 */
-export function writeSafeVp(filesDir: string, vp: number): void {
-  if (!Number.isFinite(vp) || vp < 0 || vp > SAFE_VP_MAX) {
-    hilog.error(DOMAIN, TAG, 'prefs: refusing to write an out-of-range safe vp %{public}d', vp);
-    return;
-  }
+/** 写避让设置。`auto` 时 vp 也写进去，只为了让这个文件自己可读（诊断用）。 */
+export function writeSafePref(filesDir: string, auto: boolean, vp: number): void {
+  const v: number = Math.max(0, Math.min(SAFE_VP_MAX, Math.round(vp)));
   const path: string = filesDir + '/' + SAFE_FILE_NAME;
   try {
     const f: fs.File = fs.openSync(path,
       fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
     try {
-      fs.writeSync(f.fd, Math.round(vp) + '\n');
+      fs.writeSync(f.fd, (auto ? 'auto ' : 'user ') + v + '\n');
     } finally {
       fs.closeSync(f);
     }
-    hilog.info(DOMAIN, TAG, 'prefs: safe vp -> %{public}d', Math.round(vp));
+    hilog.info(DOMAIN, TAG, 'prefs: safe -> %{public}s %{public}d', auto ? 'auto' : 'user', v);
   } catch (e) {
     const err = e as BusinessError;
-    hilog.warn(DOMAIN, TAG, 'prefs: saving the safe vp failed (%{public}s)', err.message);
+    hilog.warn(DOMAIN, TAG, 'prefs: saving the safe pref failed (%{public}s)', err.message);
   }
 }
