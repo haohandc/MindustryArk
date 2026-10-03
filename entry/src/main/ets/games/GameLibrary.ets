@@ -274,6 +274,29 @@ export function hasBundledGame(bundleCodeDir: string): boolean {
   return isReadableJar(bundledGamePath(bundleCodeDir));
 }
 
+
+/** 这个文件**存在**时为真。
+ *
+ * ⛔⛔ 必须有这个函数，**不能用 `isReadableJar` 代替** —— 这正是 2026-10-03 的缺陷：
+ *     `isReadableJar` 除了「能打开」还要看**头两个字节是不是 `PK`**（即是个 zip/jar），
+ *     而那份 JVM 是 **ELF 共享库**（头两字节 `\x7fELF`）。
+ *     ⇒ 用它判 JVM **永远返回 false**，于是 `hasRuntime()` 恒假，
+ *        `resolveGame()` 恒返回 `'no-runtime'`，
+ *        **连完整包都会显示「这个包不能运行游戏」并把「启动游戏」置灰。**
+ *     ⚠️ 用户看到的现象就是「编译出来的是阉割版本」—— 而包其实是完整的（263 MB）。
+ *
+ * ⭐ 游戏本体用 `isReadableJar` 是对的：它**确实是**一个改名成 `.so` 的 zip
+ *    （`entry/libs/arm64-v8a/game/mindustry.so`，头两字节就是 `PK`）。
+ *    ⇒ 两者判据不同，不是笔误。
+ *
+ * ⚠️ `fs.accessSync` **返回布尔值、文件不在时不抛**，所以这里不需要 try。 */
+export function fileExists(path: string): boolean {
+  if (path === '') {
+    return false;
+  }
+  return fs.accessSync(path);
+}
+
 /** 这个包里**带不带运行时**（那份自编译的 JVM）。
  *
  * ⭐⭐ 与 `isReadableJar` 同样，是**运行期文件探测**，**不是编译期常量**。
@@ -293,7 +316,9 @@ export function hasBundledGame(bundleCodeDir: string): boolean {
  *    两者在有运行时的包里都在、在没有的包里都不在，但前者是「能不能起 JVM」
  *    的直接回答，后者只是加载链上的一环。 */
 export function hasRuntime(bundleCodeDir: string): boolean {
-  return isReadableJar(bundledRuntimePath(bundleCodeDir));
+  /* ⛔ 这里用 `fileExists` 而【不是】`isReadableJar`，理由见上面 `fileExists` 的注释：
+   *    那份 JVM 是 ELF，`isReadableJar` 的 `PK` 判据会让它恒为 false。 */
+  return fileExists(bundledRuntimePath(bundleCodeDir));
 }
 
 /** 包内那份 JVM 的绝对路径。⚠️ 结尾斜杠会被吃掉，同 `bundledGamePath`。 */
