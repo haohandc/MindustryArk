@@ -14,6 +14,14 @@ import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { common } from '@kit.AbilityKit';
 /* 应用自己的显示名 —— 与游戏里那个 About 卡片同一处规则。 */
 import { appLabel } from '../utils/AppLabel';
+import { newTreeStat, copyTreeInto, removeTree, TreeStat, isDir } from '../utils/FsTree';
+import { externalRootPath } from '../settings/StorageRoot';
+import { picker } from '@kit.CoreFileKit';
+import { fileUri } from '@kit.CoreFileKit';
+import {
+  packDataDir, ensureDir, readUriToFile, copyLocalFile, stampNow,
+  unpackZip, locateDataRoot, validatePack, packableItems, countPackable,
+} from '../games/DataPack';
 import { GameJar, GameResolution, listGameJars, readSelection, writeSelection,
          resolveGame, gameJarDir, ensureGameJarDir,
          bundledGameVersion, hasBundledGame, bundledGamePath } from '../games/GameLibrary';
@@ -229,6 +237,12 @@ const BAR_CLEARANCE_VP = 96;
 const SAFE_REVEAL_VP = 46;
 
 /** 圆角。卡片和列表项共用，免得两处漂移。 */
+/** 导入对话框里「未隔离的那一份」的伪路径（它不是真版本，但复用同一套渲染）。 */
+const LIVE_TARGET_PATH: string = '__live__';
+
+/** 提示条自动收掉的时间（ms）。用户 2026-10-03 要求 3~5 秒。 */
+const NOTICE_MS: number = 4000;
+
 const CARD_RADIUS_VP = 14;
 
 /** 按钮字号。**显式给**，因为不给会按各自标签长度自适应，两个按钮的字不一样大。 */
@@ -435,6 +449,18 @@ export struct LauncherHome {
   /* 已选中的目标（`v.path` 或 `DUP_KEY`）。**先选、再按确定**（见 TransferDialog）。
    * ⚠️ 复制可以多选；移动**只会有一个**（在 `toggleTransferPick` 里强制）。 */
   @State transferPicked: string[] = [];
+
+  /* ── 整包导入 / 导出 ────────────────────────────────────────────────
+   * `importRoot` 是**已解压且已校验过**的那个数据根（在沙箱暂存里）。
+   * ⛔ 校验没过就**不开**那个对话框 —— 让玩家对着一个坏包选目标是最坏的一种失败。 */
+  @State importOpen: boolean = false;
+  @State importRoot: string = '';
+  /* 这次导入的目标标签 —— 给覆盖前的备份文件起名用。 */
+  @State importLabel: string = '';
+  @State importNote: string = '';
+  @State importMsg: string = '';   /* 非空 = 顶部显示一条进行中/失败的提示 */
+  @State importToast: string = ''; /* 成功后的短提示 */
+  @State exportMsg: string = '';
 
   /* 选中那个存档的元数据：在【选中】时读一次存下来（右侧栏要显示「哪个版本写的」），而不是点开弹窗才读。
    * ⚠️ 存的是**排好的行**而非 `SaveMeta` 原样：读它要**解压**（saveMetaText 走 zlib），常驻原始字段会让
@@ -2986,7 +3012,419 @@ export struct LauncherHome {
     .transition(enterFade())
   }
 
+  /* ====================================================================
+   * 整包导入 / 导出
+   * ==================================================================== */
+
+  /** 临时目录（沙箱内）—— 打包与解包都在这里做。
+   * ⚠️ 必须钉在 `NATIVE_FILES` 那条路径上（`exportDiagnostics` 的说明：ArkTS 的 `ctx.filesDir`
+   *    是 HAP 级目录，两处不通用）。 */
+  private packTmpDir(): string {
+    return '/data/storage/el2/base/files/.temp/datapack';
+  }
+
+  /** 本应用在 Downloads 里的数据根 —— **就是那个【包名】文件夹本身**。
+   *
+   * ⭐⭐ **必须用包名，不能自己起名字。** 这条是从参考项目 AMCL 那儿学来的、也是本项目
+   *     写在 README 致谢里的一条：**文件夹用【包名】命名，系统才认作本应用的
+   *     （「所有权式访问」），跨重启有效**；自取的名字（它早期用的 `AMCL`）系统认不出来。
+   * ⛔ 我第一版正是踩了这个坑：拿**显示名**建了个新顶层文件夹 `Download/MindustryArk`
+   *     ⇒ 建不出来 ⇒ 导出直接失败（用户 2026-10-03 当场报）。**「Mindustry Ark」是
+   *     玩家看到的名字，不是磁盘上的名字。**
+   *
+   * ⭐ 布局（用户 2026-10-03 定）—— 与 `games/` **并列**、⛔不塞进它里面：
+   *     ```
+   *     <Download>/<包名>/games/     游戏 jar（模组那边建立的，游戏自带浏览器打开它）
+   *     <Download>/<包名>/exports/   导出的数据包      ← 本次新增
+   *     <Download>/<包名>/backups/   覆盖导入前的备份  ← 本次新增
+   *     ```
+   *
+   * ⚠️ 直接就用 `externalRootPath()` 那个值（平台报给我们、且**探针实测能写**的那个），
+   *    不自己拼 Download 的绝对路径 —— 设备之间不一样。
+   * ⚠️ 拿不到时返回 `''`，调用方要**如实说明**落在了哪，不要静默换地方。 */
+  private packRoot(): string {
+    const base: string = externalRootPath(this.filesDir);
+    if (base === '') {
+      return '';
+    }
+    /* ⚠️ 它必须**已经存在** —— 这里只确认，不新建（新建顶层文件夹会失败，见上）。
+     * 那个文件夹由模组那条路建立（`ModImporter.ensureModFolder`）。 */
+    return isDir(base) ? base : '';
+  }
+
+  /** 导出的数据包放哪。拿不到用户可见位置时返回 `''`。 */
+  private exportsDir(): string {
+    const root: string = this.packRoot();
+    if (root === '') {
+      return '';
+    }
+    const dir: string = root + '/exports';
+    return ensureDir(dir) ? dir : '';
+  }
+
+  /** 覆盖导入前的自动备份放哪。
+   *
+   * ⛔⛔ **不能放在沙箱里** —— 我第一版放在 `.temp/datapack/`，用户当场问
+   *     「存沙箱我没看到怎么恢复啊」。**一个恢复不了的备份等于没有备份**，
+   *     而且它还会让人以为有退路。
+   * ⭐ 现在放用户可见的 `MindustryArk/backups/`：拷得出来，
+   *    而**恢复的方式就是「导入数据」再选它一遍** —— 不需要任何新的恢复 UI。 */
+  private backupsDir(): string {
+    const root: string = this.packRoot();
+    if (root === '') {
+      return '';
+    }
+    const dir: string = root + '/backups';
+    return ensureDir(dir) ? dir : '';
+  }
+
+  /** 导入：选 zip → 拷进沙箱 → 解压 → 定位数据根 → 校验 → 问目标。
+   *
+   * ⚠️ 每一步失败都**在这一层就停**，并给一句人话 —— 不要带着半成品去问「你要覆盖哪个版本」。 */
+  private async startImport(): Promise<void> {
+    this.importMsg = '';
+    let uri: string = '';
+    try {
+      const opts: picker.DocumentSelectOptions = new picker.DocumentSelectOptions();
+      /* ⭐ 只让选 zip。⚠️ 这是本项目第一次用 `select()` —— 现有的 picker 用法只有「保存」模式。 */
+      opts.fileSuffixFilters = ['.zip'];
+      opts.maxSelectNumber = 1;
+      const view: picker.DocumentViewPicker = new picker.DocumentViewPicker(getContext(this) as common.Context);
+      const uris: Array<string> = await view.select(opts);
+      if (uris === undefined || uris.length === 0 || uris[0] === '') {
+        return;   /* 玩家取消了 —— 不是错误，别弹提示。 */
+      }
+      uri = uris[0];
+    } catch (e) {
+      const err = e as BusinessError;
+      this.showNotice('打不开文件选择器：' + err.message + ' (code=' + err.code + ')', 'import');
+      return;
+    }
+
+    const tmp: string = this.packTmpDir();
+    if (!ensureDir(tmp)) {
+      this.showNotice('建不出临时目录。', 'import');
+      return;
+    }
+    /* ⚠️ 扩展名必须逐字是 `.zip`（`decompressFile` 的硬要求），所以落地名由我们定，不用原名。 */
+    const localZip: string = tmp + '/import.zip';
+    /* ⚠️ 与 `packDataDir` 的内部暂存（`packing`）**必须不同** —— 见那边的说明。 */
+    const staging: string = tmp + '/incoming';
+    this.importMsg = '正在读取压缩包…';
+
+    const copyErr: string = readUriToFile(uri, localZip);
+    if (copyErr !== '') { this.showNotice(copyErr, 'import'); return; }
+
+    const acc: TreeStat = newTreeStat();
+    removeTree(staging, 0, acc);
+    this.importMsg = '正在解压…';
+    const unErr: string = await unpackZip(localZip, staging);
+    if (unErr !== '') { this.showNotice(unErr, 'import'); return; }
+
+    this.importMsg = '正在检查内容…';
+    const root: string = locateDataRoot(staging);
+    if (root === '') {
+      this.showNotice('这个包里找不到游戏数据（既没有 saves/，也没有 mods/ 或 settings.bin），'
+                      + '或者里面有好几个候选目录、分不清哪个才是。', 'import');
+      return;
+    }
+    const vErr: string = validatePack(root);
+    if (vErr !== '') { this.showNotice(vErr, 'import'); return; }
+
+    /* 到这一步才允许问「放到哪」—— 见这个方法的说明。 */
+    this.importRoot = root;
+    this.importNote = countPackable(root);
+    this.importMsg = '';
+    this.importOpen = true;
+  }
+
+  /** 把一个**已校验**的数据根落到某个版本的数据目录。
+   * ⭐ 语义（用户 2026-10-03 定）：**每次导入都问目标**，而「覆盖 / 新建」由**目标有没有数据**决定：
+   *    有 ⇒ 先整包备到垃圾站再覆盖（不可逆的事必须先留退路）；没有 ⇒ 直接写。 */
+  private applyImportTo(v: VersionEntry): void {
+    const target: string = v.dataDir;
+    /* 备份文件名用这个标签（与导出同一套命名）。 */
+    this.importLabel = v.version === '' ? v.label : ('v' + v.version);
+    if (target === '') {
+      this.importOpen = false;
+      this.showNotice('这个版本没有数据目录（读不出隔离键）。', 'import');
+      return;
+    }
+    if (!ensureDir(target)) {
+      this.importOpen = false;
+      this.showNotice('建不出目标目录：' + target, 'import');
+      return;
+    }
+
+    /* ⭐ 目标已有数据 ⇒ **先备份**。不清空整个目录：整包导入是**叠加**语义
+     * （同名覆盖、其余保留），所以不需要先删 —— 也就没有「清空到一半失败」这个状态。 */
+    const existing: string[] = packableItems(target);
+    if (existing.length > 0) {
+      const acc: TreeStat = newTreeStat();
+      const bak: string = this.packTmpDir() + '/backup-before-import.zip';
+      /* ⚠️ 打包是异步且可能几十 MB ⇒ 交给 `backupThenCopy` 串起来，不在这里同步做。 */
+      this.backupThenCopy(target);
+      return;
+    }
+    this.copyImportInto(target, '');
+  }
+
+  /** 有数据时：先打包备份，成功后再复制；备份失败就**不覆盖**。 */
+  private async backupThenCopy(target: string): Promise<void> {
+    this.importOpen = false;
+    this.importMsg = '目标已有数据，正在备份…';
+    /* ⭐ 名字与导出同一套（标签 + 时间）—— 玩家在文件管理器里一眼认得出来。
+     * ⚠️ 拿不到用户可见目录就退回沙箱，但**必须说清**（见 `backupsDir`）。 */
+    const dir: string = this.backupsDir();
+    const bak: string = dir === ''
+      ? this.packTmpDir() + '/backup-before-import.zip'
+      : dir + '/Mindustry-' + this.importLabel + '-' + stampNow() + '-backup.zip';
+    const err: string = await packDataDir(target, this.packTmpDir(), bak);
+    if (err !== '') {
+      /* ⛔ 备份失败 ⇒ **不动目标**。这是「不可逆的事先留退路」的落点。 */
+      this.showNotice('备份失败，已放弃导入（你的数据没有动）：' + err, 'import');
+      return;
+    }
+    this.copyImportInto(target, dir === '' ? ('⚠️ 备到了沙箱（外面拿不到）：' + bak) : bak);
+  }
+
+  /** 真正落地：把 `importRoot` 的内容叠加进 `target`。 */
+  private copyImportInto(target: string, backupZip: string): void {
+    const acc: TreeStat = newTreeStat();
+    copyTreeInto(this.importRoot, target, 0, acc);
+    /* ⚠️ 把**完整路径**写出来，并告诉玩家怎么恢复 —— 否则「已备份」是一句他无法使用的话。 */
+    const backupNote: string = backupZip === '' ? ''
+      : ('\n\n覆盖前的备份：' + backupZip
+         + '\n（要恢复它：用「导入数据」再选这个文件）');
+    if (acc.failed > 0) {
+      this.showNotice('导入没完成（' + String(acc.failed) + ' 项失败）：' + acc.firstError
+                      + backupNote, 'import');
+      return;
+    }
+    /* 清掉暂存（成功才清）。 */
+    const clean: TreeStat = newTreeStat();
+    removeTree(this.importRoot, 0, clean);
+    this.importRoot = '';
+    this.importMsg = '';
+    this.refresh();
+    /* ⚠️ **不自动消失**（用户 2026-10-03 的要求）——「需要重启游戏」这条必须留着让玩家看到，
+     *    而自动消失的提示恰好会在最需要它的时候不见。它带一个 ✕ 由玩家自己关。 */
+    this.showNotice('导入完成：' + String(acc.dirs) + ' 个目录 / ' + String(acc.files)
+                    + ' 个文件' + backupNote + '。需要重启游戏才看得到。', 'toast');
+  }
+
+  /** 关掉提示条。⚠️ 三个字段都要清 —— 它们共用同一个框（见 `PackNotice`）。 */
+  private closePackNotice(): void {
+    this.importMsg = '';
+    this.exportMsg = '';
+    this.importToast = '';
+  }
+
+  /** 显示一条提示，并**在几秒后自动收掉**（用户 2026-10-03 定的：3~5s）。
+   * ⭐ 保留 ✕ 让人**立刻**关掉 —— 自动关闭负责「不挡路」，✕ 负责「不想等」。
+   * ⛔ 定时器必须**带身份校验**：不加的话，先弹的那条会在几秒后把**后来那条**清掉
+   *    （两条提示连着出现时就会这样，而失败提示被提前清掉最难查）。 */
+  private showNotice(text: string, kind: string): void {
+    if (kind === 'import') { this.importMsg = text; }
+    else if (kind === 'toast') { this.importToast = text; }
+    else { this.exportMsg = text; }
+    setTimeout(() => {
+      const now: string = kind === 'import' ? this.importMsg
+                       : (kind === 'toast' ? this.importToast : this.exportMsg);
+      if (now === text) { this.closePackNotice(); }
+    }, NOTICE_MS);
+  }
+
+  /** 导出：把某个版本的数据打成 zip，再让玩家选存到哪。 */
+  private async exportVersion(v: VersionEntry): Promise<void> {
+    this.exportMsg = '';
+    const tmp: string = this.packTmpDir();
+    const zip: string = tmp + '/export.zip';
+    this.exportMsg = '正在打包…';
+    const err: string = await packDataDir(v.dataDir, tmp, zip);
+    if (err !== '') { this.exportMsg = err; return; }
+
+    /* ⭐ 名字 = **版本号 + 导出时间**（用户 2026-10-03 定）。只有版本号的话，
+     * 同一个版本导两次出来的两个包分不出先后；时间能。 */
+    const who: string = v.version === '' ? v.label : v.version;
+    const outName: string = 'Mindustry-' + who + '-' + stampNow() + '.zip';
+
+    /* ⭐⭐ **直接写到我们自建的 `MindustryArk/exports/`，不弹 picker**（用户 2026-10-03 定）。
+     *    这样少一次交互，而且位置是**可预期的** —— 玩家看一遍提示就知道东西在哪，
+     *    下次不必再找。
+     * ⛔ 曾经用 `DocumentSaveOptions` + `pickerMode = DOWNLOAD`，踩过两个坑（都记在这里免得重走）：
+     *    ① 不给 `pickerMode` 就是 `DEFAULT(=0)` = **应用沙箱** ⇒ 玩家在文件管理器里根本找不到；
+     *    ② 给了 `DOWNLOAD` 之后，它返回的是**目录**不是文件
+     *       （SDK 原文：「The **directories** created in DOWNLOAD mode are used only to save files.」）
+     *       ⇒ 拿它当文件去写必然失败。
+     *    ⇒ 现在干脆不经 picker。⚠️ 若哪天要恢复「让玩家自己选位置」，必须按 ② 的语义写。 */
+    const dir: string = this.exportsDir();
+    if (dir === '') {
+      /* ⚠️ 拿不到用户可见位置时**如实说**，不要默默丢进沙箱（那等于玩家拿不到）。
+       * 见 `packRoot()` 的说明。 */
+      this.showNotice('导出失败：拿不到用户可见的文件夹（下载目录里本应用的那个）。'
+                      + '如果这个提示反复出现，请把它截图发我 —— 我需要知道是「文件夹不存在」'
+                      + '还是「不允许写」。', 'export');
+      return;
+    }
+    const outPath: string = dir + '/' + outName;
+    const wErr: string = copyLocalFile(zip, outPath);
+    this.showNotice(wErr === '' ? '已导出：' + outPath : wErr, 'export');
+  }
+  /** 一个**永远存在**的导入目标：未隔离的那一份数据目录。
+   *
+   * ⭐⭐ 为什么需要它（用户 2026-10-03）：「单纯导入存档，**即便没有任何版本**」——
+   *    他打算拆出一个**管理工具**形态的包（手机上不装游戏）。那种形态下 `versions` 是空的，
+   *    而导入对话框若只列版本 ⇒ **导入功能直接死掉**。
+   * ⚠️ 这份目录就是隔离关着时所有版本共用的那个（`liveGameDataDir()`），
+   *    它在没有任何 jar 的时候**照样存在** —— 游戏数据与游戏本体是两回事。 */
+  private liveImportTarget(): VersionEntry {
+    const dir: string = liveGameDataDir();
+    const c: GameDataCounts = countsOf(dir);
+    return {
+      path: LIVE_TARGET_PATH,
+      source: 'live',
+      label: '未隔离的那一份',
+      version: '',
+      key: '',
+      dataDir: dir,
+      isCurrent: false,
+      saveCount: c.sectorSaves + c.manualSaves,
+      hasData: gameDataExists(dir),
+    };
+  }
+
+  /* 整包导入：选一个目标版本。
+   * ⭐⭐ **每一行都是「版本 + 后果」的形状**（与 `TransferDialog` 同款，那是用户 2026-10-02 的硬要求）：
+   *    光列版本名，玩家不知道点了会发生什么。这里必须说清「会覆盖 / 会新建」。 */
   @Builder
+  ImportTargetDialog() {
+    Column() {
+      Column() {
+        Text('导入到哪一份数据？')
+          .fontSize(17).fontColor($r('sys.color.font_primary'))
+          .width('100%').textAlign(TextAlign.Center)
+
+        Text('这个包里是：' + (this.importNote === '' ? '（读不出内容清单）' : this.importNote))
+          .fontSize(12).fontColor($r('sys.color.font_secondary'))
+          .width('100%').textAlign(TextAlign.Center)
+          .margin({ top: 8 })
+
+        Scroll() {
+          Column() {
+            /* ⭐ **未隔离的那一份排在最前面**：它是唯一在「一个版本都没有」时也能用的目标，
+             * 也是所有版本共用的那一份（隔离关着时就是它）。 */
+            Row() {
+              Column() {
+                Text('未隔离的那一份')
+                  .fontSize(15).fontColor($r('sys.color.font_primary'))
+                  .width('100%')
+                Text('所有版本共用它（隔离关着时就是这里）'
+                     + (this.liveImportTarget().hasData
+                        ? '　已有 ' + String(this.liveImportTarget().saveCount) + ' 个存档'
+                        : '　还没有数据'))
+                  .fontSize(12)
+                  .fontColor(this.liveImportTarget().hasData
+                             ? $r('sys.color.font_secondary') : $r('sys.color.brand'))
+                  .width('100%').margin({ top: 3 })
+              }
+              .alignItems(HorizontalAlign.Start).layoutWeight(1)
+            }
+            .width('100%')
+            .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+            .backgroundColor($r('app.color.launcher_card'))
+            .borderRadius(CARD_RADIUS_VP)
+            .margin({ top: 8 })
+            .onClick(() => { this.applyImportTo(this.liveImportTarget()); })
+
+            /* ⚠️ 一个版本都没有时，上面那一项就是唯一的目标 —— 而那正是「管理工具」形态。
+             *    不要在这里写「请先导入一个游戏」：管存档本来就不需要游戏。 */
+            ForEach(this.versions, (v: VersionEntry) => {
+              Row() {
+                Column() {
+                  Text(v.label + (v.version === '' ? '' : '  ' + v.version))
+                    .fontSize(15).fontColor($r('sys.color.font_primary'))
+                    .width('100%')
+                  /* ⭐ 后果写在行里 —— 有数据就会先备份再覆盖，没数据就是新建。 */
+                  Text(v.hasData
+                       ? ('已有数据（' + String(v.saveCount) + ' 个存档）—— 会先备份再覆盖')
+                       : '没有数据 —— 会新建一份')
+                    .fontSize(12)
+                    .fontColor(v.hasData ? $r('sys.color.font_secondary') : $r('sys.color.brand'))
+                    .width('100%').margin({ top: 3 })
+                }
+                .alignItems(HorizontalAlign.Start).layoutWeight(1)
+                if (v.isCurrent) {
+                  Text('当前').fontSize(12).fontColor($r('sys.color.brand'))
+                }
+              }
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+              .backgroundColor($r('app.color.launcher_card'))
+              .borderRadius(CARD_RADIUS_VP)
+              .margin({ top: 8 })
+              .onClick(() => { this.applyImportTo(v); })
+            }, (v: VersionEntry) => v.path)
+          }
+          .width('100%')
+        }
+        .height(300)
+        .scrollBar(BarState.Off)
+        /* ⛔ `Scroll` 的 `align` **默认是 Center** —— 内容比视口矮时会**垂直居中**，
+         *    表现就是「列表浮在中间」（用户 2026-10-03 报的）。
+         *    ⚠️ 本文件在存档列表上踩过同一个坑（那边的注释写着「两行都改才平」）。 */
+        .align(Alignment.TopStart)
+        .margin({ top: 10 })
+
+        Text('取消')
+          .fontSize(14).fontColor($r('sys.color.font_secondary'))
+          .padding({ top: 14, bottom: 4 })
+          .onClick(() => { this.importOpen = false; })
+      }
+      .width('86%')
+      .constraintSize({ maxWidth: 460 })
+      .padding(16)
+      .backgroundColor($r('app.color.launcher_bg'))
+      .borderRadius(CARD_RADIUS_VP)
+    }
+    .width('100%').height('100%')
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor('#F01C1C1C')
+    .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
+               top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
+    .transition(enterFade())
+  }
+
+  /* 导入 / 导出 / 完成 的提示条。
+   * ⚠️ 它不是弹窗（不挡操作），因为导入是**异步且可能几秒**的 —— 而盖住界面的等待框
+   *    在失败时会把「为什么失败」也一起藏起来。 */
+  @Builder
+  PackNotice() {
+    /* ⛔ **不要用 `width('100%')` + 左右 margin** —— 那两样叠在一起会让它**溢出**，
+     *    表现就是「占满左右」（用户 2026-10-03 报的）。用百分比宽度 + 上限，让 Stack 居中它。 */
+    Row() {
+      Text(this.importToast !== '' ? this.importToast
+           : (this.importMsg !== '' ? this.importMsg : this.exportMsg))
+        .fontSize(13).fontColor($r('sys.color.font_primary'))
+        .layoutWeight(1)
+      /* ⚠️ 用文字 ✕ 而不是 `Button`：本项目有硬规矩 —— **浮层里不能放可获焦的组件**
+       * （`Button` 自带点击手势，会和外层 `onClick` 竞争）。一个 `Text` 就够。 */
+      Text('✕')
+        .fontSize(15).fontColor($r('sys.color.font_secondary'))
+        .padding({ left: 14, right: 2, top: 2, bottom: 2 })
+        .onClick(() => { this.closePackNotice(); })
+    }
+    .width('86%')
+    .constraintSize({ maxWidth: 420 })
+    .padding({ left: 16, right: 12, top: 12, bottom: 12 })
+    .backgroundColor($r('app.color.launcher_card'))
+    .borderRadius(CARD_RADIUS_VP)
+    .margin({ top: this.edgeVp('top') + 12 })
+    .transition(enterFade())
+  }
+
+  @Builder
+
   SavesTab() {
     Column() {
       /* ⭐ 垃圾站是**另一个地方**，所以在最外层就分开了 —— 进去之后看不到分段控件、也看不到
@@ -3064,6 +3502,24 @@ export struct LauncherHome {
              * ⚠️ 空的时候也显示（写「垃圾站」而不写「(0)」）—— 一个数字 0 只会让人以为坏了；
              * 而**空垃圾站本身有说明作用**（删掉的东西会去哪）。 */
             Blank()
+            /* ⭐ 导出。**只在「按版本」视图、且选中了某个版本时出现** ——
+             * 导出必须有明确的对象；放在这里而不是列表行里，是为了不和「点行=选中」抢手势
+             * （本项目有过手势竞争的坑：子组件的点击不会触发外层的 onClick）。 */
+            if (this.savesView === SAVES_VIEW_VERSION && this.selectedVersionEntry() !== undefined) {
+              Text('导出')
+                .fontSize(13).fontColor($r('sys.color.brand'))
+                .padding({ left: 4, right: 12, top: 7, bottom: 7 })
+                .onClick(() => {
+                  const v: VersionEntry | undefined = this.selectedVersionEntry();
+                  if (v !== undefined) { this.exportVersion(v); }
+                })
+            }
+            /* ⭐ 整包导入。⚠️ 放在**这一行**（对整个列表的操作），不塞进 `SaveActionRow` ——
+             * 那个是零参 `@Builder`、被「按存档 / 按版本」两个面板共用，而导入不针对选中项。 */
+            Text('导入数据')
+              .fontSize(13).fontColor($r('sys.color.brand'))
+              .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+              .onClick(() => { this.startImport(); })
             Text(this.vaultEntries.length === 0
                  ? '垃圾站'
                  : ('垃圾站 ' + String(this.vaultEntries.length)))
@@ -4058,6 +4514,16 @@ export struct LauncherHome {
     /* 复制/移动的目标选择。同上：只读的窗可以盖在别的东西上，启动失败不能。 */
     if (this.transferOp !== '') {
       this.TransferDialog()
+    }
+
+    /* 整包导入的目标选择。⭐ 用户定的是「每次导入时问我」。 */
+    if (this.importOpen) {
+      this.ImportTargetDialog()
+    }
+
+    /* 导入/导出/进行中的提示条。⚠️ 只读提示，所以放在浮层链的最前面（最下层）。 */
+    if (this.importMsg !== '' || this.exportMsg !== '' || this.importToast !== '') {
+      this.PackNotice()
     }
 
     /* 删除确认。⚠️ 排在「上次没能启动成功」**前面** —— Stack 里后声明的在上层，而启动失败是必须

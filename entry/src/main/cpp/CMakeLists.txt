@@ -172,6 +172,14 @@ target_link_libraries(jarver PUBLIC libace_napi.z.so z)
 # 而 libz 由 NDK sysroot 提供，所以这是链接参数而不是自带副本。
 add_library(savemeta SHARED savemeta.c)
 target_link_libraries(savemeta PUBLIC libace_napi.z.so z)
+
+# 存储位置探针：用 native 的方式（裸 POSIX）验证一个目录能不能写。
+# ⛔ 为什么必须是 native 探测而不是 ArkTS 里试写：**ArkTS 的 fileIo 能写，
+#    不代表 JVM 的 native 代码能写**（参考项目 AMCL 的 StorageProbe 文件头记了这个教训）。
+#    把数据根切到外部存储之前要先知道答案，否则会切完才发现游戏起不来。
+# 只依赖 libc（open/write/fsync/read/unlink/stat），不需要额外的链接项。
+add_library(storprobe SHARED storprobe.c)
+target_link_libraries(storprobe PUBLIC libace_napi.z.so)
 # libhilog_ndk.z.so: the launcher mirrors its diagnostics there, because a
 # RELEASE-signed build's sandbox log files cannot be read over hdc -- measured,
 # "Permission denied", and with no faultlog entry either. Without this the store

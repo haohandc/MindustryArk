@@ -133,6 +133,26 @@ Per-component obligations are in [THIRD-PARTY.md](THIRD-PARTY.md).
 - [**SDL3**](https://github.com/libsdl-org/SDL) — the windowing / input / audio layer
 - [**LWJGL**](https://github.com/LWJGL/lwjgl3) — the JNI bindings for OpenGL and SDL
 - [**OpenJDK 21**](https://github.com/openjdk/jdk) — the runtime
+- [**AMCL**](https://github.com/LZZLHY/amcl) — a **reference implementation** of a peer project.
+
+  Note it is **not** a dependency of this project and **no code from it is bundled** — not one line was
+  copied. But several things here were only attempted after reading it, and each one below points at
+  where in its repository it came from:
+
+  - The bottom tab bar uses HarmonyOS's design-system component **`HdsTabs`** (`@kit.UIDesignKit`) rather
+    than a bare `Tabs`, with the immersive material coming from `barFloatingStyle` +
+    `systemMaterialEffect` (its `components/LauncherTabsStyle.ets`)
+  - Writing the selected index back from **`onAnimationStart`** (its `pages/Index.ets`) — this is how the
+    "the bar's highlight lags a beat while swiping" defect here was fixed
+  - Making **the game data root a single source of truth** (its `GameStorage.resolveMcDir`): every place
+    that needs the data directory asks one resolver instead of hard-coding its own path
+  - **How to obtain external storage**: a folder **named after the bundle** (`Download/<bundle>`) gets
+    "owner-style" access that survives restarts without `persistPermission`; and the relevant APIs are
+    unavailable on phones, where a picker in `DOWNLOAD` mode is used to *learn* the path once
+  - **Probe discipline**: its `StorageProbe` states that ArkTS being able to write does **not** mean
+    native code can — which is why this project probes writability with **bare POSIX** before switching
+    the data directory
+  - The idea of **per-version data isolation** (each game version gets its own data directory)
 
 > [!NOTE]
 > Most of the code, phrases and documents in this repository were written with AI assistance
