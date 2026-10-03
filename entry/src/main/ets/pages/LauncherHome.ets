@@ -7,8 +7,10 @@
  * ③ 漏改 import 调用点会让整个文件语法分析失败（真错在错误列表最后一条），而 `build.log`
  * 是追加的、混着历次错误 ⇒ 只信命令当场打印的那几行。 */
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
-import { SymbolGlyphModifier, uiMaterial } from '@kit.ArkUI';
+import { BusinessError } from '@kit.BasicServicesKit';
+import { SymbolGlyphModifier } from '@kit.ArkUI';
+/* 底部页签换成设计系统组件 HdsTabs（2026-10-03，用户指定）。与裸 Tabs 的关键差别见 build() 里那段。 */
+import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { common } from '@kit.AbilityKit';
 /* 应用自己的显示名 —— 与游戏里那个 About 卡片同一处规则。 */
 import { appLabel } from '../utils/AppLabel';
@@ -18,9 +20,12 @@ import { GameJar, GameResolution, listGameJars, readSelection, writeSelection,
 /* 界面偏好（启动后进哪里）。⛔ 内容宽度**不再**在这里 —— 见 gamesWidthVp。 */
 import { readLaunchMode, writeLaunchMode,
          LAUNCH_MODE_HOME, LAUNCH_MODE_GAME,
-         readSafeVp, writeSafeVp, hasSafeVp, SAFE_VP_MAX, SAFE_VP_STEP } from '../settings/LauncherPrefs';
-/* 异形屏探测（挖孔 / 曲面边缘）。⛔ 游戏画面不归它管，只用于启动器自己的界面。 */
-import { SafeInsets, detectInsets, uniformOf, describeInsets } from '../utils/SafeArea';
+         SafePref, readSafePref, writeSafePref, SAFE_VP_MAX, SAFE_VP_STEP } from '../settings/LauncherPrefs';
+/* 异形屏探测（挖孔 / 刘海）。⛔ 游戏画面不归它管，只用于启动器自己的界面。 */
+import { SafeInsets, detectInsets, uniformOf, edgesOf, dumpSafeArea } from '../utils/SafeArea';
+/* 入场动画（退场刻意不做 —— 见那个文件的开头）。 */
+import { enterFade, enterPop } from '../utils/Motion';
+/* ⚠️ 临时：帧率探针。排查完连同这一行一起删。 */
 /* 版本隔离：四档粒度、键的计算、以及打开时的那次复制。
  * ⛔ 实际的 `-Duser.home=` 在 native 侧 —— 这里只负责【决定】并把结论写进桥。 */
 /* 存档：一个存档 = 一个星球的一组 msav（或一个手动存档）。 */
@@ -219,6 +224,10 @@ const BAR_BOTTOM_MARGIN_VP = 24;
  * 多给只是底部空一点，少给才会压住按钮 ⇒ 取偏大值。 */
 const BAR_CLEARANCE_VP = 96;
 
+/* 滑条展开后的高度（vp）= 滑条自身 40 + 它与上面那行的 6 间距。
+ * ⚠️ 必须有这个数：高度动画要在 0 和它之间插值，而「内容多高」要到布局期才算得出来。 */
+const SAFE_REVEAL_VP = 46;
+
 /** 圆角。卡片和列表项共用，免得两处漂移。 */
 const CARD_RADIUS_VP = 14;
 
@@ -251,24 +260,6 @@ const DIALOG_MIN_VP = 320;
  * 用半透明的白而非固定灰：弹窗底是硬编码的深色（`#F01C1C1C`），半透明灰在那上面读得出。 */
 const SECONDARY_BG = '#2EFFFFFF';
 const SECONDARY_FG = '#B0FFFFFF';
-
-/** 底部页签的材质；拿不到返回 undefined，界面退回普通样式。
- * ⚠️ 判断本身也在 try 里：`uiMaterial` 起始 26.0.0 而 compatibleSdkVersion 是 6.1.1(24)，
- * 在 API 24 的设备上抛异常的正是 `isImmersiveMaterialSupported()` 这一句，而不是它的返回值。 */
-function immersiveBarMaterial(): uiMaterial.Material | undefined {
-  try {
-    if (uiMaterial.isImmersiveMaterialSupported()) {
-      return new uiMaterial.ImmersiveMaterial({
-        style: uiMaterial.ImmersiveStyle.ULTRA_THIN,
-      });
-    }
-    hilog.info(DOMAIN, TAG, 'launcher: the device reports no immersive material support');
-  } catch (e) {
-    const err = e as BusinessError;
-    hilog.info(DOMAIN, TAG, 'launcher: immersive material unavailable (%{public}s)', err.message);
-  }
-  return undefined;
-}
 
 /** 人类可读的大小。就是给人看的，所以用 MB/KB 而不是字节。 */
 function formatSize(bytes: number): string {
@@ -311,7 +302,17 @@ export struct LauncherHome {
   @State games: GameJar[] = [];
   @State selected: string = '';
   @State resolution: GameResolution = { path: '', source: 'none' };
-  @State currentTab: number = 0;
+  /* ⚠️⚠️ **2026-10-03：从 @State 降成普通字段，这是一次一行实验 —— 别急着改回去。**
+   *
+   * 它是一个**只写不读**的遗留字段：全工程没有任何地方读它（当年的 `Tabs({index: this.currentTab})`
+   * 绑定已经撤掉）。但它是 `@State` ⇒ **每次赋值都让这个 4100 行的组件变脏** ⇒ `build()` 整棵重跑
+   * ⇒ 而三个页签是 `@Builder`（内容内联在 build() 里）⇒ **两千多行的构造代码每次切页签重跑一遍**。
+   * ⭐ 这正好解释用户报的「所有页签都一样、稳定地卡」：代价与切到哪个页签无关。
+   * ⭐ 对照 AMCL：它也在 onAnimationStart 里写同名字段（`Index.ets:2854`），但它的页签是**独立
+   *    `@Component`** ⇒ 父组件重跑时子组件不重新执行 ⇒ 所以它不卡。
+   * ⇒ 如果降级后不卡了，说明链条成立，下一步是把三个 @Builder 拆成独立 @Component（AMCL 的结构）。 */
+  private currentTab: number = 0;
+
   /** 模组那个 Downloads 文件夹的路径提示；拿不到时为 ''。 */
   @State jarDirHint: string = '';
 
@@ -325,14 +326,18 @@ export struct LauncherHome {
   /** 启动后进哪里。设置里那个开关写盘，启动时由 Index.ets 读。 */
   @State launchMode: string = LAUNCH_MODE_HOME;
 
-  /* 异形屏避让量（vp，四边统一）。作用在**启动器自己的界面**上：三个页签的内容与所有弹窗。
-   * ⭐ 语义是**覆盖**（用户 2026-10-03 选的）：这个数就是最终值，探测只用来给**首次**播种。
-   * ⚠️ 0 是合法值（「不让」），所以「有没有存过」不能用 0 来判断 —— 见 hasSafeVp()。 */
+  /* 异形屏避让量（vp）。作用在**启动器自己的界面**上：三个页签的内容与所有弹窗。
+   * ⭐ 谁在定由 `safeAuto` 说了算：开着 ⇒ 每次启动重新采用探测值；关着 ⇒ 用这个数。
+   * ⚠️ 0 是合法值（「不让」），所以「玩家定过没有」不能靠 0 判断 —— 判据是**文件里的模式**，
+   *    见 LauncherPrefs 的 readSafePref()。 */
   @State safeVp: number = 0;
   /** 这台机器探测出来的建议值（vp，四边取最大）。只用于设置页的提示与日志。 */
   @State detectedSafeVp: number = 0;
-  /** 探测到的四边明细，设置页里显示出来 —— 「探测不到」和「探测到了但没生效」要能分开。 */
-  @State detectedDetail: string = '';
+  /** 探测**命中**了哪几边。⭐ 滑条的值只作用在这里面列的边上（用户 2026-10-03 定）。 */
+  @State detectedEdges: string[] = [];
+  /** 自动避让开着没有。⭐ 开着时每次启动**都重新采用探测结果**；关着时用玩家拖出来的值。
+   *  ⚠️ 玩家一动滑条就自动关掉 —— 那是最自然的「我要自己定」的表达方式。 */
+  @State safeAuto: boolean = true;
 
   /** 玩家点过「知道了」。只活这一次会话 —— 不再是失败状态就不会再显示。 */
   @State faultAck: boolean = false;
@@ -539,10 +544,19 @@ export struct LauncherHome {
    * native 在游戏入口前留下的东西，要等**下一次启动**才被读到。 */
   launchFault: string = '';
 
-  /* 底部页签的悬浮样式（沉浸光感生效处）是 @since 26.0.0。更低 API 上那个属性方法不存在，
-   * 调用它会抛 —— 而那发生在 build() 里、catch 不到 ⇒ 按运行期 API 级别分两条分支，不靠 try。 */
-  private canFloat: boolean = deviceInfo.sdkApiVersion >= 26;
-  private barMaterial: uiMaterial.Material | undefined = immersiveBarMaterial();
+  /* 底部页签换成 HdsTabs（鸿蒙设计系统组件）之后，原来那两个字段都不需要了：
+   *
+   *   · canFloat（sdkApiVersion >= 26 的门槛）—— 裸 Tabs 的 barFloatingStyle 是 @since 26.0.0，
+   *     而 HdsTabs 的 barFloatingStyle 是 @since 6.0.0(20)（逐条核过本机 SDK 的
+   *     @hms.hds.hdsBaseComponent.d.ets）⇒ 我们 compatibleSdkVersion 24 ⇒ 门槛不存在了，
+   *     原来那两条分支因此合成一条（同一份内容复制两遍，本文件已为「只改一处」吃过苦）。
+   *   · barMaterial（uiMaterial.Material）—— 换成 systemMaterialEffect 里的两个枚举，
+   *     由系统按设备与主题自适应，比我们原先自己挑一个材质更稳。
+   * ⚠️ hdsMaterial 本身是 @since 6.1.0(23) ⇒ 仍要求 API 23+，与 compatibleSdkVersion(24) 相容。
+   *
+   * ⚠️ 控制器必须与 HdsTabs 配套（HdsTabsOptions.controller 收的是 HdsTabsController，
+   *    不是 TabsController）—— AMCL 也单独持有它。 */
+  private tabController: HdsTabsController = new HdsTabsController();
 
   aboutToAppear(): void {
     this.launchMode = readLaunchMode(this.filesDir);
@@ -557,6 +571,36 @@ export struct LauncherHome {
     this.refresh();
   }
 
+  /** 让开的边，翻成中文给玩家看。⭐ 用 effectiveEdges()（实际生效的那几边），
+   * 不是 detectedEdges —— 探测为空时生效的是「只上边」，界面必须说「上」，否则它在骗人。 */
+  private edgeNames(): string {
+    const n: string[] = [];
+    for (const e of this.effectiveEdges()) {
+      n.push(e === 'top' ? '上' : (e === 'bottom' ? '下' : (e === 'left' ? '左' : '右')));
+    }
+    return n.join('/');
+  }
+
+  /* 某一条边最终让开多少 vp。⭐⭐ 三条规则，按顺序：
+   *
+   *   ① 避让量为 0        ⇒ 四边都不让（玩家明确选了「不让」）
+   *   ② 探测**没命中任何边** ⇒ **只让上边**
+   *   ③ 探测命中了那几边   ⇒ **只让那几边**（用户 2026-10-03：「保留一个滑条，但只用在探测到的那几边」）
+   *
+   * ⛔ ② 曾经是「四边都让」，**那是错的**（用户 2026-10-03 当场指出：「左右避让干啥啊」）。
+   *    左右两条边在这台机器上白白少了一截可用宽度，而顶部那个孔根本没碰到它们。
+   *    ⇒ 探测不到时按**最常见的形状**假定：顶部一个挖孔。要上下都让的机器由玩家自己拖。
+   * ⚠️ 仍是猜测，但它的代价是「上边多让一点」而不是「左右各少一截」，而且**上边本来就最先被挡**。 */
+  private edgeVp(edge: string): number {
+    if (this.safeVp <= 0) {
+      return 0;
+    }
+    if (this.detectedEdges.length === 0) {
+      return edge === 'top' ? this.safeVp : 0;
+    }
+    return this.detectedEdges.indexOf(edge) >= 0 ? this.safeVp : 0;
+  }
+
   /* 异形屏避让的初始化。⭐ 语义是**覆盖**（用户 2026-10-03 的选择）：
    *   玩家自己设过 ⇒ **完全听他的**，探测值只用来在设置页里显示作参考；
    *   没设过     ⇒ 用这次探测的结论**播种**一次，之后那也成了「玩家的选择」。
@@ -564,27 +608,38 @@ export struct LauncherHome {
   private async initSafeArea(): Promise<void> {
     let ins: SafeInsets = { top: 0, right: 0, bottom: 0, left: 0 };
     try {
-      ins = await detectInsets();
+      ins = await detectInsets(getContext(this) as common.Context);
     } catch (e) {
       /* detectInsets 自己吞掉异常并返回 0；这一层只是不让它拖垮 aboutToAppear。 */
     }
     this.detectedSafeVp = uniformOf(ins);
-    this.detectedDetail = describeInsets(ins);
+    this.detectedEdges = edgesOf(ins);
 
-    if (hasSafeVp(this.filesDir)) {
-      this.safeVp = Math.max(0, readSafeVp(this.filesDir));
-      hilog.info(DOMAIN, TAG,
-                 'safearea: using the stored value %{public}d vp (detected %{public}d)',
-                 this.safeVp, this.detectedSafeVp);
-      return;
-    }
-    /* 首次：用探测值播种并落盘。
-     * ⚠️ **不播种也要落盘**（探测为 0 时写 0）—— 否则「没设过」这个状态会一直留着，
-     * 下次启动又探测一遍；而玩家如果在设置页里把滑条拖到 0 表示「我不要」，那也该被记住。 */
-    this.safeVp = this.detectedSafeVp;
-    writeSafeVp(this.filesDir, this.safeVp);
-    hilog.info(DOMAIN, TAG, 'safearea: first run -- seeded %{public}d vp from detection',
-               this.safeVp);
+    /* ⭐⭐ 自动 / 手动的判定。
+     * ⛔ 第一版是「只播种一次」（文件不在就把探测值写进去，之后永远用文件里的值）——
+     *    那个设计**坏过**：前一版探测本身有 bug、永远得 0，而那唯一一次播种把 0 固化了，
+     *    从此探测值再也不被采用。用户 2026-10-03 报的「自动设置好异形屏避让没做」就是它。
+     * ⇒ 改成**状态**：只要玩家没动过滑条（文件里写着 auto），每次启动都重新采用探测结果。 */
+    const pref: SafePref = readSafePref(this.filesDir);
+    this.safeAuto = pref.auto;
+    this.safeVp = pref.auto ? this.detectedSafeVp : pref.vp;
+
+    /* 每次都写回：auto 时值是探测的、user 时值是玩家的；写回也让这个文件自己可读（诊断用）。 */
+    writeSafePref(this.filesDir, this.safeAuto, this.safeVp);
+
+    /* 这一段落盘是**唯一**能离开设备的东西 —— 本应用的 hilog 实测读不到（见 SafeArea.ets）。 */
+    dumpSafeArea('\n--- prefs ---\nauto=' + this.safeAuto
+                 + '  applied=' + this.safeVp + ' vp\nfile='
+                 + (pref.auto ? 'auto' : 'user') + ' ' + pref.vp
+                 + '\napplied edges=' + JSON.stringify(this.effectiveEdges()) + '\n', true);
+    hilog.info(DOMAIN, TAG,
+               'safearea: auto=%{public}s applied=%{public}d vp (detected %{public}d)',
+               String(this.safeAuto), this.safeVp, this.detectedSafeVp);
+  }
+
+  /** 滑条真正作用在哪几边（探测为空时是「只上边」，见 edgeVp）。 */
+  private effectiveEdges(): string[] {
+    return this.detectedEdges.length === 0 ? ['top'] : this.detectedEdges;
   }
 
   /* ====================================================================
@@ -2617,10 +2672,12 @@ export struct LauncherHome {
     .justifyContent(FlexAlign.Center)
     /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
      * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
-     * ⚠️ 竖向原本就是 0（卡片靠 justifyContent 居中），所以这里也只加 safeVp ——
-     *    safeVp = 0 时布局与从前**逐像素相同**。 */
-    .padding({ left: 32 + this.safeVp, right: 32 + this.safeVp,
-               top: this.safeVp, bottom: this.safeVp })
+     * ⚠️ 四边的 32 是**卡片自己的**边距（原本就有，只作用在左右），与避让无关，所以两者相加而不是覆盖。
+     * ⚠️ 避让为 0 时这里与从前**逐像素相同**。 */
+    .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
+               top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
+    /* 整层淡入（遮罩 + 卡片一起）。 */
+    .transition(enterFade())
   }
 
   @Builder
@@ -2865,10 +2922,12 @@ export struct LauncherHome {
     .justifyContent(FlexAlign.Center)
     /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
      * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
-     * ⚠️ 竖向原本就是 0（卡片靠 justifyContent 居中），所以这里也只加 safeVp ——
-     *    safeVp = 0 时布局与从前**逐像素相同**。 */
-    .padding({ left: 32 + this.safeVp, right: 32 + this.safeVp,
-               top: this.safeVp, bottom: this.safeVp })
+     * ⚠️ 四边的 32 是**卡片自己的**边距（原本就有，只作用在左右），与避让无关，所以两者相加而不是覆盖。
+     * ⚠️ 避让为 0 时这里与从前**逐像素相同**。 */
+    .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
+               top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
+    /* 整层淡入（遮罩 + 卡片一起）。 */
+    .transition(enterFade())
   }
 
   @Builder
@@ -2919,10 +2978,12 @@ export struct LauncherHome {
     .justifyContent(FlexAlign.Center)
     /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
      * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
-     * ⚠️ 竖向原本就是 0（卡片靠 justifyContent 居中），所以这里也只加 safeVp ——
-     *    safeVp = 0 时布局与从前**逐像素相同**。 */
-    .padding({ left: 32 + this.safeVp, right: 32 + this.safeVp,
-               top: this.safeVp, bottom: this.safeVp })
+     * ⚠️ 四边的 32 是**卡片自己的**边距（原本就有，只作用在左右），与避让无关，所以两者相加而不是覆盖。
+     * ⚠️ 避让为 0 时这里与从前**逐像素相同**。 */
+    .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
+               top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
+    /* 整层淡入（遮罩 + 卡片一起）。 */
+    .transition(enterFade())
   }
 
   @Builder
@@ -3407,63 +3468,98 @@ export struct LauncherHome {
         .margin({ top: 8 })
 
         /* ================= 异形屏避让 ================= */
-        Row() {
-          Column() {
-            Text('界面避让（异形屏）')
-              .fontSize(14).fontColor($r('sys.color.font_primary'))
-            /* ⭐ 两行都要：第一行是**建议值**，第二行是**明细**。
-             * ⛔ 只说「建议 0」是不够的 —— 「没探测到」和「探测到了但界面没吃进去」在屏幕上
-             *    长得一样，而这两件事的修法完全不同（一个调滑条、一个是布局的 bug）。 */
-            Text(this.detectedSafeVp === 0
-                 ? '本机未探测到挖孔 / 曲面边缘'
-                 : ('本机探测建议 ' + this.detectedSafeVp + ' vp'))
-              .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-              .margin({ top: 4 })
-            if (this.detectedDetail !== '') {
-              Text(this.detectedDetail + '（上/右/下/左，vp）')
-                .fontSize(11).fontColor($r('sys.color.font_tertiary'))
-                .margin({ top: 2 })
+        /* ⛔ 卡片容器是必须的 —— 第一版我漏了它，于是这一段和上面那张卡片贴在一起、
+         *    在界面上根本看不出是两块（用户 2026-10-03 当场指出）。
+         * ⭐ 版式与「启动时直接进游戏」那张卡一致：一行标题 + 一个控件、整块一个底框。 */
+        Column() {
+          Row() {
+            Column() {
+              Text('异形屏避让')
+                .fontSize(14).fontColor($r('sys.color.font_primary'))
+              /* 副标题一行说清两件事：**谁在定** + **现在让多少**。
+               * ⛔ 不再分开写「本机探测到 …」和「自动避让 …」两行 —— 那两行都在报同一个数，
+               *    而且标题里也报一遍（用户 2026-10-03：这些数值重复了）。 */
+              Text(this.safeAuto
+                   ? (this.detectedSafeVp === 0 ? '自动 · 无需避让'
+                      : ('自动 · ' + this.edgeNames() + ' ' + this.safeVp + ' vp'))
+                   : ('手动 · ' + this.edgeNames() + ' ' + this.safeVp + ' vp'))
+                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                .margin({ top: 4 })
             }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+
+            /* 「开」= 跟着探测走（默认）；关掉 = 用滑条的值。
+             * ⚠️ 拖滑条会**自动关掉它** —— 表达「我要自己定」最自然的方式。 */
+            Toggle({ type: ToggleType.Switch, isOn: this.safeAuto })
+              .onChange((on: boolean) => {
+                /* ⭐ 高度变化必须包在 animateTo 里 —— 见下面那个容器的说明。 */
+                this.getUIContext().animateTo(
+                  { duration: 200, curve: Curve.FastOutSlowIn }, () => {
+                    this.safeAuto = on;
+                    /* 打开自动 ⇒ 立刻回到探测值；关掉 ⇒ 保留当前值，等玩家去拖。 */
+                    if (on) {
+                      this.safeVp = this.detectedSafeVp;
+                    }
+                  });
+                writeSafePref(this.filesDir, this.safeAuto, this.safeVp);
+              })
           }
-          .alignItems(HorizontalAlign.Start)
-          .layoutWeight(1)
-
-          Text(this.safeVp === 0 ? '不让' : (this.safeVp + ' vp'))
-            .fontSize(14).fontColor($r('sys.color.font_secondary'))
+          .width('100%')
+          /* ⛔ **不能用 `if` 来做这个显隐**。原因是动画而非风格：
+           *    `if` 会把节点整棵建/拆，而 `animateTo` 是在**两帧之间插值** —— 节点刚建出来时没有
+           *    上一帧，高度就从 0 直接跳到目标值，看着还是瞬移。
+           * ⇒ 让它**一直留在树里**，只改高度：`0`（收起）⇄ `SAFE_REVEAL_VP`（展开）。
+           * ⭐ 这也顺带做对了「上下出入」的手感：收回是往上收，不是原地淡出。
+           * ⛔ 开关本身**必须**一直在 —— 它是这一段唯一的出入口。 */
+          Column() {
+            Slider({
+              value: this.safeVp,
+              min: 0,
+              max: SAFE_VP_MAX,
+              step: SAFE_VP_STEP,
+              style: SliderStyle.OutSet
+            })
+              .width('100%')
+              .margin({ top: 6 })
+              .onChange((v: number, mode: SliderChangeMode) => {
+                const nv: number = Math.round(v);
+                /* ⚠️ 只在**手指离开**时写盘（`End` / `Click`）—— 拖动中每次变化都写会写上百次，
+                 * 而这是一块闪存。`Moving` 时只改内存里的值，界面照常实时预览。 */
+                const end: boolean = (mode === SliderChangeMode.End
+                                      || mode === SliderChangeMode.Click);
+                /* ⛔⛔ 这个守卫【不能】把 `end` 那次也挡掉 —— 它挡掉过一次，代价是**手动值永远存不下来**：
+                 *      拖动时 `Moving` 已经把 safeAuto 置 false、safeVp 跟到终点，于是 `End` 那一刻
+                 *      `nv === safeVp && !safeAuto` 成立 ⇒ 直接 return ⇒ `writeSafePref` 一次都没执行。
+                 *      内存里是对的（界面看着正常），文件里还是旧值，重启就回去了。
+                 * ⭐ 「跳过没变化的更新」与「只在结束时写盘」是两条各自合理的规则，
+                 *    叠在一起时**后者成了前者的受害者**。⇒ 写盘那一路必须从守卫里豁免。 */
+                if (nv === this.safeVp && !this.safeAuto && !end) {
+                  return;
+                }
+                /* ⚠️ 一动滑条就接管。 */
+                this.safeAuto = false;
+                this.safeVp = nv;
+                if (end) {
+                  writeSafePref(this.filesDir, false, nv);
+                  dumpSafeArea('\n--- slide ---\nwrote user ' + nv + ' vp\n', true);
+                }
+              })
+          }
+          .width('100%')
+          .height(this.safeAuto ? 0 : SAFE_REVEAL_VP)
+          /* ⛔ 承重：不给 clip 的话，高度收到 0 时**内容还在画**，只是被容器框住而已。 */
+          .clip(true)
         }
-        .width('100%')
-
-        /* ⭐ 滑条 = **最终值**（用户 2026-10-03 选的「覆盖」语义）：拖到哪就是多少，
-         * 探测只在**首次**用来给初值。⚠️ 所以它不需要「自动」开关 —— 拖回建议值就等于自动。
-         * ⚠️ 沉浸模式下挖孔会直接压在内容上，所以这项默认值来自探测、而不是写死 0。 */
-        Slider({
-          value: this.safeVp,
-          min: 0,
-          max: SAFE_VP_MAX,
-          step: SAFE_VP_STEP,
-          style: SliderStyle.OutSet
-        })
-          .width('100%')
-          .margin({ top: 10 })
-          .onChange((v: number, mode: SliderChangeMode) => {
-            const nv: number = Math.round(v);
-            if (nv === this.safeVp) {
-              return;
-            }
-            this.safeVp = nv;
-            /* ⚠️ 只在**手指离开**时写盘（`End` / `Click`）—— 拖动过程中每次变化都写会写上百次，
-             * 而这是一块闪存。`Moving` 时只改内存里的值，界面照常实时预览。 */
-            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
-              writeSafeVp(this.filesDir, nv);
-            }
-          })
-
-        /* 滑条下方的说明。⛔ 不写「自动探测」这个词 —— 语义是覆盖，说成自动会让人以为拖了没用。 */
-        Text('数值越大，启动器四周让开越多。四边统一。⛔ 只管启动器自己的界面；'
-             + '游戏画面由游戏自带的「适应刘海显示」负责。')
-          .fontSize(11).fontColor($r('sys.color.font_tertiary'))
-          .margin({ top: 6 })
-          .width('100%')
+        /* ⛔ 四边一样，且**与其它卡片同一个值**（16）。
+         *   我为了「滑条行高大」把这里改成过不对称的 top 14 / bottom 10 —— 那是错的：
+         *   ① 自动开着时滑条**不显示**，卡片里只剩一行标题+开关 ⇒ 上下就不对称了；
+         *   ② 而上下对称、且等于 16，才是这一页所有卡片共有的形状（用户 2026-10-03 两次指出）。
+         * ⭐ 滑条与上面那行之间的间隔归**滑条自己的 margin** 管，不是归卡片的内边距管。 */
+        .width('100%').padding(16)
+        .backgroundColor($r('app.color.launcher_card'))
+        .borderRadius(CARD_RADIUS_VP)
+        .margin({ top: 8 })
 
         /* ================= 关于 ================= */
         Text('关于')
@@ -3525,68 +3621,71 @@ export struct LauncherHome {
      * 宽度上，必然横跨这两块的边界。 */
 
     Navigation() {
-      /* 两条分支只差悬浮样式那一块，理由见 canFloat 的注释。⚠️ 页签内容走 @Builder，没有第二份。 */
-      if (this.canFloat) {
-        Tabs({ barPosition: BarPosition.End }) {
-          TabContent() { this.GamesTab() }.tabBar(this.tabItem($r('sys.symbol.house_fill'), '首页'))
-          TabContent() { this.SavesTab() }.tabBar(this.tabItem($r('sys.symbol.doc_text'), '存档'))
-          TabContent() { this.SettingsTab() }.tabBar(this.tabItem($r('sys.symbol.gearshape_fill'), '设置'))
-        }
-        .barFloatingStyle({
-          /* 左右同一个留白 ⇒ 居中由构造保证。见 BAR_MAX_VP。 */
-          barSideMargin: this.sideMargin(),
-          /* 把栏从屏幕下沿抬起来 —— 悬浮观感的另一半。 */
-          barBottomMargin: BAR_BOTTOM_MARGIN_VP,
-          systemMaterial: this.barMaterial,
-          maskColor: Color.Transparent,
-        })
-        /* ⚠️ 这一行 = 「悬浮」本身，**不要改成 false**。我改过一次（理由「栏压住『启动游戏』」），
-         * 用户报回来的第一句就是「底栏现在不悬浮，和左边融为一体了」—— 悬浮样式就是靠它生效的。
-         * 官方示例与 AMCL 都是 true，AMCL 的注释明说「旧 API 仍覆盖在全屏内容上，不退回挤占
-         * TabContent 高度的布局」。⇒ 「栏压住按钮」的正解是**给内容留出底部空间**（BAR_CLEARANCE_VP），
-         * 不是关掉重叠 —— 关掉重叠同时失去悬浮观感，代价比问题本身大。 */
-        .barOverlap(true)
-        /* ⚠️ 这一行是「首页 / 设置 两页之间切换跳变」的修复（AMCL 同款）。SDK 文档说自定义 tabBar 不设时
-         * 默认就是 300，但实测是跳的 ⇒ 显式写上。⛔ 更关键的是上面那处改动：Tabs 的 `index` 绑定已经去掉 ——
-         * 原来 `Tabs({ index: this.currentTab })` 而 `onAnimationStart` 会回写 `this.currentTab` ⇒ **把值
-         * 灌回 `index`** ⇒ 等于在动画中途重新请求一次切换，那一下就是「跳」。
-         * ⚠️ `animationCurve` 不设时滑动切换的时长由默认曲线 `interpolatingSpring(-1, 1, 228, 30)` 自己决定
-         * ⇒ 这一行对「点击页签」和「滑动」作用方式不完全一样，别以为是万能旋钮。 */
-        .animationDuration(300)
-        .barBackgroundColor(Color.Transparent)
-        /* ⚠️ 这里要的是 onAnimationStart，**不是 onChange** —— 这一行就是「滑动换页时底栏高亮有延迟」
-         * 的修复：onChange【在切换完成之后】才触发，手指滑动的那一整段时间高亮还停在旧页签上
-         * （看起来「慢半拍」）；onAnimationStart【在动画一开始】就给出 targetIndex，高亮跟着手势走。
-         * ⭐ 参考项目 AMCL 用的就是它，而用户报的正是「AMCL 就没有」这个延迟。
-         * onChange 保留作兜底（动画被跳过时仍会把值纠正回来），两者写同一字段、都幂等，不冲突。 */
-        .onAnimationStart((_index: number, targetIndex: number) => {
-          this.currentTab = targetIndex;
-        })
-        .onChange((index: number) => { this.currentTab = index; })
-        .width('100%')
-        .height('100%')
-      } else {
-        /* 低于 API 26 的退路。没有悬浮材质，但**仍然重叠**（同上），用 `barBackgroundBlurStyle`
-         * 换个毛玻璃 —— 它从 API 7 就有。同一个做法见 AMCL 的 LauncherTabsStyle.ets。 */
-        Tabs({ barPosition: BarPosition.End }) {
-          TabContent() { this.GamesTab() }.tabBar(this.tabItem($r('sys.symbol.house_fill'), '首页'))
-          TabContent() { this.SavesTab() }.tabBar(this.tabItem($r('sys.symbol.doc_text'), '存档'))
-          TabContent() { this.SettingsTab() }.tabBar(this.tabItem($r('sys.symbol.gearshape_fill'), '设置'))
-        }
-        .barOverlap(true)
-        /* 同上：显式给切换时长，与 AMCL 对齐。 */
-        .animationDuration(300)
-        .barBackgroundBlurStyle(BlurStyle.COMPONENT_THICK)
-        /* 同上面那条：要 onAnimationStart（在动画一开始就给出 targetIndex、高亮跟着手势走），
-         * **不是 onChange**（切换完成之后才触发 ⇒ 滑动时高亮停在旧页签、「慢半拍」）。
-         * onChange 保留作兜底（动画被跳过时仍会把值纠正回来），两者写同一字段、都幂等。 */
-        .onAnimationStart((_index: number, targetIndex: number) => {
-          this.currentTab = targetIndex;
-        })
-        .onChange((index: number) => { this.currentTab = index; })
-        .width('100%')
-        .height('100%')
+      /* 2026-10-03：从裸 Tabs 换成 HdsTabs（鸿蒙设计系统组件，@kit.UIDesignKit）。三条依据：
+       *   ① 参考项目 AMCL 用的就是它（Index.ets:2567），而用户对它的评价是「AMCL 就没有（掉帧）」；
+       *   ② 裸 Tabs 的切换动效没有旋钮 —— TabsAttribute 里能碰的只有 animationCurve /
+       *      animationDuration（逐条列过），而 HdsTabs 是设计系统组件，切换动效由系统那套实现；
+       *   ③ 它让两条分支合成一条（理由见 tabController 那处）。
+       *
+       * ✅ 2026-10-03 **已定案：就用 HdsTabs**（用户实测「差不多」，且外观有变但他接受）。
+       *    用户另给了一条长期口径：**后续同类的底部导航一律走沉浸光感**（即 HdsTabs 这套）。
+       *
+       * ⛔ 已知的取舍（我记录在案，不再当作「待观察」）：HdsTabs 没有 animationCurve ——
+       *    逐条核过本机 SDK 的 HdsTabsAttribute 全部方法，确实没有。⇒ 我们那条显式曲线
+       *    （实测让滑动顺畅了一些）在 HdsTabs 上设不了，切换节奏改由组件自己决定。
+       * ⚠️ 也就是说：**这次是「拿掉一个已知有效的改动，换组件级实现，手感持平」**。
+       *    用户是在知情下选的它，理由是设计系统组件是平台推荐路径、且要统一口径。
+       *    改动前的整份文件备份在项目外（不在 git 里）：
+       *    MindustryArkDocs/_backup_launcher_home_20261003/LauncherHome.ets.pre-hdstabs。
+       *
+       * ⚠️ 页签内容仍然走 @Builder（没有第二份）。⚠️ currentTab 现在是普通字段、不是 @State，
+       *    见它自己的注释 —— 那是一次一行实验，别顺手改回去。 */
+      HdsTabs({ barPosition: BarPosition.End, controller: this.tabController }) {
+        TabContent() { this.GamesTab() }.tabBar(this.tabItem($r('sys.symbol.house_fill'), '首页'))
+        TabContent() { this.SavesTab() }.tabBar(this.tabItem($r('sys.symbol.doc_text'), '存档'))
+        TabContent() { this.SettingsTab() }.tabBar(this.tabItem($r('sys.symbol.gearshape_fill'), '设置'))
       }
+      .barFloatingStyle({
+        /* 左右同一个留白 ⇒ 居中由构造保证。见 BAR_MAX_VP。 */
+        barSideMargin: this.sideMargin(),
+        /* 把栏从屏幕下沿抬起来 —— 悬浮观感的另一半。 */
+        barBottomMargin: BAR_BOTTOM_MARGIN_VP,
+        /* ⛔ 字段名与裸 Tabs 不同，别照抄旧代码：
+         *   · 旧：systemMaterial: uiMaterial.Material  +  maskColor: Color.Transparent
+         *   · 新：systemMaterialEffect: { materialType, materialLevel }
+         * ⛔ HdsTabsFloatingStyle 没有 maskColor（逐条核过字段表）⇒ 那一项去掉。
+         * ⭐ ADAPTIVE 的官方释义就是「Follow system material policy / level」——
+         *   交给系统按设备性能与主题自适应。⚠️ 这两个枚举是 @since 6.1.0(23)。 */
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE,
+        },
+      })
+      /* ⚠️ 这一行 = 「悬浮」本身，不要改成 false。我不小心改过一次，用户报回来的第一句
+       * 就是「底栏现在不悬浮，和左边融为一体了」—— 悬浮观感靠它生效。官方示例与 AMCL 都是 true。
+       * ⇒ 「栏压住按钮」的正解是给内容留出底部空间（BAR_CLEARANCE_VP），不是关掉重叠。 */
+      .barOverlap(true)
+      /* ⚠️ 显式 300：SDK 说自定义 tabBar 不设时默认就是 300，但实测是跳的。
+       * ⛔ 这里【不能】再写 animationCurve —— HdsTabs 没有这个方法（见上面那条取舍）。
+       * ⚠️ 也因此，裸 Tabs 上「滑动走 spring、点击走贝塞尔」的那个不一致，
+       *    在 HdsTabs 上由组件自己统一 —— 我们不再能（也不需要）干预。 */
+      /* ⭐ 与 AMCL 对齐的那一行（`LauncherTabsStyle.ets:20`）。
+       * ⛔ 我一度判定它「等于默认值、是噪音」—— **那个判断是错的**：我引的是【裸 Tabs】的文档
+       *    （`tabs.d.ts:1591`：「不设时全部缓存」），而 **HdsTabs 自己的文档【没有】写默认值**
+       *    （本机 `@hms.hds.hdsBaseComponent.d.ets` 里这条只有参数说明）⇒ 对 HdsTabs 不能假定。
+       * ⇒ 既然 AMCL 显式写了、且它对结果满意，而 `.ets` 里的 `TabsCacheMode` 是全局声明
+       *    （AMCL 也没 import 它），这一行的代价为零。 */
+      .cachedMaxCount(2, TabsCacheMode.CACHE_BOTH_SIDE)
+      .animationDuration(300)
+      .barBackgroundColor(Color.Transparent)
+      /* ⚠️ 要 onAnimationStart 而不是 onChange：onChange 在切换【完成之后】才触发 ⇒
+       * 滑动的那一整段时间底栏高亮还停在旧页签上（「慢半拍」）。onChange 留作兜底、两者幂等。 */
+      .onAnimationStart((_index: number, targetIndex: number) => {
+        this.currentTab = targetIndex;
+      })
+      .onChange((index: number) => { this.currentTab = index; })
+      .width('100%')
+      .height('100%')
     }
     /* ⭐ 走资源。拿不到时给空串 —— 标题栏宁可空着，也不要显示另一个应用的名字。 */
     .title(this.appName)
@@ -3607,8 +3706,8 @@ export struct LauncherHome {
      * ⛔ 那个区别是承重的：几个弹窗的遮罩是 `.width('100%').height('100%')` 的**兄弟节点**，
      *    如果把 padding 加在 Stack 上，遮罩就只盖住缩进后的框，四周露出一圈没被压暗的条。
      *    ⇒ 内容在 Navigation 上避让，遮罩各自的 padding 里再加一份（见各弹窗）。 */
-    .padding({ top: this.safeVp, bottom: this.safeVp,
-               left: this.safeVp, right: this.safeVp })
+    .padding({ top: this.edgeVp('top'), bottom: this.edgeVp('bottom'),
+               left: this.edgeVp('left'), right: this.edgeVp('right') })
     .width('100%')
     .height('100%')
     /* 唯一的任务是把窗口宽度学回来，好让底部栏能算出对称的左右留白。见 sideMargin()。 */
@@ -3754,10 +3853,12 @@ export struct LauncherHome {
       .justifyContent(FlexAlign.Center)
       /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
      * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
-     * ⚠️ 竖向原本就是 0（卡片靠 justifyContent 居中），所以这里也只加 safeVp ——
-     *    safeVp = 0 时布局与从前**逐像素相同**。 */
-    .padding({ left: 32 + this.safeVp, right: 32 + this.safeVp,
-               top: this.safeVp, bottom: this.safeVp })
+     * ⚠️ 四边的 32 是**卡片自己的**边距（原本就有，只作用在左右），与避让无关，所以两者相加而不是覆盖。
+     * ⚠️ 避让为 0 时这里与从前**逐像素相同**。 */
+    .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
+               top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
+    /* 整层淡入（遮罩 + 卡片一起）。 */
+    .transition(enterFade())
       /* ⚠️ 这里【不】让点遮罩等于取消：这个窗比「关于」重（它会改数据位置），
        * 而一个手滑点空白就消失的确认框，比没有确认框更糟。出口只有「取消」。 */
     }
@@ -3865,10 +3966,12 @@ export struct LauncherHome {
       .justifyContent(FlexAlign.Center)
       /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
      * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
-     * ⚠️ 竖向原本就是 0（卡片靠 justifyContent 居中），所以这里也只加 safeVp ——
-     *    safeVp = 0 时布局与从前**逐像素相同**。 */
-    .padding({ left: 32 + this.safeVp, right: 32 + this.safeVp,
-               top: this.safeVp, bottom: this.safeVp })
+     * ⚠️ 四边的 32 是**卡片自己的**边距（原本就有，只作用在左右），与避让无关，所以两者相加而不是覆盖。
+     * ⚠️ 避让为 0 时这里与从前**逐像素相同**。 */
+    .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
+               top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
+    /* 整层淡入（遮罩 + 卡片一起）。 */
+    .transition(enterFade())
     }
 
     if (this.showAbout) {
@@ -3942,10 +4045,12 @@ export struct LauncherHome {
       .justifyContent(FlexAlign.Center)
       /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
      * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
-     * ⚠️ 竖向原本就是 0（卡片靠 justifyContent 居中），所以这里也只加 safeVp ——
-     *    safeVp = 0 时布局与从前**逐像素相同**。 */
-    .padding({ left: 32 + this.safeVp, right: 32 + this.safeVp,
-               top: this.safeVp, bottom: this.safeVp })
+     * ⚠️ 四边的 32 是**卡片自己的**边距（原本就有，只作用在左右），与避让无关，所以两者相加而不是覆盖。
+     * ⚠️ 避让为 0 时这里与从前**逐像素相同**。 */
+    .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
+               top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
+    /* 整层淡入（遮罩 + 卡片一起）。 */
+    .transition(enterFade())
       /* 点卡片【外面】的空白处也关。与右上角那个 ✕ 并存 —— 两个都是出口，出口多一点比少一点安全。 */
       .onClick(() => { this.showAbout = false; })
     }
@@ -4034,10 +4139,12 @@ export struct LauncherHome {
       .justifyContent(FlexAlign.Center)
       /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
      * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
-     * ⚠️ 竖向原本就是 0（卡片靠 justifyContent 居中），所以这里也只加 safeVp ——
-     *    safeVp = 0 时布局与从前**逐像素相同**。 */
-    .padding({ left: 32 + this.safeVp, right: 32 + this.safeVp,
-               top: this.safeVp, bottom: this.safeVp })
+     * ⚠️ 四边的 32 是**卡片自己的**边距（原本就有，只作用在左右），与避让无关，所以两者相加而不是覆盖。
+     * ⚠️ 避让为 0 时这里与从前**逐像素相同**。 */
+    .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
+               top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
+    /* 整层淡入（遮罩 + 卡片一起）。 */
+    .transition(enterFade())
     }
     }
   }

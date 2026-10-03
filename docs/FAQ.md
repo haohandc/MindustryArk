@@ -31,12 +31,28 @@
 **分两块，两块都能调：**
 
 **① 启动器自己的界面**（首页 / 存档 / 设置，以及那些弹窗）——
-应用会**自己探测**挖孔与曲面边缘（`display.getCutoutInfo()`），首次启动时按探测结果给一个避让值。
-要调就去 **设置 → 界面避让（异形屏）**，那里有一条滑条，**四边统一**，0 到 64 vp。
-⭐ 滑条是**最终值**（不是「在自动的基础上再加」）：拖到多少就是多少，拖回建议值就等于用自动的。
+应用会**自己探测挖孔 / 刘海**（`window.getWindowAvoidArea(TYPE_CUTOUT)`），
+并把结果**自动**用在界面上，不需要你做什么。
+⛔ **曲面屏边缘不避让** —— 那是显示特征不是洞，像素是在的，内容本来就该铺到那儿。
 
-⚠️ **多数平板探测出来是 0**（没有挖孔、也不是曲面屏），那就什么都不用做。
-个别圆角很大、内容被切到的平板，探测不到 —— **用手动滑条补**。
+要调就去 **设置 → 界面避让（异形屏）**：
+
+| 控件 | 作用 |
+|---|---|
+| **自动避让**（出厂就是开的） | 每次启动都按本机探测结果来 |
+| **滑条**（0 – 64 vp） | 自己定一个值。⚠️ **一动滑条，自动就关掉了** —— 那是「我要自己定」最自然的表达 |
+
+⭐ 想回到自动：把「自动避让」开关重新打开，值立刻回到探测结果。
+
+**这个值作用在哪几边：**
+
+| 探测结果 | 作用在 |
+|---|---|
+| 命中了一边或几边（例如顶部一个挖孔） | **只让那几边** —— 其余边不需要，让了是浪费 |
+| **什么都没探测到** | **只让上边** —— 按最常见的形状（顶部一个孔）假定 |
+
+⚠️ 第二行在 2026-10-03 改成只让上边：原来让四边，用户当场指出「左右避让干啥啊」——
+顶部那个孔根本没碰到左右，白白少了两条可用宽度。要上下都让的机器请自己拖滑条。
 
 **② 游戏画面** —— 那是**游戏自带**的：设置里有「**适应刘海显示**」开关，
 另有一个安全区边距值可调。请在那里调。⛔ 启动器那条滑条管不到它。
@@ -128,17 +144,32 @@ the floating ball → **"launcher"** to go back to the launcher UI and exit from
 **Two separate things, and both are adjustable:**
 
 **① The launcher's own UI** (Home / Saves / Settings, and the dialogs) —
-the app **detects cutouts and curved edges itself** (`display.getCutoutInfo()`) and seeds an inset
-from that on first launch. To change it: **Settings → 界面避让（异形屏）**, a slider,
-**the same value on all four edges**, 0 to 64 vp.
-⭐ The slider is the **final value**, not an amount added on top of the automatic one: whichever
-value it sits at is what gets used, so dragging it back to the detected value is the same as
-letting the detection win.
+the app **detects cutouts and notches itself** (`window.getWindowAvoidArea(TYPE_CUTOUT)`) and
+applies the result **automatically**; there is nothing to do.
+⛔ **Curved edges are not avoided** -- that is a display feature, not a hole: the pixels are there,
+and content is meant to extend under it.
 
-⚠️ **On most tablets the detection returns 0** (no cutout, not a curved display), and then there is
-nothing to do. The few tablets where a large corner radius clips the content will not be detected --
-**use the slider**.
+To change it: **Settings → 界面避让（异形屏）**:
 
+| Control | What it does |
+|---|---|
+| **自动避让** (on by default) | re-applies this machine's detection on every launch |
+| **the slider** (0 – 64 vp) | your own value. ⚠️ **Touching the slider turns auto off** -- the most natural way to say "I will decide" |
+
+⭐ To go back to automatic, turn the toggle on again; the value returns to the detection at once.
+
+**Which edges the value applies to:**
+
+| Detection | Applies to |
+|---|---|
+| one or more edges (a top-centred cutout, say) | **only those edges** -- the rest do not need it, and the space would be wasted |
+| **nothing at all** | **the top edge only** -- the most common shape (one hole at the top) |
+
+⚠️ The second row became top-only on 2026-10-03. It used to be all four, and the user pointed out
+on the spot that a top-centred hole has nothing to do with the left and right edges -- two strips
+of usable width were being thrown away. A device that needs the bottom too can drag the slider.
+
+**② The game's picture**
 **② The game's picture** — that one belongs to the **game**: there is an **"adapt to notch"** toggle
 in its settings, plus an adjustable safe-area padding value. ⛔ The launcher's slider does not
 affect it.
