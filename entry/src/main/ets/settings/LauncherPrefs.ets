@@ -207,6 +207,195 @@ export function writeGameLocaleFollow(filesDir: string, follow: boolean): void {
 }
 
 /* ====================================================================
+ * 游戏内显示（写进游戏自己的 settings.bin）
+ * ==================================================================== */
+
+const GAME_DISPLAY_FILE_NAME = 'game_display.txt';
+
+/* ⛔⛔ **两个量程都是从游戏自己的界面抄来的，别自己编** —— 来源 `SettingsMenuDialog`：
+ *      `sliderPref("uiEdgePadding", 0, 0, 100, …)` ⇒ 默认 0、0~100
+ *      `sliderPref("uiscale", getInt("uiscale", 100), 25, 300, 5, …)` ⇒ 默认 100、25~300、步长 5
+ * ⭐ 用它的量程意味着：**启动器设不出游戏自己的 UI 都设不出的值。** */
+/* ⛔⛔ **`*_FACTORY` 与「启动器想让它是什么」是【两件不同的事】，别合并成一个常量。**
+ *    `*_FACTORY` = **游戏自己的**默认值 ⇒ 只有一个用途：判断「玩家碰过这个设置没有」。
+ *    而「启动器出厂想让它是什么」= `GAME_DISPLAY_DEFAULT`（下面）。
+ * ⚠️⚠️ 把它们当成一个数的后果是**静默失效**：一旦哪天把启动器的出厂值调成 70/200
+ *    （用户已经调好的值），`untouched` 就会拿 70 去比一份全新游戏的 `0` ⇒ 判定「玩家改过」
+ *    ⇒ **永远不写**，而现象只是「这个功能忽然不生效」，看不出因果。
+ *    ⇒ 判据：**「什么算没被碰过」只由游戏决定，与我们的偏好无关。** */
+export const GAME_EDGE_FACTORY: number = 0;
+export const GAME_SCALE_FACTORY: number = 100;
+
+/* 量程照抄游戏自己的滑条（见上），⛔ 别自己放宽 —— 那会让启动器设出游戏 UI 都设不出的值。 */
+export const GAME_EDGE_MIN: number = 0;
+export const GAME_EDGE_MAX: number = 100;
+export const GAME_SCALE_MIN: number = 25;
+export const GAME_SCALE_MAX: number = 300;
+export const GAME_SCALE_STEP: number = 5;
+
+/** 要写进游戏的两个值。 */
+export interface GameDisplayPref {
+  /** `uiEdgePadding`：异形屏避让。 */
+  edge: number;
+  /** `uiscale`：UI 缩放（百分数）。 */
+  scale: number;
+}
+
+/** 出厂值 = **游戏自己的默认值**（= 什么都不改变）。
+ *
+ * ⚠️⚠️ 这是刻意的、也是一个待办：用户要的是「启动器默认帮用户调好」，而**合适的数值我定不出来**
+ *    —— 那取决于真机上游戏 HUD 与挖孔的位置关系，而我看不到屏幕。
+ *    ⛔ 编一个数写进去，症状会是「游戏界面看起来坏了」，而玩家不知道是谁弄的。
+ *    ⭐ 所以：量程与出厂值都照游戏默认，界面给他两个滑条去拖；他试出合适的数之后，
+ *      **把那两个数改成这里的出厂值**，后面的用户就自动调好了。 */
+export const GAME_DISPLAY_DEFAULT: GameDisplayPref = {
+  edge: GAME_EDGE_FACTORY,
+  scale: GAME_SCALE_FACTORY,
+};
+
+/** 把数值夹进量程。⛔ 读文件与滑条两处都要走它 —— 文件是可以被改坏的。
+ * ⚠️ 两个量程**必须分开传**：边距是 0~100，缩放是 25~300。第一版我写了「下限用边距的、
+ *    上限用缩放的」那一个函数，两边都错 —— 那种一眼看不出的错正是要避免的。 */
+function clampTo(v: number, min: number, max: number): number {
+  if (!Number.isFinite(v)) {
+    return min;
+  }
+  return v < min ? min : (v > max ? max : v);
+}
+
+/** 边距的量程夹取。 */
+export function clampEdge(v: number): number {
+  return clampTo(v, GAME_EDGE_MIN, GAME_EDGE_MAX);
+}
+
+/** UI 缩放的量程夹取。 */
+export function clampScale(v: number): number {
+  return clampTo(v, GAME_SCALE_MIN, GAME_SCALE_MAX);
+}
+
+/** 读「游戏内显示」偏好。文件不在或读不懂 ⇒ 出厂值。格式一行两个词：`edge=<n> scale=<n>`。 */
+export function readGameDisplay(filesDir: string): GameDisplayPref {
+  const path: string = filesDir + '/' + GAME_DISPLAY_FILE_NAME;
+  try {
+    if (!fs.accessSync(path)) {
+      return GAME_DISPLAY_DEFAULT;
+    }
+    let edge: number = GAME_DISPLAY_DEFAULT.edge;
+    let scale: number = GAME_DISPLAY_DEFAULT.scale;
+    let sawOne: boolean = false;
+    for (const part of fs.readTextSync(path).trim().split(/\s+/)) {
+      const eq: number = part.indexOf('=');
+      if (eq <= 0) {
+        continue;
+      }
+      const k: string = part.substring(0, eq);
+      const n: number = Number.parseInt(part.substring(eq + 1), 10);
+      if (!Number.isFinite(n)) {
+        continue;
+      }
+      if (k === 'edge') {
+        edge = n;
+        sawOne = true;
+      } else if (k === 'scale') {
+        scale = n;
+        sawOne = true;
+      }
+    }
+    if (!sawOne) {
+      /* ⚠️ 一个词都没认出来 ⇒ 当读不懂，记一条再回出厂值（`readLaunchMode` 那条同款）。 */
+      hilog.warn(DOMAIN, TAG, 'prefs: game display file has nothing usable -- using defaults');
+      return GAME_DISPLAY_DEFAULT;
+    }
+    return { edge: clampEdge(edge), scale: clampScale(scale) };
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'prefs: reading the game display failed (%{public}s)', err.message);
+    return GAME_DISPLAY_DEFAULT;
+  }
+}
+
+/** 写「游戏内显示」偏好。 */
+export function writeGameDisplay(filesDir: string, p: GameDisplayPref): void {
+  const path: string = filesDir + '/' + GAME_DISPLAY_FILE_NAME;
+  try {
+    const f: fs.File = fs.openSync(path,
+      fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
+    try {
+      fs.writeSync(f.fd, 'edge=' + String(p.edge) + ' scale=' + String(p.scale) + '\n');
+    } finally {
+      fs.closeSync(f);
+    }
+    hilog.info(DOMAIN, TAG, 'prefs: game display -> edge=%{public}d scale=%{public}d', p.edge, p.scale);
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'prefs: saving the game display failed (%{public}s)', err.message);
+  }
+}
+
+/* 「**上次我们把它写成了什么**」—— ⛔ 这一个文件是「不覆盖玩家设置」那条规则的**全部依据**。
+ *
+ * ⭐ 判据（三个值一比就知道该不该动手）：
+ *     游戏里那个值 == 出厂默认        ⇒ 玩家没碰过      ⇒ **写**
+ *     游戏里那个值 == 我们上次写的     ⇒ 那是**我们的**值 ⇒ **写**（玩家改了启动器那边就该跟着变）
+ *     其它                            ⇒ 玩家在游戏里改过了 ⇒ **不碰**
+ * ⛔ 少了这个文件，就只能靠「是不是出厂默认」判断 —— 那样**启动器一旦写过一次，就再也改不动了**
+ *    （值不再是默认、也不是我们认识的，于是永远被当成「玩家改的」）。
+ * ⚠️ 它记的是**边距与缩放两个数**，不是「写过没有」这个布尔 —— 布尔分不出「我们写的是 40」与
+ *    「我们写的是 60」。 */
+const GAME_DISPLAY_APPLIED_FILE_NAME = 'game_display_applied.txt';
+
+/** 上次写进游戏的值；从没写过 ⇒ `null`。 */
+export function readAppliedGameDisplay(filesDir: string): GameDisplayPref | null {
+  const path: string = filesDir + '/' + GAME_DISPLAY_APPLIED_FILE_NAME;
+  try {
+    if (!fs.accessSync(path)) {
+      return null;
+    }
+    const raw: string = fs.readTextSync(path).trim();
+    let edge: number = -1;
+    let scale: number = -1;
+    for (const part of raw.split(/\s+/)) {
+      const eq: number = part.indexOf('=');
+      if (eq <= 0) {
+        continue;
+      }
+      const n: number = Number.parseInt(part.substring(eq + 1), 10);
+      if (!Number.isFinite(n)) {
+        continue;
+      }
+      if (part.substring(0, eq) === 'edge') {
+        edge = n;
+      } else if (part.substring(0, eq) === 'scale') {
+        scale = n;
+      }
+    }
+    if (edge < 0 || scale < 0) {
+      return null;
+    }
+    return { edge: edge, scale: scale };
+  } catch (e) {
+    return null;
+  }
+}
+
+/** 记下我们刚写进游戏的值。 */
+export function writeAppliedGameDisplay(filesDir: string, p: GameDisplayPref): void {
+  const path: string = filesDir + '/' + GAME_DISPLAY_APPLIED_FILE_NAME;
+  try {
+    const f: fs.File = fs.openSync(path,
+      fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
+    try {
+      fs.writeSync(f.fd, 'edge=' + String(p.edge) + ' scale=' + String(p.scale) + '\n');
+    } finally {
+      fs.closeSync(f);
+    }
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'prefs: saving the applied game display failed (%{public}s)', err.message);
+  }
+}
+
+/* ====================================================================
  * 异形屏避让（vp，四边统一一个值）
  * ==================================================================== */
 

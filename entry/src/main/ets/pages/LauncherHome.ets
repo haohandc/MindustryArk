@@ -35,7 +35,12 @@ import { readLaunchMode, writeLaunchMode,
          LAUNCH_MODE_HOME, LAUNCH_MODE_GAME,
          AppearancePref, readAppearance, writeAppearance,
          SafePref, readSafePref, writeSafePref, SAFE_VP_MAX, SAFE_VP_STEP,
-         readGameLocaleFollow, writeGameLocaleFollow } from '../settings/LauncherPrefs';
+         readGameLocaleFollow, writeGameLocaleFollow,
+         GameDisplayPref, readGameDisplay, writeGameDisplay, readAppliedGameDisplay,
+         GAME_EDGE_MIN, GAME_EDGE_MAX, GAME_SCALE_MIN, GAME_SCALE_MAX, GAME_SCALE_STEP,
+         GAME_EDGE_FACTORY, GAME_SCALE_FACTORY } from '../settings/LauncherPrefs';
+/* ⭐ 写游戏自己的 settings.bin（异形屏避让 / UI 缩放）。格式与判据见那个文件。 */
+import { applyGameDisplay } from '../games/GameSettings';
 /* ⭐ 「设备语言 → 游戏认得的那个值」的翻译（值必须是游戏认的，见那个文件）。 */
 /* 异形屏探测（挖孔 / 刘海）。⛔ 游戏画面不归它管，只用于启动器自己的界面。 */
 import { SafeInsets, detectInsets, uniformOf, edgesOf, dumpSafeArea } from '../utils/SafeArea';
@@ -445,6 +450,16 @@ export struct LauncherHome {
   @State storageBusy: boolean = false;
   /* ⭐ 游戏语言是否跟随系统。⛔ 出厂 `true` —— 这不是偏好，是**修缺陷**（见 LauncherPrefs 那段）。 */
   @State gameLocaleFollow: boolean = true;
+  /** 游戏内的两个显示值（写进游戏自己的 settings.bin）。出厂 = 游戏的默认值，见 LauncherPrefs。 */
+  @State gameEdge: number = GAME_EDGE_FACTORY;
+  @State gameScale: number = GAME_SCALE_FACTORY;
+  /** 写失败时给玩家看的一句话（成功时为空）。 */
+  @State gameDisplayNote: string = '';
+  /** 上一次尝试过的那组「数据目录 + 两个值」。
+   * ⛔ 承重，别删：`refresh()` 被调用得很勤（切页签、切版本…），而 `applyGameDisplay` 要
+   *    **读并解析整个 settings.bin**。没有这个缓存，每次刷新都白读一次文件 ——
+   *    这正是本项目为「诊断/维护动作拖慢界面」付过代价的那一类。 */
+  private gameDisplayTried: string = '';
   /** 探针的原始结论 / 切换结果。⛔ 原样显示，别改写探针的话。 */
   @State storageNote: string = '';
 
@@ -1411,6 +1426,38 @@ export struct LauncherHome {
    * ⭐ 与 `EntryAbility.onCreate` / `Index.ets` 启动前那两处**算的是同一套输入**
    *    （当前粒度 + 当前解析到的游戏），所以三处写出来的内容一致。
    * ⚠️ 它自己吞掉异常 —— 与那两处一样，绝不因为写不了桥而拦住什么。 */
+  /* 滑条松手：存偏好，并**立刻**把值写进游戏那份 settings.bin。
+   * ⚠️ 只有松手才写（`End` / `Click`）—— 拖动中每次变化都写盘会写上百次，而这是块闪存。
+   *    同 `writeSafePref` 那条既有规矩。 */
+  private saveGameDisplay(): void {
+    const p: GameDisplayPref = { edge: this.gameEdge, scale: this.gameScale };
+    writeGameDisplay(this.filesDir, p);
+    this.gameDisplayTried = '';        /* 值变了 ⇒ 让下面那个缓存失效，立刻重算一次 */
+    this.applyGameDisplayNow();
+  }
+
+  /* 把当前偏好落进游戏那份 settings.bin。
+   * ⛔ 目标是**游戏真正在读的那个数据目录**（`resolveGameDataDir`），不是沙箱也不是「当前根」
+   *    —— 隔离开着时每个版本各一份 settings.bin，写错地方等于没写。 */
+  private applyGameDisplayNow(): void {
+    const dataDir: string = resolveGameDataDir(this.granularity, this.resolution.source,
+                                              this.resolution.path, this.bundledJar());
+    const pref: GameDisplayPref = { edge: this.gameEdge, scale: this.gameScale };
+    /* ⭐ 缓存键里**带上 dataDir**：换版本 / 换粒度 / 换存储根都会指到另一个 settings.bin，
+     *    而那一次必须重新尝试写入。 */
+    const key: string = dataDir + '|' + String(pref.edge) + '|' + String(pref.scale);
+    if (key === this.gameDisplayTried) {
+      return;
+    }
+    this.gameDisplayTried = key;
+    const note: string = applyGameDisplay(dataDir, this.filesDir, pref,
+                                          readAppliedGameDisplay(this.filesDir));
+    /* ⚠️ 只在**出错**时给提示 —— 成功是常态，不该在界面上说话。 */
+    if (note !== this.gameDisplayNote) {
+      this.gameDisplayNote = note;
+    }
+  }
+
   private rewriteBridge(): void {
     try {
       const k: GameDirForKey = resolveGameDirAndKey(this.granularity, this.resolution.source,
@@ -1481,6 +1528,16 @@ export struct LauncherHome {
      *    ⭐ 真需要看游戏那份写的是什么，`storage_state.txt` 里每个数据目录都有 `locale=` 一行
      *      （`dumpDataDirs` → `settingsLocaleIn`），那条路才是排查用的。 */
     this.gameLocaleFollow = readGameLocaleFollow(this.filesDir);
+    /* ⭐ 游戏内显示：先读偏好，再落进游戏（`applyGameDisplayNow` 自己有缓存，重复调用很便宜）。
+     * ⚠️ 必须在 `dataDir` 解得出来之后 —— 它内部要算同一件事。所以放在这一段的**末尾**。 */
+    /* 游戏内显示：读偏好 + 落进游戏。⚠️ 排在 `dataDir` 之后（上面刚解出来）。 */
+    {
+      const gd: GameDisplayPref = readGameDisplay(this.filesDir);
+      if (gd.edge !== this.gameEdge) { this.gameEdge = gd.edge; }
+      if (gd.scale !== this.gameScale) { this.gameScale = gd.scale; }
+      this.applyGameDisplayNow();
+    }
+
     /* 「开关拨过去了、数据没过去」。判据是两条**都**成立：① 隔离开着；② **蓝图 / 自制地图
      * 只在未隔离那棵树里**（那说明玩家一直在用的是未隔离那一份，而游戏现在读的是隔离目录）。
      *
@@ -5577,6 +5634,102 @@ export struct LauncherHome {
         .width('100%').padding(16)
         .backgroundColor($r('app.color.launcher_card'))
         .borderRadius(CARD_RADIUS_VP)
+        .margin({ top: 8 })
+
+        /* ================= 游戏内显示 ================= */
+        /* ⭐ 2026-10-04 用户要的：「对游戏内的异形屏适配以及 UI 缩放做出调整，启动器默认帮用户
+         * 调好（空存档），已有设置不覆盖」。
+         *
+         * ⛔ 这两行改的不是启动器，是**游戏自己的 `settings.bin`** —— 理由与格式见 `GameSettings.ets`。
+         * ⭐ 但**默认值就是游戏的默认值**（边距 0、缩放 100 = 什么都不改变），因为合适的数值
+         *    取决于真机上游戏 HUD 与挖孔的位置关系，而我**看不到屏幕**。
+         *    ⇒ 给他两个滑条去试；试出合适的数之后把那两个数改成 `LauncherPrefs` 的出厂值，
+         *      后面的人就自动调好了。⛔ 别在这里编一个数 —— 那会让游戏界面看起来像坏了，
+         *      而玩家不知道是谁弄的。 */
+        Text('游戏内显示')
+          .fontSize(13).fontColor($r('sys.color.font_secondary'))
+          .width('100%')
+          .margin({ top: 20 })
+        Column() {
+          Row() {
+            Column() {
+              Text('异形屏避让')
+                .fontSize(14).fontColor($r('sys.color.font_primary'))
+              Text('游戏里界面四周留出的空隙（' + String(this.gameEdge) + '）')
+                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                .margin({ top: 4 })
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+          }
+          .width('100%')
+          Slider({
+            value: this.gameEdge,
+            min: GAME_EDGE_MIN,
+            max: GAME_EDGE_MAX,
+            step: 1,
+            style: SliderStyle.OutSet
+          })
+            .width('100%')
+            .margin({ top: 6 })
+            .onChange((v: number, mode: SliderChangeMode) => {
+              const nv: number = Math.round(v);
+              if (nv === this.gameEdge || (mode !== SliderChangeMode.End && mode !== SliderChangeMode.Click)) {
+                this.gameEdge = nv;      /* 拖动中只改界面上的数，不写盘 */
+                return;
+              }
+              this.gameEdge = nv;
+              this.saveGameDisplay();
+            })
+
+          Row() {
+            Column() {
+              Text('UI 缩放')
+                .fontSize(14).fontColor($r('sys.color.font_primary'))
+              Text('游戏界面的整体大小（' + String(this.gameScale) + '%）')
+                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                .margin({ top: 4 })
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+          }
+          .width('100%')
+          .margin({ top: 18 })
+          Slider({
+            value: this.gameScale,
+            min: GAME_SCALE_MIN,
+            max: GAME_SCALE_MAX,
+            step: GAME_SCALE_STEP,
+            style: SliderStyle.OutSet
+          })
+            .width('100%')
+            .margin({ top: 6 })
+            .onChange((v: number, mode: SliderChangeMode) => {
+              const nv: number = Math.round(v);
+              if (nv === this.gameScale || (mode !== SliderChangeMode.End && mode !== SliderChangeMode.Click)) {
+                this.gameScale = nv;
+                return;
+              }
+              this.gameScale = nv;
+              this.saveGameDisplay();
+            })
+
+          /* ⭐ 这一行**不是**「把标题重说一遍」那种冗余提示（用户为此删过两处），
+           *    它说的是**一条玩家推不出来的规则**：启动器只会在游戏仍是默认值时写入。
+           *    ⛔ 所以留着；但如果哪天它也被判为噪音，删掉它不会影响任何行为。 */
+          Text('只在这个版本的游戏还是默认设置时写入；你在游戏里自己调过就不会被覆盖')
+            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+            .width('100%').margin({ top: 14 })
+          if (this.gameDisplayNote !== '') {
+            Text(this.gameDisplayNote)
+              .fontSize(12).fontColor($r('sys.color.warning'))
+              .width('100%').margin({ top: 6 })
+          }
+        }
+        .width('100%').padding(16)
+        .backgroundColor($r('app.color.launcher_card'))
+        .borderRadius(CARD_RADIUS_VP)
+        .alignItems(HorizontalAlign.Start)
         .margin({ top: 8 })
 
         /* ================= 关于 ================= */

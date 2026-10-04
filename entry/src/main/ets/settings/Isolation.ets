@@ -18,6 +18,8 @@ import { nativeCopyTree } from './StorageRoot';
  *    而 `ModImporter` 谁都不依赖（2026-10-04 查过整张图）。 */
 import { gameDataRoot, gameDataRootFor, nativeListTree,
          STORAGE_MODE_SANDBOX, STORAGE_MODE_EXTERNAL } from './StorageRoot';
+/* ⭐ 解析游戏自己的 settings.bin —— 诊断清单里要报那两个值（异形屏避让 / UI 缩放）。 */
+import { loadGameSettings, intSetting, KEY_EDGE_PADDING, KEY_UI_SCALE } from '../games/GameSettings';
 /* ⭐ 游戏语言：偏好在本文件写进桥，而「设备语言 → 游戏认得的那个值」的翻译在 GameLocale。 */
 import { readGameLocaleFollow } from './LauncherPrefs';
 import { systemGameLocale } from './GameLocale';
@@ -393,6 +395,24 @@ export function settingsLocaleIn(dir: string): string {
   }
 }
 
+/* 游戏那份 `settings.bin` 里「异形屏避让 / UI 缩放」两个值 —— **只给诊断用**。
+ *
+ * ⛔ 为什么非要落成文件：这个功能的写入**只在「值仍是出厂默认」时才发生**，所以全新安装上
+ *    它**什么都不做**（那是对的）—— 于是「读得对不对」在界面与日志上**都看不出来**
+ *    （本应用的 hilog 读不到，而 `stderr.log` 只有 native 的部分）。
+ * ⭐ 这一行把「解析器能不能读懂真文件」变成一个**不用点任何东西就能读到的数**。
+ * ⚠️ `unreadable` 与「读到了 0 / 100」必须分开报 —— 前者是解析器的问题，后者是值本身。
+ *    （`intSetting` 的兜底值用 -1：真值不可能为负，所以 -1 就是「没读到」。） */
+function gameDisplayLine(dir: string): string {
+  const rows = loadGameSettings(dir + '/settings.bin');
+  if (rows === null) {
+    return 'game=unreadable';
+  }
+  return 'game=edge=' + String(intSetting(rows, KEY_EDGE_PADDING, -1))
+       + ' scale=' + String(intSetting(rows, KEY_UI_SCALE, -1))
+       + ' entries=' + String(rows.length);
+}
+
 /* ⭐⭐ 两个根下**每一个**游戏数据目录的清单（每行带文件大小）—— 只给诊断用。
  *
  * ⛔ **为什么必须有它**：外置那棵树在排查里原本是不存在的 —— ArkTS 的 fileIo 在那个文件夹上
@@ -439,7 +459,8 @@ export function dumpDataDirs(filesDir: string): string {
          + '  entries=' + arktsEntryCount(root + GAME_DATA_SUFFIX)
          + ' saves=' + arktsEntryCount(root + GAME_DATA_SUFFIX + '/saves')
          + ' schematics=' + arktsEntryCount(root + GAME_DATA_SUFFIX + '/schematics') + '\n'
-         + '  locale=' + settingsLocaleIn(root + GAME_DATA_SUFFIX) + '\n';
+         + '  locale=' + settingsLocaleIn(root + GAME_DATA_SUFFIX) + '\n'
+         + '  ' + gameDisplayLine(root + GAME_DATA_SUFFIX) + '\n';
     /* ② 每一个隔离键那一份。⚠️ 键用 native 列 —— ArkTS 的 `fs` 在外部根上不一定读得到，
      *    而「读不到」与「没有」在这里长得一模一样，正是要避免的那种混淆。 */
     const keysRaw: string = nativeListTree(root + INSTANCES_SUBDIR, 1);
