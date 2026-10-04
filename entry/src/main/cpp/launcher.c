@@ -335,7 +335,13 @@ static void resolve_user_home(char *out, size_t outlen)
  *    这里只做**形状**校验，不重做翻译 —— 那份知识（游戏认哪些 locale）在 ArkTS 那边。
  * ⚠️ 空串 ⇒ 两个选项都留 NULL、由末尾那次压缩丢掉，**行为与本功能存在之前逐字节相同**。 */
 static char opt_language[32];
-static char opt_country[16];
+/* ⛔⛔ **32，不是 16 —— 16 让这个功能【完全失效】，而它一声不响。**
+ *    实测踩到：`-Duser.country=` 这个前缀本身 **15 个字符**，加 `CN` 再加结尾 NUL 需要 18。
+ *    给 16 ⇒ `SDL_snprintf` **静默截断**成 `-Duser.country=`（值被切掉）⇒ JVM 收到一个国家为空的
+ *     locale ⇒ `Locale("zh","")` ⇒ 游戏找 `bundle_zh.properties`（**不存在**）⇒ 落到英文根包。
+ *    ⇒ 中文设备上照样是英文，而**日志看起来一切正常**（那句 `locale: …` 是我自己拼的，不经过缓冲区）。
+ *    ⭐ 判据同 `read_kv` 那条：**缓冲区尺寸写错，症状是「设置没生效」，不是崩溃。** */
+static char opt_country[32];
 
 /* 算出这次启动要给 JVM 的 locale，写进 opt_language / opt_country（空串 = 不设）。
  *
@@ -406,12 +412,24 @@ static void resolve_game_locale(void)
         }
     }
 
-    SDL_snprintf(opt_language, sizeof(opt_language), "-Duser.language=%s", lang);
-    if (country[0] != 0) {
-        SDL_snprintf(opt_country, sizeof(opt_country), "-Duser.country=%s", country);
+    /* ⭐ 显式查截断返回值（`SDL_snprintf` 返回「本该写多少个字符」）。
+     *    ⛔ 这不是防御性编程：**上面那个 16 字节的 bug 就是这个类别的**，而它的症状是静默失效。
+     *    校验过的输入（2~3 + `_` + 2）撞不到这个上限，所以这里只该在有人改了校验时响。 */
+    if (SDL_snprintf(opt_language, sizeof(opt_language), "-Duser.language=%s", lang)
+            >= (int) sizeof(opt_language) ||
+        (country[0] != 0 &&
+         SDL_snprintf(opt_country, sizeof(opt_country), "-Duser.country=%s", country)
+            >= (int) sizeof(opt_country))) {
+        SDL_Log("locale: option string would be truncated -- NOT setting the locale");
+        opt_language[0] = 0;
+        opt_country[0] = 0;
+        return;
     }
-    SDL_Log("locale: game language follows the system -- %s%s", lang,
-            country[0] != 0 ? country : "");
+    /* ⚠️ 打**桥里那个原值**（`loc`），不要自己拿 lang+country 拼一个 ——
+     *    第一版就是这么拼的，漏了 `_`，打出来 `zhCN`，**把上面那个截断 bug 藏了一轮**。
+     *    原值同时也证明了「翻译出来的值是什么」。 */
+    SDL_Log("locale: game language follows the system -- %s (-Duser.language=%s%s%s)",
+            loc, lang, country[0] != 0 ? ", -Duser.country=" : "", country);
 }
 
 /* 在 ArkTS 写下的文件里查一行 "key=value"。返回拷贝的字节数（键不存在或文件不可读时为 0），
