@@ -210,19 +210,59 @@ export function usedUserHomeReason(): string {
   }
 }
 
-/** **意图**上的游戏数据根。
- * ⭐ 外置时返回那个已被授权的外部文件夹（`Download/<包名>`，由 `ModImporter` 维护）；路径拿不到
- *    就回退沙箱 —— 那与 native 的「任何失败都回退」是同一条不变量。
- * ⛔ 它**不**回答「游戏现在实际用哪个」：那是 `usedUserHome()`。 */
-export function gameDataRoot(filesDir: string): string {
-  if (readStorageMode(filesDir) !== STORAGE_MODE_EXTERNAL) {
+/** 外置时游戏数据在外部文件夹底下的哪一层。
+ * ⭐ 用户 2026-10-04：「外置的数据存放到 data 文件夹吧」—— 不把游戏数据直接摊在
+ *    `Download/<包名>/` 的根上，让它与 `mods` 之类**并列**，一眼看得出这块是干什么的。
+ * ⛔ **沙箱那一侧不加这一层**：加了就是把所有人现有数据的位置挪走（那是「存档没了」）。 */
+export const EXTERNAL_DATA_SUBDIR: string = '/data';
+
+/** 某个**给定模式**对应的游戏数据根。
+ * ⭐ 与 `gameDataRoot()` 分开是为了让**切换那一次**能同时拿到「从哪」和「到哪」——
+ *    `gameDataRoot()` 读的是已落盘的模式，切换时那个值还是旧的。
+ * ⛔ `mode` 只接受两个已知值；别的一律当沙箱（同 `readStorageMode` 的回退判据）。 */
+export function gameDataRootFor(filesDir: string, mode: string): string {
+  if (mode !== STORAGE_MODE_EXTERNAL) {
     return SANDBOX_ROOT;
   }
   const ext: string = externalRootPath(filesDir);
   if (ext === '') {
     return SANDBOX_ROOT;
   }
-  return ext;
+  return ext + EXTERNAL_DATA_SUBDIR;
+}
+
+/** **意图**上的游戏数据根。
+ * ⭐ 外置时 = 那个已被授权的外部文件夹（`Download/<包名>`，由 `ModImporter` 维护）+ `/data`；
+ *    路径拿不到就回退沙箱 —— 与 native 的「任何失败都回退」是同一条不变量。
+ * ⛔ 它**不**回答「游戏现在实际用哪个」：那是 `usedUserHome()`。 */
+export function gameDataRoot(filesDir: string): string {
+  return gameDataRootFor(filesDir, readStorageMode(filesDir));
+}
+
+/** 确保当前**意图**的那个根真的存在。
+ *
+ * ⛔⛔ **少了这一步，外置第一次用必然回退沙箱。** `launcher.c` 的 `mkdir()` 建 `instances/<键>/…`
+ *    四层，但 **`mkdir` 不建父目录** ⇒ 上面那几层都建不起来，最后那层以 `ENOENT` 失败，
+ *    于是按既有的不变量回退 `DEST_ROOT`、记 `reason=mkdir-failed`。
+ *    ⚠️ 症状会是「切到外置、重启后又回到沙箱」，而原因藏在 native 的日志里、界面上只看到开关自己弹回去。
+ * ⭐ 递归建（`mkdirSync(path, true)`）—— 那一段的父目录（`Download/<包名>`）本身可能也还没建
+ *    （玩家没跑过模组那一套时）。
+ * ⚠️ 失败**不拦**：native 那边还有一道 mkdir + 回退，界面上也有探针。这里尽力而为，只记日志。 */
+export function ensureGameDataRoot(filesDir: string): void {
+  const root: string = gameDataRoot(filesDir);
+  if (root === SANDBOX_ROOT) {
+    return;                        /* 沙箱一直存在，不必（也不该）在这里建 */
+  }
+  try {
+    if (!fs.accessSync(root)) {
+      fs.mkdirSync(root, true);
+      hilog.info(DOMAIN, TAG, 'storage: created %{public}s', root);
+    }
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'storage: could not create %{public}s (%{public}s)',
+               root, err.message);
+  }
 }
 
 /* ====================================================================

@@ -272,6 +272,12 @@ export function setGameDataRoot(root: string): void {
   GAME_DATA_ROOT = (root === '' ? NATIVE_FILES : root);
 }
 
+/** **当前**的游戏数据根。⭐ 给「判断某个记下来的绝对路径还算不算数」用 ——
+ * 见 `SaveVault.vaultRestore()`：垃圾站记的是**删除时**的绝对路径，而根是可以换的。 */
+export function currentGameDataRoot(): string {
+  return GAME_DATA_ROOT;
+}
+
 /* 隔离根与游戏数据的那一层后缀 —— ⛔ **都必须与 `launcher.c` 里的宏逐字一致**：
  *     ISOLATION_SUBDIR = "/instances"、ISOLATION_SET = "sets/default"，
  *     而 ".local/share/Mindustry" 是 ARC 的 `OS.getAppDataDirectoryString()` 拼出来的。
@@ -404,6 +410,37 @@ export function describeCounts(c: GameDataCounts): string {
  * ⛔⛔ 那份实现里记着**为什么不能用 `fs.copyDirSync`** —— 2026-10-02 的四用例实测证明它在我们的
  * 沙箱里**连一个空目录都复制不了**（`Invalid argument`）。⛔ 别在这里重抄一遍（会分叉）。 */
 
+
+/* 把一个数据根**整个**搬到另一个根。⛔ 只用于「切换存储位置」那一次迁移 ——
+ * ⚠️ 它显式吃两个根（迁移天然同时需要「从哪」和「到哪」），⛔ **不读** `GAME_DATA_ROOT`。
+ *
+ * ⭐⭐ 搬的是**整根**（连 `instances/` 一起），不是只有不隔离那一份：
+ *    隔离开着时玩家的存档在 `instances/<键>/…` 里，只搬 `.local/share/Mindustry`
+ *    会**静默丢掉那几棵树** —— 而「界面上看起来完全正常」正是本项目反复吃亏的地方。
+ * ⚠️ **源永不删**，与 `copyLiveDataInto` 同一条：失败了至少原地还有一份。
+ * ⚠️ 「没有数据可搬」**不算失败**（全新安装第一次就切，走的就是这条）。 */
+export function copyRootInto(fromRoot: string, toRoot: string): string {
+  if (fromRoot === toRoot || fromRoot === '' || toRoot === '') {
+    return '';
+  }
+  if (!gameDataExists(fromRoot)) {
+    hilog.info(DOMAIN, TAG, 'storage: nothing to copy (%{public}s does not exist)', fromRoot);
+    return '';
+  }
+  const acc: TreeStat = newTreeStat();
+  copyTreeInto(fromRoot, toRoot, 0, acc);
+  if (acc.failed > 0) {
+    /* ⚠️ 路径与**第一个**错误都进日志：只报错误码会把排查的第一步推给下一个人。 */
+    hilog.error(DOMAIN, TAG,
+                'storage: root copy had %{public}d failure(s), first: %{public}s (%{public}s -> %{public}s)',
+                acc.failed, acc.firstError, fromRoot, toRoot);
+    return '复制没完成（' + String(acc.failed) + ' 个文件没复制过去）：' + acc.firstError;
+  }
+  hilog.info(DOMAIN, TAG,
+             'storage: copied %{public}d dir(s) / %{public}d file(s) %{public}s -> %{public}s',
+             acc.dirs, acc.files, fromRoot, toRoot);
+  return '';
+}
 
 export function copyLiveDataInto(key: string): string {
   const src: string = liveGameDataDir();

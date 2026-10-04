@@ -237,6 +237,21 @@ static void resolve_user_home(char *out, size_t outlen)
         }
     }
 
+    /* ⭐⭐ **先把根本身建出来。**
+     * ⛔ `mkdir()` **不建父目录**，而外置的根是 `Download/<包名>/data` —— 它下面才是
+     *    `instances/<键>/…`。不先建这一层，下面那几层会以 `ENOENT` 全部失败，
+     *    于是回退 `DEST_ROOT`、记 `reason=mkdir-failed`，症状是「切到外置、重启又回到沙箱」。
+     * ⚠️ ArkTS 那边（`ensureGameDataRoot`）也会建，但**这里也要建**：native 不该假设
+     *    ArkTS 跑过 —— 这条路径在应用启动后第一次跑游戏时就要能用。
+     * ⚠️ 失败即回退（`EEXIST` 不算失败）：建不出根就没有理由继续往下拼。 */
+    if (mkdir(base, 0755) != 0 && errno != EEXIST) {
+        SDL_Log("storage: cannot create root '%s' (errno=%d), falling back to %s",
+                base, errno, DEST_ROOT);
+        SDL_strlcpy(out, DEST_ROOT, outlen);
+        record_user_home("root-mkdir-failed", out);
+        return;
+    }
+
     /* ② 隔离关着 ⇒ 就是根本身。 */
     if (strcmp(enabled, "1") != 0 || key[0] == 0) {
         SDL_strlcpy(out, base, outlen);

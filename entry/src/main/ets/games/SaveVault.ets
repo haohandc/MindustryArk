@@ -12,6 +12,9 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { SaveEntry } from './SaveLibrary';
 import { copyTreeInto, removeTree, newTreeStat, TreeStat, listFiles, sizeOf, pathExists }
   from '../utils/FsTree';
+/* ⭐ 只为了 `currentGameDataRoot()`：垃圾站记的是**删除时**的绝对路径，而数据根是可以换的。
+ * ⛔ 不成环：`Isolation` 只依赖 `FsTree` / `GameLibrary` / `StorageRoot`，不依赖本文件。 */
+import { currentGameDataRoot } from '../settings/Isolation';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
@@ -345,9 +348,23 @@ function isDirName(path: string): boolean {
 export function vaultRestore(entry: VaultEntry, fallbackDir: string): string {
   const dir: string = VAULT_ROOT + '/' + entry.id;
   /* meta 里记着它原来在哪个目录；那个目录已经不在了（比如整个版本被删了）就退到调用方给的
-   * 当前版本目录 —— 总比放不回去强，但要在界面里说出来。 */
+   * 当前版本目录 —— 总比放不回去强，但要在界面里说出来。
+   *
+   * ⛔⛔ **2026-10-04 补的一道判据：那个目录还得在【当前】数据根底下。**
+   *    存储位置可以切到外置，而**源从不删除** ⇒ 切根之后旧路径**依然存在**，
+   *    于是下面 `pathExists` 这一关照样通过、存档被放回**游戏已经不读的那个根**。
+   *    症状是「放回去了，但游戏里看不到」—— 不丢数据，而玩家会以为丢了。
+   * ⚠️ 判据是**前缀**而不是「相等」：`from` 指向的是 `…/Mindustry/saves`，
+   *    比根深好几层（隔离那一份更深）。 */
+  const root: string = currentGameDataRoot();
   let dst: string = entry.from;
-  if (!pathExists(dst)) {
+  const underCurrentRoot: boolean = dst.startsWith(root + '/');
+  if (!underCurrentRoot) {
+    hilog.info(0x0000, 'MindustryLauncher',
+               'vault: %{public}s was deleted from %{public}s, which is not under the current root %{public}s -- restoring to %{public}s instead',
+               entry.id, dst, root, fallbackDir);
+    dst = fallbackDir;
+  } else if (!pathExists(dst)) {
     dst = fallbackDir;
   }
   if (dst === '') {
