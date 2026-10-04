@@ -73,6 +73,24 @@
 # 用法：
 #   bash scripts/make_store_app.sh tablet
 #   bash scripts/make_store_app.sh tools
+#   bash scripts/make_store_app.sh tools --hap
+#
+# ⭐ **两件产物、两个去处**（用户 2026-10-04 定的分工）：
+#
+#     （不给 --hap）  **商店用的 `.app`**：`product=release` + **release 证书**
+#                     ⇒ 只能上传 AppGallery，**装不到自己机器上**。
+#     `--hap`         **本地测试用的 `.hap`**：`product=default`（**debug 证书**）
+#                     ⇒ 可以 `hdc install`。
+#
+#   ⭐ 与 master 完全对称：master 上 `deploy.sh` 出 HAP 做测试、
+#      `make_store_app.sh tablet` 出 `.app` 做上架。lite 这里只是把两者
+#      收进了同一个脚本，因为**「包形状」这件事只有本脚本能改**
+#      （见上面第 4 条：hvigor 没有按 product 分的 module.json5）。
+#
+#   ⛔⛔ **两种形态都必须经过 `entry/libs/` 的挪走/挪回**。少了那一步，
+#      出来的就是带 JDK 的完整包 —— 而它在手机上「装得上」，于是这次
+#      测试会安静地测错东西（用户 2026-10-04 报的正是这个观感：
+#      「开关失效了，给我装了个带 jdk 的上去」）。
 #
 # ⚠️ 而且 module.json5 的 deviceTypes 里仍列着 "phone" -- 同样是有意为之。
 #    deviceTypes 在安装时就会被强制检查，不只是在列表展示时，所以从
@@ -93,13 +111,31 @@
 # 自己声称哪些平台的地方，不应该让一个默认值
 # 来回答这个问题。
 #
-# 输出：dist/store/MindustryArk-<version>-<mode>.app
+# 输出：dist/store/<名字>-<版本>-<mode>.app     （缺省）
+#       dist/<名字>-<版本>-<mode>-hap.hap       （--hap）
 
 set -o pipefail
 cd "$(dirname "$0")/.." || exit 1
 export MSYS_NO_PATHCONV=1
 
 MODE="${1:-}"
+
+# 第二个参数决定【产物形态】。⛔ 它**不改包内容** —— 改的只是签名与容器：
+#   包形状由 MODE（权限注入 + deviceTypes）+ `entry/libs/` 的挪走决定，
+#   两者与 KIND 无关。所以 KIND 只影响「拿哪个产物出来、放哪里」。
+case "${2:-}" in
+    "")     KIND=app ;;
+    --hap)  KIND=hap ;;
+    *)
+        echo "usage: bash scripts/make_store_app.sh <mode> [--hap]" >&2
+        echo >&2
+        echo "  --hap   build a sideload-able debug HAP instead of the store .app." >&2
+        echo "          Same package shape (the runtime is stashed either way);" >&2
+        echo "          only the signing config and the container differ." >&2
+        exit 2
+        ;;
+esac
+
 case "$MODE" in
     tablet)
         WANT_PERM=yes; WANT_DEVICES='["tablet", "2in1"]'; STASH_LIBS=no
@@ -126,13 +162,16 @@ case "$MODE" in
         exit 2
         ;;
     *)
-        echo "usage: bash scripts/make_store_app.sh tablet|tools" >&2
+        echo "usage: bash scripts/make_store_app.sh tablet|tools [--hap]" >&2
         echo >&2
         echo "  tablet  tablet + 2in1, WITH the executable-memory ACL (JIT)." >&2
         echo "          The full package: JVM and game included." >&2
         echo "  tools   phone + tablet + 2in1, NO ACL. A management tool with no" >&2
-        echo "          JVM and no game (~8 MB instead of ~266 MB)." >&2
+        echo "          JVM and no game (~4 MB instead of ~187 MB)." >&2
         echo "          ⛔ Ark Launcher (the lite branch) only -- refused here otherwise." >&2
+        echo >&2
+        echo "  --hap   produce a debug-signed HAP you can install on your own device," >&2
+        echo "          instead of the release-signed .app that only AppGallery accepts." >&2
         echo >&2
         echo "The mode is required: it is where the package says out loud which" >&2
         echo "platforms it claims, and a default should not be allowed to answer that." >&2
@@ -184,7 +223,22 @@ if [ "$MODE" = tools ]; then
 fi
 MODJSON="entry/src/main/module.json5"
 PERM="ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY"
-BUILT_APP="build/outputs/release/MindustryArk-release-signed.app"
+# ⛔⛔ **产物名不能写死。** hvigor 把**工程目录名**拼进它：
+#    实测 目录 `MindustryArk` → `MindustryArk-release-signed.app`；
+#    而 lite 是用 git worktree 检出的，目录叫 `MindustryArk-lite`
+#    ⇒ 产物叫 `MindustryArk-lite-release-signed.app`，多一截 `-lite`。
+#
+#    2026-10-04 用户报「拆分包体开关失效」，根因就是这里那一行写死的路径：
+#    tools 构建**造出了正确的 3.6 MB 包、`verify_hap.py` 也 PASS**，
+#    然后因为找不到那个写死的文件而 `exit 1`，**把包丢掉了**。
+#    ⇒ 手上没有可分发的产物，只能走 `deploy.sh`，而那是带 JDK 的完整包。
+#
+# ⛔ 修法**不是**把它改成 `MindustryArk-lite` —— 那是同一个 bug 换一个写死的值，
+#    下次克隆进别的目录名照样坏。改成**按产品目录去找**（只 glob，
+#    不复述 hvigor 的命名规则）。
+APP_DIR="build/outputs/release"
+APP_GLOB="$APP_DIR/*-release-signed.app"
+BUILT_APP=""
 OUTDIR="dist/store"
 # 文件名带版本，与 dist/ 里的其他产物一致（HAP 与 payload 都带版本）。
 # 以前不带：商店包在同一目录里靠"只有一个"来区分，一旦两个版本并存，
@@ -193,6 +247,28 @@ OUTDIR="dist/store"
 # 不在这里手写，免得像别处手抄的版本号那样悄悄过期。
 ARTIFACT="$("${PY[@]}" -c 'import sys;sys.path.insert(0,"scripts");import config;print(config.ARTIFACT_NAME)')" || exit 1
 OUTAPP="$OUTDIR/$ARTIFACT-$MODE.app"
+# `--hap` 的产物：**按名字取**，不用 glob —— 这个文件名由 entry/build-profile.json5
+# 的 artifactName 决定，而它已经被 verify_hap.py 与 build-profile 的三方一致性闸门钉住。
+#
+# ⭐⭐ **`product=default` + `buildMode=release`**，这一对是**故意的**，两半各管一件事：
+#     `product=default`  ⇒ signingConfig "default" = DevEco 那套**按工程路径**生成的
+#                           **调试证书** ⇒ 签出来的 HAP **可以侧载**。
+#     `buildMode=release` ⇒ 原生库**按商店包那样 strip 与优化**。
+#   ⭐ 这正是 `scripts/install_repro.sh` 文件头写下的配方（"变量完全相同
+#      （release buildMode、剥离的原生库），但用 debug 证书签名，因此可以侧载"）——
+#      那次是为了复现商店评论里的崩溃，所以它已经是本仓验证过的做法。
+#
+#   ⛔ 为什么不用 `buildMode=debug`：`entry/build-profile.json5` 的 release 档
+#      把 `debugSymbol.strip` 打开，debug 档关着 ⇒ 产物从 ~3.8 MB 涨到 **9.2 MB**，
+#      而体积闸门的上限是 10 MB ⇒ 只剩 8% 余量，一条「该不该报」的闸门
+#      变成了一条**边界值**检查（本项目有「每次都报 FAIL 的检查等于没有检查」的老账，
+#      反过来「贴着上限过」也一样没用）。
+#   ⛔ 更重要的：**商店包就是 release 档**。拿 debug 档的原生库去测，
+#      测的不是要上架的那个东西。
+#   ⛔ 也别改成 `product=release`：那会变成装不上的包，
+#      而它在别的方面**完全一样**，所以这个错误从产物上看不出来。
+HAP_OUT="entry/build/default/outputs/default/$ARTIFACT.hap"
+OUTHAP="dist/$ARTIFACT-$MODE-hap.hap"
 BACKUP="${TEMP:-/tmp}/module.json5.pre-store"
 
 # tools 模式把 entry/libs/arm64-v8a/ 挪到这里。
@@ -205,7 +281,7 @@ STASH_DIR=".tools-stash"
 STASHED_SIG=""
 LIBS_DIR="entry/libs/arm64-v8a"
 
-echo "############ store build: mode = $MODE ############"
+echo "############ store build: mode = $MODE, artifact = $([ "$KIND" = hap ] && echo 'debug .hap (for your own device)' || echo 'release .app (for the store)') ############"
 echo "   permission $PERM: $([ "$WANT_PERM" = yes ] && echo INJECTED || echo absent)"
 echo "   deviceTypes: $WANT_DEVICES"
 echo "   entry/libs/arm64-v8a: $([ "$STASH_LIBS" = yes ] && echo 'STASHED during the build' || echo kept)"
@@ -442,37 +518,81 @@ if [ "$STASH_LIBS" = yes ]; then
     fi
 fi
 
-bash build.sh assembleApp --mode project -p product=release -p buildMode=release --no-daemon > /tmp/store_app.log 2>&1
-if [ $? -ne 0 ] || ! grep -q "BUILD SUCCESSFUL" /tmp/store_app.log; then
-    grep -Ei "BUILD (SUCCESSFUL|FAILED)" /tmp/store_app.log | head -1
+# 先删掉上一次的产物。理由与 deploy.sh 删旧 HAP 那段相同：留着旧包的话，
+# 一次「报成功、但其实什么都没写」的构建会让下面那个 glob 捡到**上一次的**
+# 包 —— 而「不要拿旧的当新的」正是本脚本存在的一半理由。
+# （匹配不到时 `rm -f` 是静默的，所以目录还不存在也不会在这里报错。）
+BUILD_LOG="${TEMP:-/tmp}/store_app.log"
+if [ "$KIND" = hap ]; then
+    # 只删这一个文件，不整目录：debug 的中间产物留着可以增量，快得多；
+    # 而这个 HAP 是**按名字**取回来的，不会有捡到旧文件的问题。
+    rm -f "$HAP_OUT"
+    BUILD_ARGS=(assembleHap --mode module -p product=default -p buildMode=release --no-daemon)
+else
+    rm -f "$APP_DIR"/*-release-signed.app "$APP_DIR"/*-release-unsigned.app
+    BUILD_ARGS=(assembleApp --mode project -p product=release -p buildMode=release --no-daemon)
+fi
+
+bash build.sh "${BUILD_ARGS[@]}" > "$BUILD_LOG" 2>&1
+if [ $? -ne 0 ] || ! grep -q "BUILD SUCCESSFUL" "$BUILD_LOG"; then
+    grep -Ei "BUILD (SUCCESSFUL|FAILED)" "$BUILD_LOG" | head -1
     echo "!! build failed -- tail of the log:" >&2
-    tail -25 /tmp/store_app.log >&2
+    tail -25 "$BUILD_LOG" >&2
     exit 1
 fi
-grep -Ei "BUILD (SUCCESSFUL|FAILED)" /tmp/store_app.log | head -1
+grep -Ei "BUILD (SUCCESSFUL|FAILED)" "$BUILD_LOG" | head -1
 
 # ---------------------------------------------------------------------------
-# 2b. 以带模式名的名字另存一份
+# 2b. 把产物拿出来
 #
-# hvigor 每个 product 只写一个固定路径，所以构建第二个模式会
-# 覆盖第一个 -- 而这两个包只靠一个在文件列表里看不见的
-# 权限来区分。在这里改名意味着两者可以同时存在，
-# 文件名也能说明哪个是哪个。
+# **`.app`（缺省）**：hvigor 每个 product 只写一个固定路径，所以构建第二个
+#   模式会覆盖第一个 —— 而这两个包只靠一个在文件列表里看不见的
+#   权限来区分。在这里改名意味着两者可以同时存在，文件名也能说明哪个是哪个。
 #
-# 是拷贝不是移动：下面的闸门要读 $BUILT_APP，闸门失败时应该
+# **`.hap`（--hap）**：名字是确定的（见 $HAP_OUT 的注释），所以按名字取。
+#   它落在 `entry/build/default/outputs/default/`，与 `deploy.sh` 用的是同一个位置。
+#
+# 两者都是拷贝不是移动：下面的闸门要读产物，闸门失败时应该
 # 让构建树保持 hvigor 留下的样子。
 # ---------------------------------------------------------------------------
 echo
-echo "############ keeping the artifact as $ARTIFACT-$MODE.app ############"
-if [ ! -f "$BUILT_APP" ]; then
-    echo "!! the build reported success but there is no .app at $BUILT_APP" >&2
-    echo "!! do not go looking for an older one -- that is how a stale package gets" >&2
-    echo "!! uploaded. Check the build log above." >&2
-    exit 1
+if [ "$KIND" = hap ]; then
+    echo "############ keeping the artifact as $ARTIFACT-$MODE-hap.hap ############"
+    if [ ! -f "$HAP_OUT" ]; then
+        echo "!! the build reported success but there is no HAP at $HAP_OUT" >&2
+        echo "!! check artifactName in entry/build-profile.json5 and config.ARTIFACT_NAME" >&2
+        echo "!! (verify_hap.py asserts those agree, so one of them just moved)." >&2
+        exit 1
+    fi
+    mkdir -p "$(dirname "$OUTHAP")"
+    cp -f "$HAP_OUT" "$OUTHAP"
+    echo "   $OUTHAP"
+else
+    echo "############ keeping the artifact as $ARTIFACT-$MODE.app ############"
+    # 产物名由 hvigor 拼（含工程目录名），所以这里去找，而不是复述它。
+    # ⚠️ 上面构建之前已经把旧产物删了，所以 glob 命中的只可能是**这一次**写出来的。
+    for f in $APP_GLOB; do
+        [ -f "$f" ] || continue
+        if [ -n "$BUILT_APP" ]; then
+            echo "!! more than one *-release-signed.app under $APP_DIR:" >&2
+            echo "!!   $BUILT_APP" >&2
+            echo "!!   $f" >&2
+            echo "!! refusing to guess which one this build wrote." >&2
+            exit 1
+        fi
+        BUILT_APP="$f"
+    done
+    if [ -z "$BUILT_APP" ]; then
+        echo "!! the build reported success but it wrote no *-release-signed.app" >&2
+        echo "!! under $APP_DIR -- do not go looking for an older one; that is how a" >&2
+        echo "!! stale package gets uploaded. Check the build log above." >&2
+        exit 1
+    fi
+    echo "   artifact: $BUILT_APP"
+    mkdir -p "$OUTDIR"
+    cp -f "$BUILT_APP" "$OUTAPP"
+    echo "   $OUTAPP"
 fi
-mkdir -p "$OUTDIR"
-cp -f "$BUILT_APP" "$OUTAPP"
-echo "   $OUTAPP"
 
 # ---------------------------------------------------------------------------
 # 2c. 签名到底有没有真的被附加？
@@ -489,7 +609,16 @@ echo "   $OUTAPP"
 #
 # 如果签名配置缺失或错误，hvigor 仍然会成功，并且仍然
 # 写出一个叫 "-signed" 的文件 -- 这正是本检查要抓的失败。
+#
+# ⚠️ 只对 `.app` 做：hvigor 对 HAP 也用同样的「相邻两个变体差分」写法，
+#    但那两个文件名是 `X.hap` / `X-unsigned.hap`，不是 `-signed.app` 那套，
+#    这里的推导对不上。`--hap` 下跳过并**说出来**，而不是安静地不做 ——
+#    一个每次都报 OK 的检查等于没有检查（本项目的老账）。
 # ---------------------------------------------------------------------------
+if [ "$KIND" = hap ]; then
+    echo "   (--hap: the .app signature check does not apply; the HAP's own signing"
+    echo "    config is what makes it sideload-able, and 'hdc install' is the test)"
+else
 UNSIGNED_APP="${BUILT_APP%-signed.app}-unsigned.app"
 if [ -f "$UNSIGNED_APP" ]; then
     SZ_SIGNED=$(wc -c < "$BUILT_APP")
@@ -507,6 +636,7 @@ if [ -f "$UNSIGNED_APP" ]; then
     echo "   signature present: +$((SZ_SIGNED - SZ_UNSIGNED)) B over the unsigned variant"
 else
     echo "   (no -unsigned variant to compare against; the signature is not verified)" >&2
+fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -526,7 +656,30 @@ fi
 #      tools  ⇒ **必须没有**。这个模式不带 JVM，也就不需要它；
 #               而一旦声明了它，包又会掉回「手机上装不了」--
 #               把这个模式的意义整个抵消掉。
+#
+# ⚠️ `--hap` 跳过这一节，理由不是"不适用"，而是**同一件事已经查过了**：
+#    这一节的输入是 `.app` 里嵌的那份 `module.json`，而 HAP 里是**同一个文件**；
+#    而带 `ARK_FORM=tools` 的 `verify_hap.py` 在构建里已经跑过、并断言了
+#    「`libs/` 下只有那 7 个库」+「产物 < 10 MB」。
+#    `--hap` 分支下面会把那次的结果**再打一遍**，这样"查过了"是看得见的，
+#    而不是靠读者相信。
 # ---------------------------------------------------------------------------
+if [ "$KIND" = hap ]; then
+    echo
+    echo "############ gate (HAP): what verify_hap.py said during the build ############"
+    # 它就在构建日志里（hvigorfile.ts 的 stdio: 'inherit'）。
+    # ⛔ 这里**不是**在重新验证，是在把已经发生过的验证显示出来。
+    sed -n '/^== form: /,/^RESULT: /p' "$BUILD_LOG" | sed 's/^/   /'
+    if ! grep -q "^RESULT: PASS" "$BUILD_LOG"; then
+        echo "!! verify_hap.py did not report PASS for this HAP -- do not install it." >&2
+        exit 1
+    fi
+    GATE_RC=0
+    echo
+    echo "   $OUTHAP"
+    echo "   size $(wc -c < "$OUTHAP") B"
+    echo "   sha256 $(sha256sum "$OUTHAP" | cut -c1-64)"
+else
 echo
 echo "############ gate: the ARTIFACT has the shape mode=$MODE requires ############"
 "${PY[@]}" - "$BUILT_APP" "$PERM" "$WANT_PERM" "$WANT_DEVICES" "$MODE" <<'PYEOF'
@@ -629,6 +782,7 @@ print("   size %d B" % os.path.getsize(app))
 print("   sha256 %s" % hashlib.sha256(open(app, "rb").read()).hexdigest())
 PYEOF
 GATE_RC=$?
+fi
 
 # ---------------------------------------------------------------------------
 # 4. 把 manifest 放回去，并说明这件事
@@ -644,33 +798,54 @@ fi
 
 echo
 if [ "$GATE_RC" -eq 0 ]; then
-    echo "############ OK -- upload this file ############"
-    echo "   $OUTAPP"
-    echo
-    if [ "$MODE" = tools ]; then
-        echo "   phone + tablet + 2in1, NO executable-memory ACL."
-        echo "   This package carries no JVM and no game, so there is nothing in it"
-        echo "   that needs a permission phones cannot be granted -- which is the"
-        echo "   whole reason this mode exists."
+    if [ "$KIND" = hap ]; then
+        echo "############ OK -- install this on your own device ############"
+        echo "   $OUTHAP"
         echo
-        echo "   ⚠️ It CANNOT run games. It manages saves and data packs. Do not"
-        echo "   advertise it as the game."
+        echo "   Signed with the DEBUG certificate (product=default), so it IS sideload-able."
+        echo "   Package shape is the same as the store .app for this mode:"
+        echo "   $([ "$WANT_PERM" = yes ] && echo 'the executable-memory ACL IS injected' || echo 'no executable-memory permission, deviceTypes include phone')."
+        echo
+        echo "   ⚠️ Do NOT use 'bash deploy.sh' to install it -- that script builds its own"
+        echo "   HAP (with the runtime) and runs 'hdc uninstall' first, which wipes the"
+        echo "   app's data. Install this file directly:"
+        echo
+        echo "       hdc install -r $OUTHAP"
+        echo
+        echo "   ⚠️ 'install -r' still replaces the installed app; export saves first if"
+        echo "   you care about them."
     else
-        echo "   tablet + 2in1, WITH the executable-memory ACL."
-        echo "   Needs the Release Profile that carries that ACL entry."
-        echo "   Phones are deliberately NOT covered: the ACL cannot reach them and the"
-        echo "   interpreted fallback does not save them, so a phone package would install"
-        echo "   and never start. Self-signed installs are how phones are served."
-        echo "   ⭐ For a phone-installable package, use: bash scripts/make_store_app.sh tools"
-    fi
-    echo
-    echo "   Signed with the RELEASE certificate, so it cannot be sideloaded and"
-    echo "   cannot be tested on your own hardware. Same constraint as 2.10/2.11."
-    if [ "$MODE" != tools ]; then
-        echo "   ⚠️ Which means the ACL is UNVERIFIED until it is in the store: if the"
-        echo "   grant does not take effect the app still runs, just interpreted -- so a"
-        echo "   failed ACL looks like a slow tablet and nothing else. The launcher log"
-        echo "   line to look for is 'executable memory works (probe=42)'."
+        echo "############ OK -- upload this file ############"
+        echo "   $OUTAPP"
+        echo
+        if [ "$MODE" = tools ]; then
+            echo "   phone + tablet + 2in1, NO executable-memory ACL."
+            echo "   This package carries no JVM and no game, so there is nothing in it"
+            echo "   that needs a permission phones cannot be granted -- which is the"
+            echo "   whole reason this mode exists."
+            echo
+            echo "   ⚠️ It CANNOT run games. It manages saves and data packs. Do not"
+            echo "   advertise it as the game."
+            echo
+            echo "   ⭐ To try this shape on your own device, build the same shape as a"
+            echo "      sideload-able HAP:  bash scripts/make_store_app.sh $MODE --hap"
+        else
+            echo "   tablet + 2in1, WITH the executable-memory ACL."
+            echo "   Needs the Release Profile that carries that ACL entry."
+            echo "   Phones are deliberately NOT covered: the ACL cannot reach them and the"
+            echo "   interpreted fallback does not save them, so a phone package would install"
+            echo "   and never start. Self-signed installs are how phones are served."
+            echo "   ⭐ For a phone-installable package, use: bash scripts/make_store_app.sh tools"
+        fi
+        echo
+        echo "   Signed with the RELEASE certificate, so it cannot be sideloaded and"
+        echo "   cannot be tested on your own hardware. Same constraint as 2.10/2.11."
+        if [ "$MODE" != tools ]; then
+            echo "   ⚠️ Which means the ACL is UNVERIFIED until it is in the store: if the"
+            echo "   grant does not take effect the app still runs, just interpreted -- so a"
+            echo "   failed ACL looks like a slow tablet and nothing else. The launcher log"
+            echo "   line to look for is 'executable memory works (probe=42)'."
+        fi
     fi
 else
     echo "############ GATE FAILED -- do not upload ############" >&2
