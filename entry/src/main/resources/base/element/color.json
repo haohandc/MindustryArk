@@ -19,6 +19,10 @@
     {
       "name": "launcher_bar",
       "value": "#F2FFFFFF"
+    },
+    {
+      "name": "danger",
+      "value": "#E84026"
     }
   ]
 }

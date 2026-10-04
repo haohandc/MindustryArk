@@ -16,6 +16,7 @@ import { bundleManager, common } from '@kit.AbilityKit';
 import { appLabel } from '../utils/AppLabel';
 import { newTreeStat, copyTreeInto, removeTree, TreeStat, isDir, pathExists } from '../utils/FsTree';
 import { externalRootPath } from '../settings/StorageRoot';
+import { fileIo as fs } from '@kit.CoreFileKit';
 import { picker } from '@kit.CoreFileKit';
 import { fileUri } from '@kit.CoreFileKit';
 import {
@@ -407,6 +408,8 @@ export struct LauncherHome {
     if (this.showDeleteAsk) { this.showDeleteAsk = false; return true; }
     /* 清空垃圾站的确认框。⚠️ 与上面那些同理 —— 一个能永久删东西的窗必须能被返回键关掉。 */
     if (this.showVaultClearAsk) { this.showVaultClearAsk = false; return true; }
+    /* 删除版本的确认窗。⚠️ 与上面同理：一个会真删东西的窗必须能被返回键关掉。 */
+    if (this.showGameDeleteAsk) { this.showGameDeleteAsk = false; return true; }
     if (this.transferOp !== '') { this.transferOp = ''; this.transferNote = ''; return true; }
     if (this.isolationConfirm !== '') { this.isolationConfirm = ''; return true; }
     if (this.showIsolationAsk) {
@@ -455,6 +458,20 @@ export struct LauncherHome {
    * ⛔⛔ 这个动作**不可逆**（`vaultPurge` 是真删，不是搬去别处）⇒ 必须过确认，
    *     和单个存档的删除走同一条规矩（那边的理由见 `showDeleteAsk`）。 */
   @State showVaultClearAsk: boolean = false;
+
+  /* 「删除这个版本」的确认窗开着没有。
+   * ⛔ 它与存档那个删除**不是一回事**：存档是搬进垃圾站（能找回），这里两个选项都是**真删**，
+   *     而「连数据一起删」还可能连带别的版本（见 `otherVersionsOnSelectedDir`）⇒ 必须过确认。 */
+  @State showGameDeleteAsk: boolean = false;
+  /* 要删的是**哪一个**。⛔ 不用「当前选中的那个」—— 左滑是**对着某一行**做的动作，
+   * 而那一行不一定是选中的那一行（选中只决定「点启动游戏时跑哪个」）。
+   * ⚠️ 这三样都在**打开确认窗那一刻**存住，理由见 `openGameDeleteAsk`。 */
+  @State gameDeletePath: string = '';
+  @State gameDeleteLabel: string = '';
+  @State gameDeleteDir: string = '';
+  /* 版本页上一次删除的结果 / 失败原因。
+   * ⛔ 必须说出来：删除失败却让界面看着正常，是这个项目最不该有的那类缺陷。 */
+  @State gamesNote: string = '';
   /** 垃圾站里现在有什么。`refresh()` 里读一次，渲染只用它。 */
   @State vaultEntries: VaultEntry[] = [];
   /** 保留期（天）。⭐ 全局设置。 */
@@ -2140,6 +2157,125 @@ export struct LauncherHome {
     hilog.info(DOMAIN, TAG, 'launcher: picked (bundled)');
   }
 
+  /* 打开确认窗。`g` = **刚被左滑的那一行**（见 `SwipeDeleteAction`），不是「选中的那个」。
+   * ⭐⭐ 三样东西都在这里算一次并存住，理由有两条，缺一条都不行：
+   *   ① `computeKey()` **没有缓存** —— 每调一次就真读一次那个 jar（最大 88 MB），
+   *      而对话框会渲染好几遍，⛔ 不能每遍都去读；
+   *   ② 删除流程走到一半 jar 就没了，**那时同一个版本会算到别的键上**
+   *      ⇒「删它的数据」会删到另一份上去。 */
+  private openGameDeleteAsk(g: GameJar): void {
+    this.gameDeletePath = g.path;
+    /* ⭐ 版本号在前、文件名在后 —— 与那一行列表的次序一致。 */
+    this.gameDeleteLabel = g.version === '' ? g.name : (g.version + '（' + g.name + '）');
+    this.gameDeleteDir = resolveGameDirAndKey(this.granularity, 'user', g.path,
+                                              this.bundledJar()).dir;
+    this.gamesNote = '';
+    this.showGameDeleteAsk = true;
+  }
+
+  /** 这个版本有没有**自己**的隔离数据。
+   *  ⛔ `false` 的含义很重：它用的是全应用唯一那份「未隔离的数据」⇒ **不能删**
+   *     （删它等于把所有不隔离的版本一起清掉，还包括玩家最初那一份）。 */
+  private jarHasOwnData(): boolean {
+    return this.gameDeleteDir !== '' && this.gameDeleteDir !== liveGameDataDir();
+  }
+
+  /** 除它之外，还有哪些版本读同一个数据目录。 */
+  private otherVersionsOnSelectedDir(): VersionEntry[] {
+    const out: VersionEntry[] = [];
+    if (this.gameDeletePath === '' || this.gameDeleteDir === '') {
+      return out;
+    }
+    for (const v of this.versions) {
+      if (v.dataDir === this.gameDeleteDir && v.path !== this.gameDeletePath) {
+        out.push(v);
+      }
+    }
+    return out;
+  }
+
+  /** 那些版本的名字。⚠️ 超过三个就截断 —— 一整串会把那段警告挤成墙。 */
+  private otherVersionsText(): string {
+    const names: string[] = [];
+    for (const v of this.otherVersionsOnSelectedDir()) {
+      names.push(v.version === '' ? v.label : v.version);
+    }
+    if (names.length <= 3) {
+      return names.join('、');
+    }
+    return names.slice(0, 3).join('、') + ' 等 ' + String(names.length) + ' 个';
+  }
+
+  /** 这份数据里现在有几个存档。⭐ 「会少掉多少」要在按之前就能看见。 */
+  private jarDataSaveCount(): number {
+    if (this.gameDeleteDir === '') {
+      return 0;
+    }
+    return countSavesIn(this.gameDeleteDir + '/saves');
+  }
+
+  /* 真删一个版本。`withData = true` ⇒ 连它的数据一起删。
+   *
+   * ⚠️ 目录用 `this.gameDeleteDir`（打开窗时算好的），⛔ **不在这里重算** —— 见 `openGameDeleteAsk`。
+   *
+   * ⚠️ 顺序是**先数据、后 jar**，而且数据没删干净就**整个停下**：
+   *    · 反过来先删 jar，会留下一个「没有版本读它」的孤儿目录 —— 界面上本来就有一类专门显示
+   *      它，但那是**另一件事**，不该由「删除」制造出来；
+   *    · 数据删一半就停，玩家还能看着这个版本再试一次，而不是剩一个游戏配半份数据。 */
+  private deleteGame(withData: boolean): void {
+    const path: string = this.gameDeletePath;
+    this.showGameDeleteAsk = false;
+    if (path === '') {
+      return;
+    }
+    const dir: string = this.gameDeleteDir;
+
+    /* ⛔ 未隔离那一份**自己再拦一次**。界面本来就不会给出那个按钮（见 `jarHasOwnData`），
+     * 但**界面不是门**：一个真删东西的动作必须自己认得「这个不能删」，而不是指望调用点记得。
+     * 这也是这一条比界面那条更重要的地方 —— 界面会变，这条不会。 */
+    if (withData && (dir === '' || dir === liveGameDataDir())) {
+      this.gamesNote = '那份是全应用唯一的未隔离数据，不能这样删。';
+      this.refresh();
+      return;
+    }
+
+    if (withData) {
+      const rm: TreeStat = newTreeStat();
+      removeTree(dir, 0, rm);
+      if (rm.failed > 0) {
+        this.gamesNote = '数据没删干净，游戏也先没删（可以再试一次）：' + rm.firstError;
+        this.refresh();
+        return;
+      }
+      hilog.info(DOMAIN, TAG, 'games: removed data dir %{public}s', dir);
+    }
+
+    /* 删 jar 本身。⚠️ `unlinkSync` 删不存在的文件会**抛** ⇒ 先探一下（`EntryAbility` 里同一条）。 */
+    try {
+      if (fs.accessSync(path)) {
+        fs.unlinkSync(path);
+      }
+    } catch (e) {
+      const err = e as BusinessError;
+      this.gamesNote = '删除失败：' + err.message;
+      this.refresh();
+      return;
+    }
+
+    /* 删掉的正好是选中那个 ⇒ 退回内置。⛔ 不退的话选中路径指向一个不存在的文件，
+     * 而首页会显示「没有找到游戏」—— 一个删除动作不该把应用弄成那个样子。 */
+    if (this.selected === path) {
+      writeSelection(this.filesDir, '');
+    }
+    this.gameDeletePath = '';
+    this.gameDeleteLabel = '';
+    this.gameDeleteDir = '';
+    this.gamesNote = withData ? '已删除这个版本和它的数据。' : '已删除这个版本（保留数据）。';
+    hilog.info(DOMAIN, TAG, 'games: deleted %{public}s withData=%{public}s',
+               path, String(withData));
+    this.refresh();
+  }
+
   /** 内容一栏的宽度（vp）。**靠左**摆，见 CONTENT_MIN_VP。
    * ⚠️ 它返回**数值 width** 而不是配 `width('100%')` 用的 `constraintSize` —— 这个选择为动画服务：
    * `animateTo` 动的是**渲染属性**，而 `constraintSize` 是**布局约束**（约束变了布局直接重排、
@@ -2324,6 +2460,14 @@ export struct LauncherHome {
               .backgroundColor($r('app.color.launcher_card'))
               .borderRadius(CARD_RADIUS_VP)
               .onClick(() => { this.pick(g.path); })
+              /* ⭐ 左滑露出「删除」。用系统原生的 `ListItem.swipeAction`，**不自写手势** ——
+               * 回弹、只允许一行展开、与纵向滚动抢手势，这些它都已经处理好了。
+               * ⚠️ `end` = 垂直列表里**向左滑**露出的那一侧（向右滑是 `start`）。
+               * ⛔ 不给 `onAction`（滑到底自动触发）：「滑到底」是个顺手就会做出来的动作，
+               *    让它直接弹确认窗比「点一下露出来的按钮」容易误触。
+               * ⚠️ 内置那一行没有这个 —— 它在 HAP 里，不是文件，删不掉。 */
+              .swipeAction({ end: { builder: () => { this.SwipeDeleteAction(g) } },
+                             edgeEffect: SwipeEdgeEffect.Spring })
             }, (g: GameJar): string => this.gameRowKey(g))
           }
           .width('100%')
@@ -2355,6 +2499,16 @@ export struct LauncherHome {
         this.refresh();
         this.isRefreshing = false;
       })
+
+      /* 上一次删除的结果 / 失败原因。⭐ 独立于下面那个按钮 —— 删完之后那个版本就没了、
+       * 按钮会跟着消失，而消息**必须还在**（否则就是「删了没反馈」）。 */
+      if (this.gamesNote !== '') {
+        Text(this.gamesNote)
+          .fontSize(12).fontColor($r('sys.color.font_secondary'))
+          .width(this.gamesWidthVp())
+          .padding({ left: 16, right: 16, top: 12 })
+      }
+
 
       /* 主按钮。它被禁用的唯一理由是「确实没有任何可加载的东西」—— 由 resolveGame 判定，
        * 而它已经确认过文件真的能打开。 */
@@ -3198,6 +3352,106 @@ export struct LauncherHome {
           .width('25%').alignSelf(ItemAlign.Center)
           .margin({ top: 12 })
           .onClick(() => { this.showVaultClearAsk = false; })
+      }
+      .width('100%')
+      .constraintSize({ maxWidth: this.dialogWidthVp() })
+      .padding(20)
+      .backgroundColor($r('app.color.launcher_card'))
+      .borderRadius(CARD_RADIUS_VP)
+      .alignItems(HorizontalAlign.Start)
+      /* 吞掉落在卡片上的点击 —— 与另外几个确认窗同一处理由（`DeleteAskDialog` 的注释）。 */
+      .onClick(() => {})
+    }
+    .width('100%').height('100%')
+    .backgroundColor('#80000000')
+    .justifyContent(FlexAlign.Center)
+    /* 异形屏避让，与另外几个确认窗逐字相同 —— ⛔ 别在这里另发明一套边距。 */
+    .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
+               top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
+    .transition(enterFade())
+  }
+
+  /* 「删除这个版本」的确认窗。
+   * ⭐ 取舍与 `DeleteAskDialog` 同一条：把**代价写进按钮标签**，而不是在按钮上面写一段说明 ——
+   * 玩家应当看一眼按钮就知道自己在选什么。
+   * ⚠️ 但有一件事没法塞进标签：**共用数据**（还有别的版本在读）和**唯一那份未隔离数据**，
+   * 那两个必须单独说，因为按下去损的不止是刚选的那个版本。 */
+  /* 左滑露出的那一块。
+   *
+   * ⭐⭐ **只画一个图标，不画底色** —— 这一条同时解掉两个问题：
+   *   ① 露出区的**尺寸就是 `builder` 内容的尺寸**（`actionAreaDistance` 是「滑多远才触发
+   *      `onAction`」的阈值，**不是**色块大小，别被名字骗了）。做成整块底色的话，那块矩形
+   *      比列表项高、又没有圆角 ⇒ 拉出来时**卡片右下角那个圆角就被盖掉了**。
+   *   ② 露出区自己**没有背景**，所以唯一画出来的东西就是这里的内容。
+   *      ⇒ 内容是圆的 ⇒ 圆角问题从根上不存在，⛔ 不需要去和框架较劲。
+   *
+   * ⚠️ 外层 `Row` 只负责给一个**够大的点击区域**（图标本身 26fp 小于 48vp 的最小触控目标），
+   *    它自己不画任何东西；真正被看见的只有里面那个符号。
+   * ⛔ `onAction`（滑到底自动触发）仍然不给 —— 「滑到底」顺手就能做出来，让它直接弹确认窗太容易误触。
+   * ⚠️ 以后要加编辑、重命名之类，每个动作各占一个这样的小图标，**挤在一起要留出间距**。 */
+  @Builder
+  SwipeDeleteAction(g: GameJar) {
+    Row() {
+      SymbolGlyph($r('sys.symbol.ohos_trash_circle'))
+        .fontSize(26)
+        .fontColor([$r('app.color.danger')])
+    }
+    .height('100%')
+    .padding({ left: 16, right: 20 })
+    .justifyContent(FlexAlign.Center)
+    .onClick(() => { this.openGameDeleteAsk(g); })
+  }
+
+  @Builder
+  GameDeleteAskDialog() {
+    Column() {
+      Column() {
+        Text('删除「' + this.gameDeleteLabel + '」')
+          .fontSize(17).fontColor($r('sys.color.font_primary'))
+          .width('100%').textAlign(TextAlign.Center)
+
+        if (!this.jarHasOwnData()) {
+          /* 隔离关着 ⇒ 全应用唯一那份数据。⛔ 这条路连选项都不给。 */
+          Text('这个版本用的是**未隔离**的那一份数据 —— 全应用只有那一份，'
+               + '删它会把所有未隔离版本的数据一起清掉。\n所以这里只提供「只删除游戏」。')
+            .fontSize(12).fontColor($r('sys.color.font_secondary'))
+            .width('100%').margin({ top: 10 })
+        } else if (this.otherVersionsOnSelectedDir().length > 0) {
+          /* ⛔ 共用这一条必须点名：按下去损的不止是他刚选的那个版本。 */
+          Text('这份数据还有 ' + String(this.otherVersionsOnSelectedDir().length)
+               + ' 个版本在读（' + this.otherVersionsText() + '），'
+               + '里面现在有 ' + String(this.jarDataSaveCount()) + ' 个存档。'
+               + '\n连数据一起删，它们也会一起没有。')
+            .fontSize(12).fontColor($r('sys.color.warning'))
+            .width('100%').margin({ top: 10 })
+        }
+
+        Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
+
+        Button('只删除游戏（保留数据）')
+          .fontSize(15)
+          .width('80%').alignSelf(ItemAlign.Center)
+          .margin({ top: 16 })
+          .onClick(() => { this.deleteGame(false); })
+
+        /* ⛔ 数据不能删时这个按钮**不出现**（而不是出现再置灰）—— 置灰的按钮会让人一直找
+         * 「怎么才能点亮它」，而上面那句话已经解释了原因。 */
+        if (this.jarHasOwnData()) {
+          Button('删除游戏和数据')
+            .fontSize(15)
+            .fontColor($r('sys.color.warning'))
+            .backgroundColor($r('app.color.launcher_bg'))
+            .width('80%').alignSelf(ItemAlign.Center)
+            .margin({ top: 10 })
+            .onClick(() => { this.deleteGame(true); })
+        }
+
+        Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
+        Button('取消')
+          .fontSize(14)
+          .width('25%').alignSelf(ItemAlign.Center)
+          .margin({ top: 12 })
+          .onClick(() => { this.showGameDeleteAsk = false; })
       }
       .width('100%')
       .constraintSize({ maxWidth: this.dialogWidthVp() })
@@ -4215,7 +4469,12 @@ export struct LauncherHome {
            * 不是自明的，而选错的代价是「换个版本就看不到存档了」。
            * ⚠️ 未选中的底色从 `launcher_card` 改成 `launcher_bg`：卡片本身就是 `launcher_card`，两者同色
            * 会让未选中的那三个**完全看不见**（不是「颜色不好看」，是「没画出来」）。 */
-          Row() {
+          /* ⭐ **必须能换行。** 四个 chip 是定长的（各 12vp 内边距 + 三四个汉字），
+           * 手机默认档实测就已经贴边，系统字体一大就会把最后一个挤出屏幕外 ——
+           * 而这一行【不换行】的时候，溢出是**裁掉**，看起来像少了一个选项。
+           * ⚠️ 间距从「每个左边 8」改成「每个右边 8 + 下边 8」：换行之后，
+           *    第二行第一个若还带左间距，整行会比第一行缩进 8vp。 */
+          Flex({ wrap: FlexWrap.Wrap }) {
             Text('不隔离')
               .fontSize(13)
               .fontColor(this.granularity === GRANULARITY_OFF
@@ -4224,6 +4483,7 @@ export struct LauncherHome {
               .borderRadius(9)
               .backgroundColor(this.granularity === GRANULARITY_OFF
                                ? $r('app.color.launcher_border') : $r('app.color.launcher_bg'))
+              .margin({ right: 8, bottom: 8 })
               .onClick(() => { this.chooseGranularity(GRANULARITY_OFF); })
             Text('大版本')
               .fontSize(13)
@@ -4233,7 +4493,7 @@ export struct LauncherHome {
               .borderRadius(9)
               .backgroundColor(this.granularity === GRANULARITY_NUMBER
                                ? $r('app.color.launcher_border') : $r('app.color.launcher_bg'))
-              .margin({ left: 8 })
+              .margin({ right: 8, bottom: 8 })
               .onClick(() => { this.chooseGranularity(GRANULARITY_NUMBER); })
             Text('构建号')
               .fontSize(13)
@@ -4243,7 +4503,7 @@ export struct LauncherHome {
               .borderRadius(9)
               .backgroundColor(this.granularity === GRANULARITY_BUILD
                                ? $r('app.color.launcher_border') : $r('app.color.launcher_bg'))
-              .margin({ left: 8 })
+              .margin({ right: 8, bottom: 8 })
               .onClick(() => { this.chooseGranularity(GRANULARITY_BUILD); })
             Text('小版本')
               .fontSize(13)
@@ -4253,7 +4513,7 @@ export struct LauncherHome {
               .borderRadius(9)
               .backgroundColor(this.granularity === GRANULARITY_PATCH
                                ? $r('app.color.launcher_border') : $r('app.color.launcher_bg'))
-              .margin({ left: 8 })
+              .margin({ right: 8, bottom: 8 })
               .onClick(() => { this.chooseGranularity(GRANULARITY_PATCH); })
           }
           .width('100%').margin({ top: 12 })
@@ -4942,6 +5202,12 @@ export struct LauncherHome {
      * 排在这里只是防御性顺序（Stack 里后声明的在上）。 */
     if (this.showVaultClearAsk) {
       this.VaultClearAskDialog()
+    }
+
+    /* 删除版本的确认。⚠️ 它在**首页**，与垃圾站那个窗不可能同时开着 ——
+     * 排在这里只是防御性顺序（Stack 里后声明的在上）。 */
+    if (this.showGameDeleteAsk) {
+      this.GameDeleteAskDialog()
     }
 
     if (this.launchFault !== '' && !this.faultAck) {
