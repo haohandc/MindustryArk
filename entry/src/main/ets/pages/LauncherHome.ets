@@ -85,6 +85,13 @@ interface SaveRow {
 /* 一组**共用同一份数据**的版本，以及那份数据里的存档。
  * ⚠️ 按**目录**分组而非按版本：隔离关着时所有版本共用一份数据，按版本分会让同一批存档
  * 出现 N 遍；按目录分恰好得到一组，组头的版本名单正好回答「属于哪几个版本」。 */
+/* 一个「共用同一份数据」的组：`key` 是那个目录的键，`versions` 是读它的版本名。
+ * ⭐ 「哪几个版本共用存档」这个问题，答案就是它。见 `isolationGroups()`。 */
+interface IsoGroup {
+  key: string;
+  versions: string[];
+}
+
 interface SaveGroup {
   /** 数据目录（`…/<版本>/sets/default/.local/share/Mindustry/saves`）。 */
   dir: string;
@@ -474,7 +481,12 @@ export struct LauncherHome {
    * ⛔ 它与存档那个删除**不是一回事**：存档是搬进垃圾站（能找回），这里两个选项都是**真删**，
    *     而「连数据一起删」还可能连带别的版本（见 `otherVersionsOnSelectedDir`）⇒ 必须过确认。 */
   @State showGameDeleteAsk: boolean = false;
-  /* 「数据未迁移」那条提示被玩家**手动忽略**了吗。
+  /* 「按『xxx』进行数据隔离」那个窗里，详情展开了没有。
+   * ⭐ 默认收起 —— 里面那两块（这一档怎么分 / 版本→目录表）是**要看的人才有用**的，
+   * 摊在外面会让整个弹窗读不完（用户 2026-10-04：「之前的提示我都快看不懂了」）。 */
+  @State showIsolationDetail: boolean = false;
+
+  /** 「数据未迁移」那条提示被玩家**手动忽略**了吗。
    * ⭐ 忽略只在**本次运行内**有效，而且状态一变就会自己复位（见 `refresh()`）——
    *    否则他忽略了、又改了粒度，新出现的那个空目录就再也不会提示。
    * ⚠️ 忽略只是**把提示收起来**，不改任何文件 —— 它不是「门」，所以不需要出口。 */
@@ -580,13 +592,14 @@ export struct LauncherHome {
    * 他会以为功能坏了。真因是一条刻意的设计：内置那份永不移动，换内置 jar 时玩家数据不跟着搬。 */
   @State pendingUsesBundled: boolean = false;
 
-  /* 询问窗要点名的那个版本：【「名字 · 版本号」】与它在**这一档下**会用的键。
+  /* 询问窗要点名的那个版本：「名字 · 版本号」。
    * ⚠️ 原来整句话只有指代（「这个版本」），而那个版本的**身份**在那一屏上看不见（它在首页页签）
    * ⇒ 这里点名。
-   * ⚠️ `pendingKey` 必须用**待确认的那一档**算，⛔ 不能用 `versions` 里现成的 `.key`
-   * （那是按**当前**档位算的）—— 两者在玩家正切换时不一样。 */
+   * ⛔【曾经还有一个 `pendingKey`】—— 窗里单独写一行「这一档下，它用目录：xxx」。
+   *    2026-10-04 删了：下面那份「版本 → 目录」对照表**本来就含当前版本那一行**，
+   *    再单独写一遍是同一份信息的第二遍。⚠️ 顺带省掉一次 `resolveGameDirAndKey()` ——
+   *    它会**真读 jar**（最大 88 MB），而弹窗每打开一次要渲染好几遍。 */
   @State pendingVersionName: string = '';
-  @State pendingKey: string = '';
 
   /* **隔离开着，但那一份数据目录根本不存在** —— 即「开关拨过去了、数据没过去」。
    * ⛔ 必须单独显出来：这种状态在界面上**完全看不出来**，玩家进游戏看到的是一整套空数据
@@ -760,24 +773,108 @@ export struct LauncherHome {
     return '不隔离';
   }
 
-  private granularityHint(g: string): string {
-    /* ⭐ 2026-10-04 收紧：每条**只留判据**（哪两个共用、哪两个分开）。
-     * 删掉的三截都是「后果 / 评论」而不是规则本身：
-     *   · 「v9 出来之后才会分开」—— 推测；
-     *   · 「换版本时看到的是同一批存档」—— 由「共用一份」推得出来；
-     *   · 「改动最大的界线在这里」「切得最细，但要重建的东西也最多」—— 评语。
-     * ⚠️ 原来最长那条 37 字 ≈ 444vp，而卡片里只有约 328vp ⇒ **必然折成两行**，
-     *    四档各折一次，整块看着就是一大坨字。现在每条 ≤ 22 字，一行放得下。 */
-    if (g === GRANULARITY_NUMBER) {
-      return 'v8 的所有版本共用一份';
+  /* 把「已装的版本」按**当前档位算出来的键**分组 —— 键相同 = 落进同一个目录 = 共用一份数据。
+   *
+   * ⭐⭐ 这是用户 2026-10-04 要的那张「哪几个版本共用存档」的表，也是【说明文字】的唯一来源。
+   * ⛔ 在它之前，说明那句是**写死的**（`'v8 的所有版本共用一份'`）而表是真算的 ⇒
+   *    只要装的不是 v8，**说明就在说谎**（用户原话：「我不知道你有没有做 v7 等等的提示」——
+   *    答案是没有）。现在两者同一处算，不可能分叉。
+   *
+   * ⚠️ 分组【不自己折版本字段】（number / build 那些）：`computeKey()` 已经把该并的并了，
+   *    包括「与内置同版本也走 bundled」那条规则 —— 再折一次就是把那条规则实现第二遍。
+   * ⚠️ 它会读每个 jar（`gameVersionParts` **没有缓存**）⇒ 只从 `chooseGranularity()` 与
+   *    设置页那次调用，⛔ 绝不在渲染路径上。 */
+  private isolationGroups(g: string): IsoGroup[] {
+    const out: IsoGroup[] = [];
+    const at: Map<string, number> = new Map<string, number>();
+    for (const v of this.versions) {
+      const key: string = resolveGameDirAndKey(g, v.source, v.path, this.bundledJar()).key;
+      const k: string = key === '' ? '（不隔离）' : key;
+      /* ⭐ 显示**实际版本号**，⛔ 不是 jar 文件名（用户 2026-10-04：
+       * 「不要展示 jar 名称，展示实际版本名称」）。读不出才退回文件名。 */
+      const nm: string = (v.version === '' ? v.label : v.version)
+                       + (v.source === 'bundled' ? '（内置）' : '');
+      const i: number | undefined = at.get(k);
+      if (i === undefined) {
+        at.set(k, out.length);
+        out.push({ key: k, versions: [nm] });
+      } else {
+        out[at.get(k) as number].versions.push(nm);
+      }
     }
-    if (g === GRANULARITY_BUILD) {
-      return '160.5 与 160.1 共用一份；160 与 159 分开';
+    return out;
+  }
+
+  /* 键 → 它代表的**版本槽位**（`b160` → `160`、`n8` → `8`）；**不是槽位的键返回空串**。
+   *
+   * ⛔⛔ 这是 2026-10-04 用户当场看到那个 bug 的根：我在两个调用点各自写了
+   *      `key.substring(1)`，理由是「槽位键恒为 `n`/`b` + 数字」。而 `KEY_BUNDLED`
+   *      是 `bundled` ⇒ 被砍成 **`undled`**，又以 `b` 开头 ⇒ 还被当成「构建号系列」，
+   *      于是弹窗上写着 **「vundled 的所有版本共用一份」**。
+   * ⭐ 判据改成**形状**（`n`/`b` 后面必须跟数字）：`bundled`（b+u）与 `_unknown`（下划线）
+   *    自然落选，⛔ 不依赖任何白名单，将来多出别的键也不会再误判。 */
+  private slotOfKey(key: string): string {
+    return /^[nb][0-9]/.test(key) ? key.substring(1) : '';
+  }
+
+  /** 一个组在表里的标题。⛔ `bundled` / `_unknown` **不是版本槽位**，不能当版本号念。 */
+  private isoGroupTitle(key: string): string {
+    if (key === 'bundled') {
+      /* ⭐ 说人话：它对应的就是「内置游戏」那一行。 */
+      return '内置游戏';
+    }
+    if (key === '_unknown') {
+      /* ⚠️ 同一条道理：`_unknown` 是**内部键**，不能原样念给玩家听。
+       * 措辞跟版本列表那边走（读不出就是「未知版本」）—— 一处词，两处别分叉。 */
+      return '未知版本';
+    }
+    const slot: string = this.slotOfKey(key);
+    if (slot === '') {
+      return key;                     // `_unknown` / `（不隔离）` 之类，原样
+    }
+    return key.charAt(0) === 'n' ? ('v' + slot + ' 系列') : (slot + ' 版本');
+  }
+
+  /* 说明那一行。⭐ **每一段都来自 `isolationGroups()`** —— 也就是玩家自己装了什么。 */
+  private granularityHint(g: string): string {
+    if (g === GRANULARITY_OFF) {
+      return '所有版本共用一份数据（默认）';
+    }
+    const groups: IsoGroup[] = this.isolationGroups(g);
+    if (groups.length === 0) {
+      return '';
     }
     if (g === GRANULARITY_PATCH) {
-      return '每个小版本各一份，包括 160.5 与 160.4';
+      return '每个版本各一份';
     }
-    return '所有版本共用一份数据（默认）';
+    /* ⭐ 只数**真槽位**（`n8` / `b160`）。`bundled` / `_unknown` 不是槽位 ——
+     * 它们在这句里没有对应的话可说（内置那份由下面那行「注意」交代）。 */
+    const slots: string[] = [];
+    for (const gr of groups) {
+      const s: string = this.slotOfKey(gr.key);
+      if (s !== '' && slots.indexOf(s) < 0) {
+        slots.push(s);
+      }
+    }
+    if (slots.length === 0) {
+      /* 装的版本一个槽位都算不出来（全是内置 / 读不出）⇒ 退回**通用规则**，
+       * ⛔ 不要拼出半句空话。 */
+      return g === GRANULARITY_NUMBER ? '同一个大版本共用一份' : '同一构建号的版本共用一份';
+    }
+    const parts: string[] = [];
+    const cap: number = Math.min(slots.length, 2);
+    for (let i = 0; i < cap; i += 1) {
+      if (g === GRANULARITY_NUMBER) {
+        parts.push('v' + slots[i] + ' 的所有版本共用一份');
+      } else {
+        /* ⛔ 这里不列成员 —— 下面那张表会逐个列出来，一行说明再列一遍就长了。 */
+        parts.push('同一 ' + slots[i] + ' 的版本共用一份');
+      }
+    }
+    if (slots.length > 2) {
+      parts.push('其余同理');
+    }
+    return parts.join('；');
   }
 
   /* 玩家点了某一档。⭐ **关掉不问、打开才问** —— 两者后果不同：
@@ -802,17 +899,18 @@ export struct LauncherHome {
     this.isolationCounts = countsOf(liveGameDataDir());
     /* 选之前就把「这一档怎么分、会落到哪些目录」摆出来（原来要选完才知道是啥情况）。 */
     this.pendingPreview = this.buildGranularityPreview(g);
+    /* 每次打开都**收起详情** —— 上一次展开过的话，这次一进来就是展开的，
+     * 而那是上一次的状态（与 `MultiBar` 里那个「名单每次重新收起」同一条理由）。 */
+    this.showIsolationDetail = false;
     /* 「复制过去」要复制的分类：算出来并**默认全勾**（玩家的意图就是每个版本都别丢数据，
      * 那是常见情形；反过来默认一个都不勾会让最常见的意图要点两次）。与「我替你全选」的差别
      * 在于 —— **现在是看得见的**，而且能改。 */
     this.copyTargets = this.buildCopyTargets(g);
     this.copyPicked = this.copyTargets.map((c: CopyTarget) => c.key);
     this.pendingUsesBundled = this.versions.some((v: VersionEntry) => v.source === 'bundled');
-    /* 点名当前这个版本，以及它在**这一档下**会用哪个目录。⚠️ 版本名按 `resolution.path`
-     * （**版本身份**，jar 路径）找，⛔ 不是版本号（两个 jar 可以是同一个版本号）。 */
+    /* 点名当前这个版本。⚠️ 版本名按 `resolution.path`（**版本身份**，jar 路径）找，
+     * ⛔ 不是版本号（两个 jar 可以是同一个版本号）。 */
     const res: GameResolution = this.resolution;
-    const rk: GameDirForKey = resolveGameDirAndKey(g, res.source, res.path, this.bundledJar());
-    this.pendingKey = rk.key;
     const hit: VersionEntry | undefined =
       this.versions.find((v: VersionEntry) => v.path === res.path);
     if (hit === undefined) {
@@ -829,13 +927,20 @@ export struct LauncherHome {
    * ⚠️ 它会读每个 jar（`gameVersionParts` **没有缓存**）⇒ 只从 `chooseGranularity()` 调，
    * ⛔ 绝不在渲染路径上（一次点开 = 读 4 个 jar，与 `refresh()` 同量级）。 */
   private buildGranularityPreview(g: string): string {
-    if (this.versions.length === 0) {
+    const groups: IsoGroup[] = this.isolationGroups(g);
+    if (groups.length === 0) {
       return '（现在还没有可用的游戏版本）';
     }
     const lines: string[] = [];
-    for (const v of this.versions) {
-      const key: string = resolveGameDirAndKey(g, v.source, v.path, this.bundledJar()).key;
-      lines.push(v.label + '   →   ' + (key === '' ? '（不隔离）' : key));
+    for (const gr of groups) {
+      /* ⭐ 组标题（用户 2026-10-04 给的形状：「160版本 / xxx -> xxx / 159版本 / …」）。
+       * ⛔ 小版本那一档**不出标题** —— 每个版本各一份，标题只会逐行重复「各自一份」。 */
+      if (g !== GRANULARITY_PATCH) {
+        lines.push(this.isoGroupTitle(gr.key));
+      }
+      for (const nm of gr.versions) {
+        lines.push('    ' + nm + '   →   ' + gr.key);
+      }
     }
     return lines.join('\n');
   }
@@ -4924,73 +5029,80 @@ export struct LauncherHome {
     if (this.showIsolationAsk) {
       Column() {
         Column() {
-          /* ⭐ 标题里直接点出**这一档叫什么**（2026-10-02：「我们加上具体的版本粒度就行」）。
-           * ⚠️ 原来只有「打开数据隔离」四个字，玩家看不出自己点的是哪一档 —— 那正是他下一步要确认的。 */
-          Text('打开数据隔离  ·  ' + this.granularityName(this.pendingGranularity))
+          /* ⭐ 标题（2026-10-04 用户重写的结构：「按"xxx"进行数据隔离」）。
+           * ⛔ 它**取代了原来两段**：`打开数据隔离  ·  构建号` 与「之后，当前选中的版本的数据与
+           *    其他版本隔离。你想怎么处理存档？」—— 那两句在说同一件事，而用户的原话是
+           *    「之前的提示我都快看不懂了」。
+           * ⚠️⚠️ 被取代的第二句，代码里原本标着**「用户留给他自己改的，别动」**（2026-10-02 他点名）。
+           *    这次是他自己重做这个窗、并给了新结构，所以按新结构并进了标题。
+           *    **它没有丢**（在 git 里），他要是要那句回来，一句话就能加。 */
+          Text('按「' + this.granularityName(this.pendingGranularity) + '」进行数据隔离')
             .fontSize(18).fontColor($r('sys.color.font_primary'))
-          /* ⛔ 这一行**是用户留给他自己改的**（2026-10-02 他点名要自己动措辞）⇒ 我**不动它**。
-           * 之前有一轮我顺手改过一次、已还原 —— 那是他的句子。⚠️ 谁要改这句，先问他。 */
-          Text('之后，当前选中的版本的数据与其他版本隔离。你想怎么处理存档？')
-            .fontSize(13).fontColor($r('sys.color.font_secondary'))
-            .width('100%').textAlign(TextAlign.Center)
-            .margin({ top: 12 })
 
-          /* ⭐⭐ 把「当前选中的版本」**点名**（2026-10-02：「现在说的是'这个版本'，我们加上具体的
-           * 版本粒度就行」）。⚠️ 原来整句话里只有指代，而玩家在那一屏上根本看不到自己选的是哪一个
-           * （它在「首页」页签里）⇒ 这里给出【版本名 + 版本号】，并把它**这一档下实际会用的目录**
-           * 也写出来 —— 那就是「具体到什么粒度」的答案。
-           * ⚠️ 目录名那一行**刻意**与上面那份总表用同一套键，两处不会分叉。 */
+          /* 点名当前这个版本 —— ⚠️ 这一段**用户的新结构里没提**，但它原本是有理由的：
+           * 玩家在那一屏上看不到自己选的是哪一个（它在「首页」页签里）。保留，降到小字。 */
           Text(this.pendingVersionName)
-            .fontSize(14).fontColor($r('sys.color.font_primary'))
-            .width('100%').textAlign(TextAlign.Center)
-            .margin({ top: 10 })
-          Text('这一档下，它用目录：' + (this.pendingKey === '' ? '（不隔离）' : this.pendingKey))
-            .fontSize(12).fontColor($r('sys.color.font_secondary'))
-            .width('100%').textAlign(TextAlign.Center)
-            .margin({ top: 4 })
+            .fontSize(13).fontColor($r('sys.color.font_secondary'))
+            .width('100%').margin({ top: 6 })
 
-          /* ============================================================
-           * ⭐⭐ 「这一档到底怎么分」—— 2026-10-02 点名要的（原话：「切换的大版本，构建号，小版本时，
-           * 弹窗**没说明是怎么分类的**，必须让人**选完了才知道是啥情况**」）。
-           * ⛔ 必须在这个窗里说：**这个窗是唯一能反悔的地方**，而那句说明原来只在设置页、**选完之后**
-           * 才显示 —— 顺序正好是反的。这里给的是**玩家自己的版本号算出来的目录名**，不是编的例子。
-           * ============================================================ */
           Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
 
-          Text('这一档怎么分')
-            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-            .width('100%').textAlign(TextAlign.Center).margin({ top: 12 })
-          Text(this.granularityHint(this.pendingGranularity))
-            .fontSize(13).fontColor($r('sys.color.font_primary'))
-            .width('100%').textAlign(TextAlign.Center).margin({ top: 4 })
+          /* ⭐⭐ 「显示详情」—— 把原来摊在外面的两块收进来（用户 2026-10-04：
+           * 「显示详情（点开后，列表分别展示哪几个版本共用存档）」）。
+           * ⛔ 原来「这一档怎么分」+ 一张「版本 → 目录」表是**常驻**的，加上六行说明文字，
+           *    整个弹窗读不完 —— 那正是他说的「快看不懂了」。现在默认收起。
+           * ⭐ 形状照抄多选那个展开器：整行是个盒子、右边一个 `▾/▴`（那是「它能点」的唯一视觉线索）。 */
+          Row() {
+            Text(this.showIsolationDetail ? '收起详情' : '显示详情')
+              .fontSize(13).fontColor($r('sys.color.font_secondary'))
+              .layoutWeight(1)
+            Text(this.showIsolationDetail ? '▴' : '▾')
+              .fontSize(13).fontColor($r('sys.color.brand'))
+              .margin({ left: 8 })
+          }
+          .width('100%')
+          .margin({ top: 12 })
+          .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+          .borderRadius(9)
+          .backgroundColor($r('app.color.launcher_bg'))
+          .alignItems(VerticalAlign.Center)
+          .onClick(() => { this.showIsolationDetail = !this.showIsolationDetail; })
 
-          Text('你的版本会落到这些目录（在 instances/ 下面）')
-            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-            .width('100%').textAlign(TextAlign.Center).margin({ top: 12 })
-          /* ⚠️ 只有这一块**左对齐** —— 它是一份「版本 -> 目录名」的对照表，居中的话 `→` 会参差不齐、
-           * 反而读不出对应关系。其余说明文字一律居中（与「文字居中显示」一致）。 */
-          Text(this.pendingPreview)
-            .fontSize(12).fontColor($r('sys.color.font_secondary'))
-            .width('100%').textAlign(TextAlign.Start).margin({ top: 6 })
-            .copyOption(CopyOptions.LocalDevice)
-
-          /* ⭐⭐ 这一句是**必须**的，它解释的正是最容易让人误判成故障的那个现象：⛔ 当前玩的是内置
-           * 游戏时，**任何档位算出来的键都是 `bundled`** ⇒ 玩家切来切去目录名一个都不变、会得出
-           * 「这功能没生效/坏了」。而真因是**一条刻意的设计**（内置那份永不移动，这样换内置 jar 时
-           * 玩家数据不会跟着搬走）。⭐ 不说这句，界面就在把一个设计决定**伪装成一个故障**。 */
-          if (this.pendingUsesBundled) {
-            Text('⚠️ 内置游戏永远用固定的目录 bundled，与这一档无关 —— '
-                 + '这样我们以后换内置的游戏版本时，你的数据不会跟着搬走。'
-                 + '要让档位真正起作用，得先在「首页」导入并选中一个自己的 jar。')
-              .fontSize(11).fontColor($r('sys.color.warning'))
-              .width('100%').textAlign(TextAlign.Center).margin({ top: 10 })
+          if (this.showIsolationDetail) {
+            /* ⭐ 这一档怎么分 —— 2026-10-02 点名要的（「必须让人选完了才知道是啥情况」）。
+             * ⚠️ 给的是**用他自己的版本号算出来的**判断，不是编的例子。 */
+            Text(this.granularityHint(this.pendingGranularity))
+              .fontSize(12).fontColor($r('sys.color.font_secondary'))
+              .width('100%').margin({ top: 10 })
+            /* 版本 → 目录 的对照表。⚠️ 左对齐：居中的话 `→` 会参差不齐，反而读不出对应关系。 */
+            Text(this.pendingPreview)
+              .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+              .width('100%').textAlign(TextAlign.Start).margin({ top: 8 })
+              .copyOption(CopyOptions.LocalDevice)
           }
 
-          /* ⭐ 先摆出【现在有什么】，用真实数量 —— 让玩家在**选之前**就看到结果。 */
+          Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
+
+          /* ⭐ 「注意」那一行（2026-10-04 用户指定的措辞与黄色）。
+           * ⚠️ 仍然**有条件**，判据从 `pendingUsesBundled` 放宽到 `hasBundled`：
+           *    · 这句话说的是「内置游戏」，而没有内置游戏的包（lite 分支，`SHIPS_GAME = False`）
+           *      里它是**一句假话** ⇒ 不能无条件显示；
+           *    · 放宽到「包里有没有那份游戏」，是他写的「常驻」在 master 上成立、在 lite 上不成立
+           *      这两件事的交集。
+           * ⛔ 原来挂得更窄（选中的正好是内置那份）—— 那时它解释的是「为什么切了档位没变化」；
+           *    现在它是**陈述**，所以条件也换成「这份游戏在不在」。 */
+          if (this.hasBundled) {
+            Text('注意：内置游戏永远使用 bundled 目录存放数据')
+              .fontSize(12).fontColor($r('sys.color.warning'))
+              .width('100%').margin({ top: 12 })
+          }
+
+          /* ⭐ 摆出【现在有什么】，用真实数量 —— 「复制过去」会带走多少，在**选之前**就看得见。
+           * ⚠️ 这一段**用户的新结构里也没提** —— 但两个选项的差别正是「带不带这些」，
+           *    去掉它，玩家就得靠猜。保留。 */
           Text('当前数据：' + describeCounts(this.isolationCounts))
             .fontSize(12).fontColor($r('sys.color.font_secondary'))
-            .width('100%').textAlign(TextAlign.Center)
-            .margin({ top: 12 })
+            .width('100%').margin({ top: 12 })
 
           /* 每一块的顺序是【说明在上、按钮在下】（2026-10-02 要的对调）。⚠️「复制过去」**不配任何说明**
            * （「很直观了，根本不需要任何说明」）—— ⛔ 别在别处补一句解释回去，那正是被删掉的冗余。
@@ -4999,37 +5111,46 @@ export struct LauncherHome {
            * ⚠️ 宽度 `'50%'` 之后要 `alignSelf(ItemAlign.Center)`：父 Column 是 `HorizontalAlign.Start`，
            * 光给宽度会让按钮贴左边。 */
 
-          /* ============ 选项一：主操作（系统蓝） ============ */
+          /* ⭐⭐ 按钮组：**一条分隔线 + 三个按钮**。
+           * ⛔ 原来每个按钮上面各有一条线（共三条）—— 那是每个选项**各带一段说明**时的产物；
+           *    说明在 2026-10-02 就删了，那两条线从此没有任何东西可分，只是把弹窗拉长。
+           *
+           * ⚠️ 三个都不设底色，全用 `Button` 的**系统默认主题色** —— 一处颜色，不给自己造的色值
+           *    留分叉的机会。（`launcher_bg` 在深色模式下是近黑色，当年做过一次黑按钮。）
+           *
+           * ⭐ 尺寸（用户 2026-10-04：「文字可以小一点，按钮再稍微宽一点扁一点」）：
+           *    字号 15 → **13**；宽 40% → **56%**；高显式给 **34**（`Button` 默认 40 ⇒ 扁一点）。
+           *
+           * ⛔⛔ 而「取消」原来是 `width('20%')` —— 它**装不下那两个字**：弹窗内容宽只有 280vp
+           *    （`max(320, winW × 0.5)` = 320，减左右各 20vp 内边距），20% = **56vp**；
+           *    而「取消」两字 14fp ≈ 28vp + `Button` 默认左右内边距 ≈ 32vp = **60vp** ⇒ **溢出成「...」**。
+           *    这正是用户报的那个现象。现在 34% ≈ 95vp，宽裕。
+           * ⚠️ 取消比另外两个窄是**刻意**的：它是否定动作，不该和「复制过去」长得一样重。 */
           Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
           Button('复制过去')
-            .fontSize(15)
-            .width('40%').alignSelf(ItemAlign.Center)
-            .margin({ top: 14 })
+            .fontSize(13)
+            .height(34)
+            .width('56%').alignSelf(ItemAlign.Center)
+            .margin({ top: 12 })
             /* ⭐ 两步：先记下意图，由下面那个二次确认来真正执行。⛔ 这里**不**直接调
              * applyIsolationCopy() —— 那会让二次确认变成摆设。 */
             .onClick(() => { this.isolationConfirm = 'copy'; })
 
-          /* ============ 选项二 ============ */
           /* ⛔ **这个选项【没有】说明文字**（2026-10-02：「'不复制'的说明去掉吧，这个不用解释了」）。
            * ⚠️ 它与「复制过去」是**对称**的，两个词本身已经把结果说完了。⛔ 别再补「相当于新建一个
            * 存档」之类 —— 那是解释，不是信息。 */
-          Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
           Button('不复制')
-            .fontSize(15)
-            .width('40%').alignSelf(ItemAlign.Center)
-            .margin({ top: 10 })
-            /* ⛔ 这里【曾经】写 `.backgroundColor(launcher_bg)` + `.fontColor(font_primary)` 想做成
-             * 「灰底次级按钮」，**实测是黑的** —— `launcher_bg` 在深色模式下是 #FF101010，而深色主题
-             * 正是默认（2026-10-02：「现在颜色是黑色的。也改成蓝色吧」）⇒ 三个按钮都不设底色，全用
-             * `Button` 的系统默认主题色 —— 一处颜色，不给自己造的色值留分叉的机会。 */
+            .fontSize(13)
+            .height(34)
+            .width('56%').alignSelf(ItemAlign.Center)
+            .margin({ top: 8 })
             .onClick(() => { this.isolationConfirm = 'empty'; })
 
-          /* ============ 取消：也是蓝底，但更窄 ============ */
-          Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
           Button('取消')
-            .fontSize(14)
-            .width('20%').alignSelf(ItemAlign.Center)
-            .margin({ top: 12 })
+            .fontSize(13)
+            .height(34)
+            .width('34%').alignSelf(ItemAlign.Center)
+            .margin({ top: 8 })
             .onClick(() => {
               this.showIsolationAsk = false;
               this.pendingGranularity = '';
