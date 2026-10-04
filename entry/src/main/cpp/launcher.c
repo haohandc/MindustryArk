@@ -319,6 +319,97 @@ static void resolve_user_home(char *out, size_t outlen)
     record_user_home("on", out);
 }
 
+/* 游戏语言（`-Duser.language=` / `-Duser.country=`），2026-10-04。
+ *
+ * ⛔⛔ **为什么必须有它**：游戏的 `Vars.loadLocales()` 在 `settings.bin` 的 `locale` 是 `default`
+ *    时用 **`Locale.getDefault()`**，而本启动器此前**没有给 JVM 设过任何 locale**
+ *    ⇒ HotSpot 拿到的 C locale 是 `C` ⇒ `Locale.getDefault()` 是**英文**
+ *    ⇒ 中文设备上全新安装是英文界面；随后 `LanguageDialog.findClosestLocale()`
+ *    还会把这个结果**写死进 `settings.bin`**（那条「跟随系统」只用一次就固化，再也不变）。
+ * ⭐ 局部实测（JDK17，宿主 zh_CN）：不给 `-D` ⇒ `zh_CN`（宿主）；`-Duser.language=ja -Duser.country=JP`
+ *    ⇒ `ja_JP`；**只给 language** ⇒ `de_CN`（**地区跟着宿主走了**）⇒ **两个都要给，别只给一个。**
+ * ⚠️ 值是 ArkTS 侧翻译好的（`GameLocale.systemGameLocale()`），已是游戏认得的写法（`zh_CN`）；
+ *    这里只做**形状**校验，不重做翻译 —— 那份知识（游戏认哪些 locale）在 ArkTS 那边。
+ * ⚠️ 空串 ⇒ 两个选项都留 NULL、由末尾那次压缩丢掉，**行为与这个功能存在之前逐字节相同**。 */
+static char opt_language[32];
+static char opt_country[16];
+
+/* 算出这次启动要给 JVM 的 locale，写进 opt_language / opt_country（空串 = 不设）。
+ *
+ * ⭐ 值由 ArkTS 翻译好（`GameLocale.systemGameLocale()`）后写进同一个桥文件 ——
+ *    「游戏认哪些 locale」那份知识（35 个 ID，抄自 jar 的 `locales` 资产）**只有一处**。
+ *    这里**只校验形状**，不重做翻译：重做一遍就是两份会分叉的实现。
+ *
+ * ⛔ 校验是必须的，虽然来源是我们自己：值要拼进 `-D` 字符串，而且它来自一个**文件**
+ *    （可以被改、可以被写坏）。判据与 `key` 那里同款（那份要进路径，这份要进属性值）。
+ * ⚠️ 只在**两个**部分都合法时才用：`zh` 这种没有地区的是合法的（`bundle_ja` / `bundle_en`
+ *    这些确实是裸语言），但如果带了 `_` 而地区部分不合法，整条丢掉 —— 半个值会让
+ *    `Locale("zh", "")` 与 ArkTS 那边的意图不符。 */
+static void resolve_game_locale(void)
+{
+    char loc[32];
+    loc[0] = 0;
+    opt_language[0] = 0;
+    opt_country[0] = 0;
+
+    if (read_kv(ISOLATION_FILE, "locale", loc, sizeof(loc)) <= 0) {
+        return;                         /* 没写 / 空 / 读不出 —— 全部「不设」，与从前一致 */
+    }
+
+    /* 切成 language 与 country（可选）。格式 `ll` 或 `ll_CC`。 */
+    char lang[16];
+    char country[16];
+    country[0] = 0;
+    const char *us = strchr(loc, '_');
+    if (us != NULL) {
+        size_t llen = (size_t) (us - loc);
+        if (llen == 0 || llen >= sizeof(lang)) {
+            SDL_Log("locale: rejecting '%s' (bad language part)", loc);
+            return;
+        }
+        memcpy(lang, loc, llen);
+        lang[llen] = 0;
+        SDL_strlcpy(country, us + 1, sizeof(country));
+    } else {
+        SDL_strlcpy(lang, loc, sizeof(lang));
+    }
+
+    /* 只允许 [A-Za-z] 于语言、[A-Za-z] 于地区（`id_ID` 里的 `ID` 也在这个集合里）。
+     * ⛔ 不许数字、下划线、点 —— 游戏那 35 个 ID 一个都不需要它们，而多出来的字符
+     *    只会让「这是不是我们生成的」变得说不清。 */
+    for (const char *p = lang; *p; p++) {
+        if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z'))) {
+            SDL_Log("locale: rejecting '%s' (bad character in language)", loc);
+            return;
+        }
+    }
+    const size_t langlen = strlen(lang);
+    if (langlen < 2 || langlen > 3) {
+        SDL_Log("locale: rejecting '%s' (language length %d)", loc, (int) langlen);
+        return;
+    }
+    if (country[0] != 0) {
+        const size_t clen = strlen(country);
+        if (clen != 2) {
+            SDL_Log("locale: rejecting '%s' (country length %d)", loc, (int) clen);
+            return;
+        }
+        for (const char *p = country; *p; p++) {
+            if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z'))) {
+                SDL_Log("locale: rejecting '%s' (bad character in country)", loc);
+                return;
+            }
+        }
+    }
+
+    SDL_snprintf(opt_language, sizeof(opt_language), "-Duser.language=%s", lang);
+    if (country[0] != 0) {
+        SDL_snprintf(opt_country, sizeof(opt_country), "-Duser.country=%s", country);
+    }
+    SDL_Log("locale: game language follows the system -- %s%s", lang,
+            country[0] != 0 ? country : "");
+}
+
 /* 在 ArkTS 写下的文件里查一行 "key=value"。返回拷贝的字节数（键不存在或文件不可读时为 0），
  * 这样调用方可以把系统属性留作未设置，而不是传一个空值 —— 空的 -Darc.sdl.chooserPath 会让
  * 游戏的文件浏览器打开在文件系统根，比干脆不试还糟。⚠️ 带 path 参数是因为 isolation.txt 要用
@@ -1143,7 +1234,7 @@ static void diagnose_loading(void)
  * 每行一个选项；空行和以 # 开头的行被忽略。 */
 /* 本启动器自己提供多少个选项，在运行时选项文件追加的东西之前。它被用作数组上界和索引基点，共
  * 五处，所以是具名常量：漏掉一处就会悄悄丢掉选项、或读过数组已填充的部分。 */
-#define BASE_OPTS 18
+#define BASE_OPTS 20
 #define MAX_EXTRA_OPTS 32
 static char g_extra[MAX_EXTRA_OPTS][256];
 
@@ -2009,6 +2100,8 @@ static int start_jvm(void)
     /* 去问那个文件而不是用常量：玩家可能自上次启动以来已切到桌面操作方案。见 read_control_mode_mobile()。 */
     SDL_snprintf(opt_mobile, sizeof(opt_mobile), "-Darc.sdl.mobile=%s",
                  read_control_mode_mobile() ? "true" : "false");
+    /* 游戏语言。⚠️ 必须在 `create()` **之前**填好 —— 与 user.home 同理：JVM 在启动那一刻读。 */
+    resolve_game_locale();
 
     {
         /* 读平台自己的答案而不是猜路径；没有答案时【完全略去】这个选项。过去传空字面量
@@ -2053,6 +2146,15 @@ static int start_jvm(void)
      * 字符串会设置该属性，那不是同一回事 —— 见 opt_chooser 上的说明。 */
     options[17].optionString = (opt_chooser[0] != '\0') ? opt_chooser : NULL;
     options[17].extraInfo = NULL;
+    /* ⭐ 游戏语言（`-Duser.language` / `-Duser.country`，2026-10-04）。
+     * ⛔⛔ **刻意追加在【末尾】（18、19），不是插进中间**：下面那条最小模式用的是
+     *    **写死的下标**（`options[0]` / `[2]` / `[8]`），插进中间会让那三个下标全部错位、
+     *    而错位的后果是**最小模式静默换掉了它传的参数**。追加则 0..17 的含义完全不变。
+     * ⚠️ 两个都可能为空（关掉「跟随系统」时）⇒ 用 NULL 交给末尾那次压缩丢掉。 */
+    options[18].optionString = (opt_language[0] != '\0') ? opt_language : NULL;
+    options[18].extraInfo = NULL;
+    options[19].optionString = (opt_country[0] != '\0') ? opt_country : NULL;
+    options[19].extraInfo = NULL;
 
     /* 最小模式 —— 运行时选项文件里的一行开关（一行恰好写着 MINIMAL）。有几个内置 -D flag 是在告诉
      * HotSpot 它本会自己算出的东西（java.home、sun.boot.library.path、java.library.path）；提供它们

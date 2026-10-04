@@ -34,7 +34,10 @@ import { GameJar, GameResolution, listGameJars, readSelection, writeSelection,
 import { readLaunchMode, writeLaunchMode,
          LAUNCH_MODE_HOME, LAUNCH_MODE_GAME,
          AppearancePref, readAppearance, writeAppearance,
-         SafePref, readSafePref, writeSafePref, SAFE_VP_MAX, SAFE_VP_STEP } from '../settings/LauncherPrefs';
+         SafePref, readSafePref, writeSafePref, SAFE_VP_MAX, SAFE_VP_STEP,
+         readGameLocaleFollow, writeGameLocaleFollow } from '../settings/LauncherPrefs';
+/* ⭐ 「设备语言 → 游戏认得的那个值」的翻译（值必须是游戏认的，见那个文件）。 */
+import { gameLocaleInfo, GameLocaleInfo } from '../settings/GameLocale';
 /* 异形屏探测（挖孔 / 刘海）。⛔ 游戏画面不归它管，只用于启动器自己的界面。 */
 import { SafeInsets, detectInsets, uniformOf, edgesOf, dumpSafeArea } from '../utils/SafeArea';
 /* 入场动画（退场刻意不做 —— 见那个文件的开头）。 */
@@ -58,7 +61,8 @@ import { GRANULARITY_OFF, GRANULARITY_NUMBER, GRANULARITY_BUILD, GRANULARITY_PAT
          resolveGameDataDir, resolveGameDirAndKey, GameDirForKey,
          listInstanceKeys, granularityKey, KEY_UNKNOWN,
          setGameDataRoot, migrateGameData, dumpDataDirs,
-         hasUserMadeFiles } from '../settings/Isolation';
+         hasUserMadeFiles, settingsLocaleIn,
+         writeIsolationBridge } from '../settings/Isolation';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
@@ -440,6 +444,13 @@ export struct LauncherHome {
    *    所以「进行中」这个状态**必须由我们自己在开始前设上、结束后清掉** ——
    *    没有别的东西能给出这个信号（没有进度回调，也没有异步句柄）。 */
   @State storageBusy: boolean = false;
+  /* ⭐ 游戏语言是否跟随系统。⛔ 出厂 `true` —— 这不是偏好，是**修缺陷**（见 LauncherPrefs 那段）。 */
+  @State gameLocaleFollow: boolean = true;
+  /** 翻译好的、要写进桥的那个值（`zh_CN` 之类）。`''` = 认不出系统语言。 */
+  @State gameLocaleValue: string = '';
+  /** 游戏那份 `settings.bin` 里**已经写死**的语言（`''` = 没写/读不出/就是我们会给的那个）。
+   * ⚠️ 只在它非空时界面上才多说一句 —— 它是唯一会让玩家觉得「拨了开关没用」的情形。 */
+  @State gameLocalePinned: string = '';
   /** 探针的原始结论 / 切换结果。⛔ 原样显示，别改写探针的话。 */
   @State storageNote: string = '';
 
@@ -1398,6 +1409,26 @@ export struct LauncherHome {
     }, 50);
   }
 
+  /* 把隔离/存储/语言的桥**立刻重写一遍**。
+   *
+   * ⛔ **为什么拨完开关要马上写**：native 在**启动那一刻**读这个文件，所以「拨完到下次启动」
+   *    之间那个窗口里，文件里还是旧值。玩家完全可能拨完就点「启动游戏」—— 那时这次启动用的
+   *    仍是旧的语言。⛔ 不重写就等于「开关看起来生效了，但这一次没用上」。
+   * ⭐ 与 `EntryAbility.onCreate` / `Index.ets` 启动前那两处**算的是同一套输入**
+   *    （当前粒度 + 当前解析到的游戏），所以三处写出来的内容一致。
+   * ⚠️ 它自己吞掉异常 —— 与那两处一样，绝不因为写不了桥而拦住什么。 */
+  private rewriteBridge(): void {
+    try {
+      const k: GameDirForKey = resolveGameDirAndKey(this.granularity, this.resolution.source,
+                                                    this.resolution.path, this.bundledJar());
+      writeIsolationBridge(this.filesDir, this.granularity, k.key);
+    } catch (e) {
+      const err = e as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'bridge: rewriting it after a settings change failed (%{public}s)',
+                 err.message);
+    }
+  }
+
   private refresh(): void {
     /* ⭐⭐ **第一件事**：把游戏数据根告诉 `Isolation`（2026-10-04 起可切换）。
      * ⛔ **必须在任何算出游戏数据目录的调用之前** —— 它下面紧接着就会用
@@ -1447,6 +1478,19 @@ export struct LauncherHome {
     const dir: string = dataDir + '/saves';
     this.savesDirShown = dir;
     this.saves = listSaves(dir);
+
+    /* ⭐⭐ 游戏语言（2026-10-04）。放在这里是因为 `dataDir` 要到上面才解得出来 ——
+     *    而「游戏那份 settings.bin 里已经写死了什么」必须问**游戏真正在读的那个目录**。
+     * ⚠️ `gameLocaleInfo()` 每次都会问系统一次 i18n（很便宜，但不是常量）⇒ 与别的偏好一样
+     *    只在 `refresh()` 里取一次，⛔ 别挪进渲染或 `build()`。 */
+    const gl: GameLocaleInfo = gameLocaleInfo();
+    this.gameLocaleFollow = readGameLocaleFollow(this.filesDir);
+    this.gameLocaleValue = gl.value;
+    /* 读游戏那份 `settings.bin` 里**已经写死**的语言。 */
+    const pin: string = settingsLocaleIn(dataDir);
+    /* ⚠️ 这个正则同时排掉了 `default`（7 个字母，超长）与 `no-settings` / `ERR(…)`。 */
+    const pinLooksLikeLocale: boolean = /^[A-Za-z]{2,3}(_[A-Za-z]{2})?$/.test(pin);
+    this.gameLocalePinned = (pinLooksLikeLocale && pin !== gl.value) ? pin : '';
     /* 「开关拨过去了、数据没过去」。判据是两条**都**成立：① 隔离开着；② **蓝图 / 自制地图
      * 只在未隔离那棵树里**（那说明玩家一直在用的是未隔离那一份，而游戏现在读的是隔离目录）。
      *
@@ -5153,6 +5197,154 @@ export struct LauncherHome {
         .alignItems(HorizontalAlign.Start)
         .margin({ top: 8 })
 
+        /* ================= 外观 ================= */
+        Text('外观')
+          .fontSize(13).fontColor($r('sys.color.font_secondary'))
+          .width('100%')
+          .margin({ top: 20 })
+        /* --- 深色模式 --- */
+        /* ⭐ 两个开关（2026-10-04 用户：「开关深色模式 + 是否跟随系统深色模式」）。
+         *
+         * ⚠️⚠️ 第二个开关在「跟随系统」打开时**整行不渲染**（用户 2026-10-04 定的：
+         *    「跟随系统时：下面的自定义不显示；不跟随：再显示出来」）。
+         *    ⛔ 我第一版做的是**禁用**（理由是「隐藏会让卡片忽高忽低」）—— 那是**我**的顾虑，
+         *    不是他的要求，而且它有个实际坏处：一个灰着的控件仍然在问「你要不要点我」。
+         *    ⇒ 卡片高度会随开关变一行，这是**接受**的代价。
+         * ⛔ 两条**文字提示也删了**（同一句要求：「文字提示就不要了」）—— 「跟随系统深色模式」
+         *    和「深色模式」两个标签自己说完了，底下那行只是把标签重说一遍。
+         *    ⚠️ 别再加回来「界面用深色 / 由系统决定」之类 —— 那正是被删掉的东西。 */
+        Column() {
+          Row() {
+            Text('跟随系统深色模式')
+              .fontSize(14).fontColor($r('sys.color.font_primary'))
+              .layoutWeight(1)
+            Toggle({ type: ToggleType.Switch, isOn: this.darkFollow })
+              .onChange((on: boolean) => {
+                this.darkFollow = on;
+                writeAppearance(this.filesDir, this.darkFollow, this.darkOn);
+                /* ⭐ 立刻应用 —— 拨完就该看到变化，而不是等下次启动。
+                 * ⚠️ 打开「跟随系统」时**不**去改 `darkOn`：记住玩家上次选的那一档，
+                 *    他再关掉跟随时能回到自己那个选择，而不是被重置成浅色。 */
+                this.applyColorMode();
+              })
+          }
+          .width('100%')
+
+          if (!this.darkFollow) {
+            Row() {
+              Text('深色模式')
+                .fontSize(14).fontColor($r('sys.color.font_primary'))
+                .layoutWeight(1)
+              Toggle({ type: ToggleType.Switch, isOn: this.darkOn })
+                .onChange((on: boolean) => {
+                  this.darkOn = on;
+                  writeAppearance(this.filesDir, this.darkFollow, this.darkOn);
+                  this.applyColorMode();
+                })
+            }
+            .width('100%')
+            .margin({ top: 18 })
+          }
+        }
+        .width('100%').padding(16)
+        .backgroundColor($r('app.color.launcher_card'))
+        .borderRadius(CARD_RADIUS_VP)
+        .margin({ top: 8 })
+
+        /* --- 异形屏避让 --- */
+        /* ⛔ 卡片容器是必须的 —— 第一版我漏了它，于是这一段和上面那张卡片贴在一起、
+         *    在界面上根本看不出是两块（用户 2026-10-03 当场指出）。
+         * ⭐ 版式与「启动时直接进游戏」那张卡一致：一行标题 + 一个控件、整块一个底框。 */
+        Column() {
+          Row() {
+            Column() {
+              Text('异形屏避让')
+                .fontSize(14).fontColor($r('sys.color.font_primary'))
+              /* 副标题一行说清两件事：**谁在定** + **现在让多少**。
+               * ⛔ 不再分开写「本机探测到 …」和「自动避让 …」两行 —— 那两行都在报同一个数，
+               *    而且标题里也报一遍（用户 2026-10-03：这些数值重复了）。 */
+              Text(this.safeAuto
+                   ? (this.detectedSafeVp === 0 ? '自动 · 无需避让'
+                      : ('自动 · ' + this.edgeNames() + ' ' + this.safeVp + ' vp'))
+                   : ('手动 · ' + this.edgeNames() + ' ' + this.safeVp + ' vp'))
+                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                .margin({ top: 4 })
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+
+            /* 「开」= 跟着探测走（默认）；关掉 = 用滑条的值。
+             * ⚠️ 拖滑条会**自动关掉它** —— 表达「我要自己定」最自然的方式。 */
+            Toggle({ type: ToggleType.Switch, isOn: this.safeAuto })
+              .onChange((on: boolean) => {
+                /* ⭐ 高度变化必须包在 animateTo 里 —— 见下面那个容器的说明。 */
+                this.getUIContext().animateTo(
+                  { duration: 200, curve: Curve.FastOutSlowIn }, () => {
+                    this.safeAuto = on;
+                    /* 打开自动 ⇒ 立刻回到探测值；关掉 ⇒ 保留当前值，等玩家去拖。 */
+                    if (on) {
+                      this.safeVp = this.detectedSafeVp;
+                    }
+                  });
+                writeSafePref(this.filesDir, this.safeAuto, this.safeVp);
+              })
+          }
+          .width('100%')
+          /* ⛔ **不能用 `if` 来做这个显隐**。原因是动画而非风格：
+           *    `if` 会把节点整棵建/拆，而 `animateTo` 是在**两帧之间插值** —— 节点刚建出来时没有
+           *    上一帧，高度就从 0 直接跳到目标值，看着还是瞬移。
+           * ⇒ 让它**一直留在树里**，只改高度：`0`（收起）⇄ `SAFE_REVEAL_VP`（展开）。
+           * ⭐ 这也顺带做对了「上下出入」的手感：收回是往上收，不是原地淡出。
+           * ⛔ 开关本身**必须**一直在 —— 它是这一段唯一的出入口。 */
+          Column() {
+            Slider({
+              value: this.safeVp,
+              min: 0,
+              max: SAFE_VP_MAX,
+              step: SAFE_VP_STEP,
+              style: SliderStyle.OutSet
+            })
+              .width('100%')
+              .margin({ top: 6 })
+              .onChange((v: number, mode: SliderChangeMode) => {
+                const nv: number = Math.round(v);
+                /* ⚠️ 只在**手指离开**时写盘（`End` / `Click`）—— 拖动中每次变化都写会写上百次，
+                 * 而这是一块闪存。`Moving` 时只改内存里的值，界面照常实时预览。 */
+                const end: boolean = (mode === SliderChangeMode.End
+                                      || mode === SliderChangeMode.Click);
+                /* ⛔⛔ 这个守卫【不能】把 `end` 那次也挡掉 —— 它挡掉过一次，代价是**手动值永远存不下来**：
+                 *      拖动时 `Moving` 已经把 safeAuto 置 false、safeVp 跟到终点，于是 `End` 那一刻
+                 *      `nv === safeVp && !safeAuto` 成立 ⇒ 直接 return ⇒ `writeSafePref` 一次都没执行。
+                 *      内存里是对的（界面看着正常），文件里还是旧值，重启就回去了。
+                 * ⭐ 「跳过没变化的更新」与「只在结束时写盘」是两条各自合理的规则，
+                 *    叠在一起时**后者成了前者的受害者**。⇒ 写盘那一路必须从守卫里豁免。 */
+                if (nv === this.safeVp && !this.safeAuto && !end) {
+                  return;
+                }
+                /* ⚠️ 一动滑条就接管。 */
+                this.safeAuto = false;
+                this.safeVp = nv;
+                if (end) {
+                  writeSafePref(this.filesDir, false, nv);
+                  dumpSafeArea('\n--- slide ---\nwrote user ' + nv + ' vp\n', true);
+                }
+              })
+          }
+          .width('100%')
+          .height(this.safeAuto ? 0 : SAFE_REVEAL_VP)
+          /* ⛔ 承重：不给 clip 的话，高度收到 0 时**内容还在画**，只是被容器框住而已。 */
+          .clip(true)
+        }
+        /* ⛔ 四边一样，且**与其它卡片同一个值**（16）。
+         *   我为了「滑条行高大」把这里改成过不对称的 top 14 / bottom 10 —— 那是错的：
+         *   ① 自动开着时滑条**不显示**，卡片里只剩一行标题+开关 ⇒ 上下就不对称了；
+         *   ② 而上下对称、且等于 16，才是这一页所有卡片共有的形状（用户 2026-10-03 两次指出）。
+         * ⭐ 滑条与上面那行之间的间隔归**滑条自己的 margin** 管，不是归卡片的内边距管。 */
+        .width('100%').padding(16)
+        .backgroundColor($r('app.color.launcher_card'))
+        .borderRadius(CARD_RADIUS_VP)
+        .margin({ top: 8 })
+
         /* ================= 数据 ================= */
         Text('数据')
           .fontSize(13).fontColor($r('sys.color.font_secondary'))
@@ -5247,95 +5439,7 @@ export struct LauncherHome {
         .alignItems(HorizontalAlign.Start)
         .margin({ top: 8 })
 
-        /* ================= 启动 ================= */
-        Text('启动')
-          .fontSize(13).fontColor($r('sys.color.font_secondary'))
-          .width('100%')
-          .margin({ top: 20 })
-        Column() {
-          /* 启动后进哪里。⭐ 这个开关是从一次真实的卡死里长出来的：他把一个 **mod 当成游戏**选了，
-           * 于是每次打开都直接进游戏树、立刻闪退，而**没有任何界面能让他改回来**。检测机制
-           * （launch_pending）现在也能把他送回启动器，但这是**不依赖检测**的那条路 —— 存在感为零、
-           * 却让最坏情况有出口。
-           * ⚠️ 默认「先进首页」（见 LauncherPrefs 的 LAUNCH_MODE_DEFAULT）；拨完立刻写盘、下次启动生效。 */
-          Row() {
-            Column() {
-              Text('启动时直接进游戏')
-                .fontSize(14).fontColor($r('sys.color.font_primary'))
-              Text(this.launchMode === LAUNCH_MODE_GAME
-                   ? '跳过这个界面，直接开始游戏'
-                   : '先停在这个界面，由你点「启动游戏」')
-                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-                .margin({ top: 4 })
-            }
-            .alignItems(HorizontalAlign.Start)
-            .layoutWeight(1)
-
-            /* 开关的「开」= 直接进游戏。写成左侧标签 + 右侧开关而不是两个单选 —— 它确实是二元的。 */
-            Toggle({ type: ToggleType.Switch,
-                     isOn: this.launchMode === LAUNCH_MODE_GAME })
-              .onChange((on: boolean) => {
-                this.launchMode = on ? LAUNCH_MODE_GAME : LAUNCH_MODE_HOME;
-                writeLaunchMode(this.filesDir, this.launchMode);
-              })
-          }
-          .width('100%')
-        }
-        .width('100%').padding(16)
-        .backgroundColor($r('app.color.launcher_card'))
-        .borderRadius(CARD_RADIUS_VP)
-        .margin({ top: 8 })
-
-        /* ================= 深色模式 ================= */
-        /* ⭐ 两个开关（2026-10-04 用户：「开关深色模式 + 是否跟随系统深色模式」）。
-         *
-         * ⚠️⚠️ 第二个开关在「跟随系统」打开时**整行不渲染**（用户 2026-10-04 定的：
-         *    「跟随系统时：下面的自定义不显示；不跟随：再显示出来」）。
-         *    ⛔ 我第一版做的是**禁用**（理由是「隐藏会让卡片忽高忽低」）—— 那是**我**的顾虑，
-         *    不是他的要求，而且它有个实际坏处：一个灰着的控件仍然在问「你要不要点我」。
-         *    ⇒ 卡片高度会随开关变一行，这是**接受**的代价。
-         * ⛔ 两条**文字提示也删了**（同一句要求：「文字提示就不要了」）—— 「跟随系统深色模式」
-         *    和「深色模式」两个标签自己说完了，底下那行只是把标签重说一遍。
-         *    ⚠️ 别再加回来「界面用深色 / 由系统决定」之类 —— 那正是被删掉的东西。 */
-        Column() {
-          Row() {
-            Text('跟随系统深色模式')
-              .fontSize(14).fontColor($r('sys.color.font_primary'))
-              .layoutWeight(1)
-            Toggle({ type: ToggleType.Switch, isOn: this.darkFollow })
-              .onChange((on: boolean) => {
-                this.darkFollow = on;
-                writeAppearance(this.filesDir, this.darkFollow, this.darkOn);
-                /* ⭐ 立刻应用 —— 拨完就该看到变化，而不是等下次启动。
-                 * ⚠️ 打开「跟随系统」时**不**去改 `darkOn`：记住玩家上次选的那一档，
-                 *    他再关掉跟随时能回到自己那个选择，而不是被重置成浅色。 */
-                this.applyColorMode();
-              })
-          }
-          .width('100%')
-
-          if (!this.darkFollow) {
-            Row() {
-              Text('深色模式')
-                .fontSize(14).fontColor($r('sys.color.font_primary'))
-                .layoutWeight(1)
-              Toggle({ type: ToggleType.Switch, isOn: this.darkOn })
-                .onChange((on: boolean) => {
-                  this.darkOn = on;
-                  writeAppearance(this.filesDir, this.darkFollow, this.darkOn);
-                  this.applyColorMode();
-                })
-            }
-            .width('100%')
-            .margin({ top: 18 })
-          }
-        }
-        .width('100%').padding(16)
-        .backgroundColor($r('app.color.launcher_card'))
-        .borderRadius(CARD_RADIUS_VP)
-        .margin({ top: 8 })
-
-        /* ================= 存储位置 ================= */
+        /* --- 存储位置 --- */
         /* ⚠️ **第 1 步只展示，不提供切换**（2026-10-04）。先证明「意图」与「实际」能对上，
          *    再让玩家能改它 —— 顺序反过来的话，一旦哪里对不上，你会同时面对
          *    「开关是新的」和「数据落到别处」两个未知数。
@@ -5409,95 +5513,87 @@ export struct LauncherHome {
         .borderRadius(CARD_RADIUS_VP)
         .margin({ top: 8 })
 
-        /* ================= 异形屏避让 ================= */
-        /* ⛔ 卡片容器是必须的 —— 第一版我漏了它，于是这一段和上面那张卡片贴在一起、
-         *    在界面上根本看不出是两块（用户 2026-10-03 当场指出）。
-         * ⭐ 版式与「启动时直接进游戏」那张卡一致：一行标题 + 一个控件、整块一个底框。 */
+        /* ================= 启动 ================= */
+        Text('启动')
+          .fontSize(13).fontColor($r('sys.color.font_secondary'))
+          .width('100%')
+          .margin({ top: 20 })
         Column() {
+          /* 启动后进哪里。⭐ 这个开关是从一次真实的卡死里长出来的：他把一个 **mod 当成游戏**选了，
+           * 于是每次打开都直接进游戏树、立刻闪退，而**没有任何界面能让他改回来**。检测机制
+           * （launch_pending）现在也能把他送回启动器，但这是**不依赖检测**的那条路 —— 存在感为零、
+           * 却让最坏情况有出口。
+           * ⚠️ 默认「先进首页」（见 LauncherPrefs 的 LAUNCH_MODE_DEFAULT）；拨完立刻写盘、下次启动生效。 */
           Row() {
             Column() {
-              Text('异形屏避让')
+              Text('启动时直接进游戏')
                 .fontSize(14).fontColor($r('sys.color.font_primary'))
-              /* 副标题一行说清两件事：**谁在定** + **现在让多少**。
-               * ⛔ 不再分开写「本机探测到 …」和「自动避让 …」两行 —— 那两行都在报同一个数，
-               *    而且标题里也报一遍（用户 2026-10-03：这些数值重复了）。 */
-              Text(this.safeAuto
-                   ? (this.detectedSafeVp === 0 ? '自动 · 无需避让'
-                      : ('自动 · ' + this.edgeNames() + ' ' + this.safeVp + ' vp'))
-                   : ('手动 · ' + this.edgeNames() + ' ' + this.safeVp + ' vp'))
+              Text(this.launchMode === LAUNCH_MODE_GAME
+                   ? '跳过这个界面，直接开始游戏'
+                   : '先停在这个界面，由你点「启动游戏」')
                 .fontSize(12).fontColor($r('sys.color.font_tertiary'))
                 .margin({ top: 4 })
             }
             .alignItems(HorizontalAlign.Start)
             .layoutWeight(1)
 
-            /* 「开」= 跟着探测走（默认）；关掉 = 用滑条的值。
-             * ⚠️ 拖滑条会**自动关掉它** —— 表达「我要自己定」最自然的方式。 */
-            Toggle({ type: ToggleType.Switch, isOn: this.safeAuto })
+            /* 开关的「开」= 直接进游戏。写成左侧标签 + 右侧开关而不是两个单选 —— 它确实是二元的。 */
+            Toggle({ type: ToggleType.Switch,
+                     isOn: this.launchMode === LAUNCH_MODE_GAME })
               .onChange((on: boolean) => {
-                /* ⭐ 高度变化必须包在 animateTo 里 —— 见下面那个容器的说明。 */
-                this.getUIContext().animateTo(
-                  { duration: 200, curve: Curve.FastOutSlowIn }, () => {
-                    this.safeAuto = on;
-                    /* 打开自动 ⇒ 立刻回到探测值；关掉 ⇒ 保留当前值，等玩家去拖。 */
-                    if (on) {
-                      this.safeVp = this.detectedSafeVp;
-                    }
-                  });
-                writeSafePref(this.filesDir, this.safeAuto, this.safeVp);
+                this.launchMode = on ? LAUNCH_MODE_GAME : LAUNCH_MODE_HOME;
+                writeLaunchMode(this.filesDir, this.launchMode);
               })
           }
           .width('100%')
-          /* ⛔ **不能用 `if` 来做这个显隐**。原因是动画而非风格：
-           *    `if` 会把节点整棵建/拆，而 `animateTo` 是在**两帧之间插值** —— 节点刚建出来时没有
-           *    上一帧，高度就从 0 直接跳到目标值，看着还是瞬移。
-           * ⇒ 让它**一直留在树里**，只改高度：`0`（收起）⇄ `SAFE_REVEAL_VP`（展开）。
-           * ⭐ 这也顺带做对了「上下出入」的手感：收回是往上收，不是原地淡出。
-           * ⛔ 开关本身**必须**一直在 —— 它是这一段唯一的出入口。 */
-          Column() {
-            Slider({
-              value: this.safeVp,
-              min: 0,
-              max: SAFE_VP_MAX,
-              step: SAFE_VP_STEP,
-              style: SliderStyle.OutSet
-            })
-              .width('100%')
-              .margin({ top: 6 })
-              .onChange((v: number, mode: SliderChangeMode) => {
-                const nv: number = Math.round(v);
-                /* ⚠️ 只在**手指离开**时写盘（`End` / `Click`）—— 拖动中每次变化都写会写上百次，
-                 * 而这是一块闪存。`Moving` 时只改内存里的值，界面照常实时预览。 */
-                const end: boolean = (mode === SliderChangeMode.End
-                                      || mode === SliderChangeMode.Click);
-                /* ⛔⛔ 这个守卫【不能】把 `end` 那次也挡掉 —— 它挡掉过一次，代价是**手动值永远存不下来**：
-                 *      拖动时 `Moving` 已经把 safeAuto 置 false、safeVp 跟到终点，于是 `End` 那一刻
-                 *      `nv === safeVp && !safeAuto` 成立 ⇒ 直接 return ⇒ `writeSafePref` 一次都没执行。
-                 *      内存里是对的（界面看着正常），文件里还是旧值，重启就回去了。
-                 * ⭐ 「跳过没变化的更新」与「只在结束时写盘」是两条各自合理的规则，
-                 *    叠在一起时**后者成了前者的受害者**。⇒ 写盘那一路必须从守卫里豁免。 */
-                if (nv === this.safeVp && !this.safeAuto && !end) {
-                  return;
-                }
-                /* ⚠️ 一动滑条就接管。 */
-                this.safeAuto = false;
-                this.safeVp = nv;
-                if (end) {
-                  writeSafePref(this.filesDir, false, nv);
-                  dumpSafeArea('\n--- slide ---\nwrote user ' + nv + ' vp\n', true);
-                }
+
+          /* ⭐⭐ 游戏语言跟随系统（2026-10-04 用户要求）。
+           *
+           * ⛔⛔ **这不是「加一个偏好」，是修一个缺陷。** 本启动器此前没有给 JVM 设过任何 locale
+           *    ⇒ HotSpot 拿到的 C locale 是 `C` ⇒ `Locale.getDefault()` 是**英文**
+           *    ⇒ 中文设备上全新安装是英文界面，而 `LanguageDialog.findClosestLocale()`
+           *    还会把这个结果**写死进 `settings.bin`**（那条「跟随系统」只用一次就固化）。
+           * ⭐ 所以出厂值必须是「跟随系统」（见 `LauncherPrefs.GAME_LOCALE_FOLLOW`）。
+           *
+           * ⚠️⚠️ **对已经在 `settings.bin` 里写死了语言的存档无效** —— 游戏读的是那个显式值，
+           *    `-Duser.language` 只在它等于 `default` 时才起作用。⇒ 副标题必须把这一条说出来，
+           *    否则玩家会以为拨了开关却没生效。改回中文的办法是**在游戏里重选一次语言**。 */
+          Row() {
+            Column() {
+              Text('游戏语言跟随系统')
+                .fontSize(14).fontColor($r('sys.color.font_primary'))
+              Text(this.gameLocaleFollow
+                   ? (this.gameLocaleValue === ''
+                      ? '认不出系统语言，不改动游戏的语言设置'
+                      : ('用系统的语言启动游戏（' + this.gameLocaleValue + '）'))
+                   : '不改动 —— 用游戏内「设置 → 语言」里选的那个')
+                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                .margin({ top: 4 })
+              /* ⚠️ 只在「跟随」且游戏那份 settings.bin 里已经写了别的语言时才提一句 ——
+               *    这是唯一会让玩家觉得「拨了没用」的情形，而它**必须**指出去游戏里改。 */
+              if (this.gameLocaleFollow && this.gameLocalePinned !== '') {
+                Text('这份存档的语言已经被写成「' + this.gameLocalePinned
+                     + '」，要去游戏里「设置 → 语言」改一次才会跟着系统走')
+                  .fontSize(12).fontColor($r('sys.color.font_secondary'))
+                  .margin({ top: 4 })
+              }
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+
+            Toggle({ type: ToggleType.Switch, isOn: this.gameLocaleFollow })
+              .onChange((on: boolean) => {
+                this.gameLocaleFollow = on;
+                writeGameLocaleFollow(this.filesDir, on);
+                /* ⚠️ 桥文件要**立刻重写**：native 在启动那一刻读它，而这次改的正是「拨完到
+                 *    下次启动」之间那个窗口 —— 不重写的话，玩家拨完开关直接点「启动游戏」，
+                 *    这次启动仍然是旧的。 */
+                this.rewriteBridge();
               })
           }
           .width('100%')
-          .height(this.safeAuto ? 0 : SAFE_REVEAL_VP)
-          /* ⛔ 承重：不给 clip 的话，高度收到 0 时**内容还在画**，只是被容器框住而已。 */
-          .clip(true)
+          .margin({ top: 18 })
         }
-        /* ⛔ 四边一样，且**与其它卡片同一个值**（16）。
-         *   我为了「滑条行高大」把这里改成过不对称的 top 14 / bottom 10 —— 那是错的：
-         *   ① 自动开着时滑条**不显示**，卡片里只剩一行标题+开关 ⇒ 上下就不对称了；
-         *   ② 而上下对称、且等于 16，才是这一页所有卡片共有的形状（用户 2026-10-03 两次指出）。
-         * ⭐ 滑条与上面那行之间的间隔归**滑条自己的 margin** 管，不是归卡片的内边距管。 */
         .width('100%').padding(16)
         .backgroundColor($r('app.color.launcher_card'))
         .borderRadius(CARD_RADIUS_VP)

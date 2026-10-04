@@ -18,6 +18,9 @@ import { nativeCopyTree } from './StorageRoot';
  *    而 `ModImporter` 谁都不依赖（2026-10-04 查过整张图）。 */
 import { gameDataRoot, gameDataRootFor, nativeListTree,
          STORAGE_MODE_SANDBOX, STORAGE_MODE_EXTERNAL } from './StorageRoot';
+/* ⭐ 游戏语言：偏好在本文件写进桥，而「设备语言 → 游戏认得的那个值」的翻译在 GameLocale。 */
+import { readGameLocaleFollow } from './LauncherPrefs';
+import { systemGameLocale } from './GameLocale';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
@@ -225,9 +228,17 @@ export function writeIsolationBridge(filesDir: string, granularity: string, key:
    * ⭐ 根**在这里算**、而不是当参数传进来：这样「哪个根」只有一处决定，
    *    以后的调用方**没有机会**传错或忘记传（同 `ISOLATION_ROOT` 那个宏被拆掉的理由）。 */
   const root: string = gameDataRoot(filesDir);
+  /* ⭐⭐ 游戏语言（2026-10-04）。**与 `root` 同一套道理：在这里算，不当参数传。**
+   *    调用方有两处（`EntryAbility.onCreate` 与 `Index.ets` 启动前），传参数就多两条能传错的路。
+   * ⚠️ 关掉「跟随系统」时写**空值**（`locale=`）而不是省略这一行 —— `read_kv` 对「行不存在」
+   *    与「值为空」都给出空串，但**把这一行写出来**能让这个文件自己说明情况：排查时看得见
+   *    「这次是关着的」，而不是只能猜。
+   * ⛔ 值必须是游戏认得的（见 `GameLocale.systemGameLocale()`）—— 给错值比不给更糟。 */
+  const locale: string = readGameLocaleFollow(filesDir) ? systemGameLocale() : '';
   const body: string = 'enabled=' + (safeKey === '' ? '0' : enabled) + '\n'
                      + 'key=' + safeKey + '\n'
                      + 'root=' + root + '\n'
+                     + 'locale=' + locale + '\n'
                      + 'granularity=' + granularity + '\n';
   const path: string = filesDir + '/' + BRIDGE_FILE_NAME;
   try {
@@ -305,6 +316,83 @@ export function liveGameDataDir(): string {
   return GAME_DATA_ROOT + GAME_DATA_SUFFIX;
 }
 
+/* ⭐⭐ 把 `settings.bin` 里 **`locale` 那个键的值**抠出来 —— 语言就是它决定的。
+ * ⛔ **为什么值得为它写一段**：`Vars.loadLocales()`（反编译核实）读的就是这个键，
+ *    而 **`locale=default` 是「跟随 `Locale.getDefault()`」** —— 在本启动器给 JVM 传
+ *    `-Duser.language`（2026-10-04 加的「游戏语言跟随系统」）**之前**，那边没有设过任何
+ *    locale，于是 HotSpot 取到的 C locale 是 `C`、`Locale.getDefault()` 就是**英文**。
+ *    ⚠️ 「之前」是有意的措辞：那个开关关掉时，行为与从前逐字节相同。
+ * ⚠️⚠️ 更要紧的是**它会被固化**：`LanguageDialog.findClosestLocale()` 在
+ *    `locale == "default"` 时去找「language 等于 `Locale.getDefault().getLanguage()`」
+ *    的那一项，找不到就**硬编码 `new Locale("en")`**，然后 **`put("locale", …)`
+ *    写回 settings.bin** ⇒ 那个「跟随系统」**一次就被写成死值**，之后再也不会跟着系统变。
+ *    实测两份 settings.bin 都是 `locale=en`，与这条吻合。
+ * ⭐ 所以这一行是分辨「语言变英文」病因的唯一判据：
+ *    `zh_CN` ⇒ 游戏该显示中文，问题在别处；`en` ⇒ 是上面那条固化，改回来只需在游戏里
+ *    重选一次语言（那会写进 `zh_CN`，而且是写在游戏真正在读的那棵树里）。
+ * ⚠️ `settings.bin` 是 ARC 的自定义二进制，但**键名是以 `writeUTF` 原样写进去的**
+ *    ⇒ 用「找到 `00 06` + `locale`、再按长度前缀取值」就能读到，不必实现整个格式的解析器。 */
+export function settingsLocaleIn(dir: string): string {
+  const p: string = dir + '/settings.bin';
+  try {
+    if (!fs.accessSync(p)) {
+      return 'no-settings';
+    }
+    const size: number = fs.statSync(p).size;
+    /* ⛔ 只读前 64 KB：`settings.bin` 是几 KB 的东西，而这个函数在 refresh() 里被调用。
+     *    读整份只是浪费，而且给了「文件被撑大」一个无上限的成本。 */
+    const want: number = size > 65536 ? 65536 : size;
+    const f: fs.File = fs.openSync(p, fs.OpenMode.READ_ONLY);
+    const buf: ArrayBuffer = new ArrayBuffer(want);
+    const got: number = fs.readSync(f.fd, buf);
+    fs.closeSync(f);
+    const u: Uint8Array = new Uint8Array(buf, 0, got);
+    const key: string = 'locale';
+    let seen: number = 0;
+    /* ⚠️ 从 2 开始：下面要回看 `u[i-2]`（长度前缀），从 0 开始会读到数组外的 `undefined`，
+     *    而那次比较恒不相等 —— 于是整段逻辑看起来在跑，其实一个都没匹配上。 */
+    for (let i = 2; i + key.length + 3 <= got; i++) {
+      let hit: boolean = true;
+      for (let j = 0; j < key.length; j++) {
+        if (u[i + j] !== key.charCodeAt(j)) {
+          hit = false;
+          break;
+        }
+      }
+      if (!hit) {
+        continue;
+      }
+      seen++;
+      /* 长度前缀对不上 ⇒ 不是这个键（可能别的键名里含 `locale`，或某个值里含它）。 */
+      if (u[i - 2] !== 0 || u[i - 1] !== key.length) {
+        continue;
+      }
+      /* 结构：`00 06 locale` | 类型字节 | 值。String 类型的值是 writeUTF ⇒ 又一个 2 字节长度。 */
+      const typeAt: number = i + key.length;
+      if (typeAt + 2 >= got) {
+        continue;
+      }
+      const vlen: number = (u[typeAt + 1] << 8) | u[typeAt + 2];
+      if (vlen <= 0 || vlen > 32 || typeAt + 3 + vlen > got) {
+        return 'type=' + String(u[typeAt]) + ' len=' + String(vlen) + ' (not a short string)';
+      }
+      let out: string = '';
+      for (let j = 0; j < vlen; j++) {
+        const c: number = u[typeAt + 3 + j];
+        /* 非可打印字节写成 `<1f>` 这种带尖括号的十六进制。
+         * ⛔ 不用 `\x` **转义**写法：那个反斜杠在几层工具之间传容易掉，而掉了之后
+         *    `'\x'` 是一个**编译错误**（`Hexadecimal digit expected`）—— 踩过。 */
+        out += (c >= 32 && c < 127) ? String.fromCharCode(c) : ('<' + c.toString(16) + '>');
+      }
+      return out;
+    }
+    return seen === 0 ? 'no-key' : ('no-exact-key(' + String(seen) + ' loose)');
+  } catch (e) {
+    const err = e as BusinessError;
+    return 'ERR(' + err.message + ')';
+  }
+}
+
 /* ⭐⭐ 两个根下**每一个**游戏数据目录的清单（每行带文件大小）—— 只给诊断用。
  *
  * ⛔ **为什么必须有它**：外置那棵树在排查里原本是不存在的 —— ArkTS 的 fileIo 在那个文件夹上
@@ -320,78 +408,6 @@ export function dumpDataDirs(filesDir: string): string {
   const arktsEntryCount = (d: string): string => {
     try {
       return String(fs.listFileSync(d).length);
-    } catch (e) {
-      const err = e as BusinessError;
-      return 'ERR(' + err.message + ')';
-    }
-  };
-  /* ⭐⭐ 把 `settings.bin` 里 **`locale` 那个键的值**抠出来 —— 语言就是它决定的。
-   * ⛔ **为什么值得为它写一段**：`Vars.loadLocales()`（反编译核实）读的就是这个键，
-   *    而 **`locale=default` 是「跟随 `Locale.getDefault()`」** —— 本启动器**没有给 JVM
-   *    设过任何 locale**（`launcher.c` 里没有 `LC_ALL`/`LANG`，`jvm.options` 里也没有），
-   *    于是 HotSpot 取到的 C locale 是 `C`、`Locale.getDefault()` 就是**英文**。
-   * ⚠️⚠️ 更要紧的是**它会被固化**：`LanguageDialog.findClosestLocale()` 在
-   *    `locale == "default"` 时去找「language 等于 `Locale.getDefault().getLanguage()`」
-   *    的那一项，找不到就**硬编码 `new Locale("en")`**，然后 **`put("locale", …)`
-   *    写回 settings.bin** ⇒ 那个「跟随系统」**一次就被写成死值**，之后再也不会跟着系统变。
-   *    实测两份 settings.bin 都是 `locale=en`，与这条吻合。
-   * ⭐ 所以这一行是分辨「语言变英文」病因的唯一判据：
-   *    `zh_CN` ⇒ 游戏该显示中文，问题在别处；`en` ⇒ 是上面那条固化，改回来只需在游戏里
-   *    重选一次语言（那会写进 `zh_CN`，而且是写在游戏真正在读的那棵树里）。
-   * ⚠️ `settings.bin` 是 ARC 的自定义二进制，但**键名是以 `writeUTF` 原样写进去的**
-   *    ⇒ 用「找到 `00 06` + `locale`、再按长度前缀取值」就能读到，不必实现整个格式的解析器。 */
-  const localeOf = (dir: string): string => {
-    const p: string = dir + '/settings.bin';
-    try {
-      if (!fs.accessSync(p)) {
-        return 'no-settings';
-      }
-      const size: number = fs.statSync(p).size;
-      const want: number = size > 65536 ? 65536 : size;
-      const f: fs.File = fs.openSync(p, fs.OpenMode.READ_ONLY);
-      const buf: ArrayBuffer = new ArrayBuffer(want);
-      const got: number = fs.readSync(f.fd, buf);
-      fs.closeSync(f);
-      const u: Uint8Array = new Uint8Array(buf, 0, got);
-      /* ⛔⛔ **必须连【长度前缀】一起匹配**（`00 06` + `locale`），否则会撞上别的键名或
-       *    值里含 `locale` 的地方 —— 第一版就是那么写的，量出来的值旁边跟着
-       *    `factoryControl-` 那样一段看不懂的东西，**无法判断读到的是不是那个键**。
-       *    ARC 的 `writeUTF` 用的是带 2 字节长度前缀的写法 ⇒ 键名 `locale` 一定长这样。 */
-      const key: string = 'locale';
-      let seen: number = 0;
-      for (let i = 0; i + key.length + 2 <= got; i++) {
-        let hit: boolean = true;
-        for (let j = 0; j < key.length; j++) {
-          if (u[i + j] !== key.charCodeAt(j)) {
-            hit = false;
-            break;
-          }
-        }
-        if (!hit) {
-          continue;
-        }
-        seen++;
-        if (u[i - 2] !== 0 || u[i - 1] !== key.length) {
-          continue;                       /* 长度前缀对不上 ⇒ 不是这个键，继续找 */
-        }
-        /* 结构：`00 06 locale` | 类型字节 | 值。String 类型的值是 `writeUTF` ⇒ 再来一个
-         * 2 字节长度前缀。两个前缀都读出来、并按它们取准确长度，别靠「打到不可打印为止」。 */
-        const typeAt: number = i + key.length;
-        if (typeAt + 2 >= got) {
-          continue;
-        }
-        const vlen: number = (u[typeAt + 1] << 8) | u[typeAt + 2];
-        if (vlen <= 0 || vlen > 32 || typeAt + 3 + vlen > got) {
-          return 'type=' + String(u[typeAt]) + ' len=' + String(vlen) + ' (not a short string)';
-        }
-        let out: string = '';
-        for (let j = 0; j < vlen; j++) {
-          const c: number = u[typeAt + 3 + j];
-          out += (c >= 32 && c < 127) ? String.fromCharCode(c) : ('\\x' + c.toString(16));
-        }
-        return out;
-      }
-      return seen === 0 ? 'no-key' : ('no-exact-key(' + String(seen) + ' loose)');
     } catch (e) {
       const err = e as BusinessError;
       return 'ERR(' + err.message + ')';
@@ -423,7 +439,7 @@ export function dumpDataDirs(filesDir: string): string {
          + '  entries=' + arktsEntryCount(root + GAME_DATA_SUFFIX)
          + ' saves=' + arktsEntryCount(root + GAME_DATA_SUFFIX + '/saves')
          + ' schematics=' + arktsEntryCount(root + GAME_DATA_SUFFIX + '/schematics') + '\n'
-         + '  locale=' + localeOf(root + GAME_DATA_SUFFIX) + '\n';
+         + '  locale=' + settingsLocaleIn(root + GAME_DATA_SUFFIX) + '\n';
     /* ② 每一个隔离键那一份。⚠️ 键用 native 列 —— ArkTS 的 `fs` 在外部根上不一定读得到，
      *    而「读不到」与「没有」在这里长得一模一样，正是要避免的那种混淆。 */
     const keysRaw: string = nativeListTree(root + INSTANCES_SUBDIR, 1);
@@ -452,7 +468,7 @@ export function dumpDataDirs(filesDir: string): string {
       const kd: string = root + INSTANCES_SUBDIR + '/' + k + SETS_SUFFIX + GAME_DATA_SUFFIX;
       out += '--- ' + which + ':' + k + '\n'
            + nativeListTree(kd, 2)
-           + '  locale=' + localeOf(kd) + '\n';
+           + '  locale=' + settingsLocaleIn(kd) + '\n';
     }
   }
   return out;

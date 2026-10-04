@@ -146,6 +146,65 @@ export function writeAppearance(filesDir: string, follow: boolean, dark: boolean
 }
 
 /* ====================================================================
+ * 游戏语言是否跟随系统
+ * ==================================================================== */
+
+const GAME_LOCALE_FILE_NAME = 'game_locale.txt';
+
+/* 文件里就一个词：`auto`（跟随系统）/ `manual`（不动）。
+ * ⭐ 格式与 `AppearancePref` / `SafePref` **故意一样**（`auto` / `manual` 一族），
+ *    它们是同一类问题：「这件事由系统定还是由你定」。
+ *
+ * ⛔⛔ **出厂必须是 `auto`（跟随系统）** —— 用户 2026-10-04 定的。而这一条**不是偏好问题，
+ *    是缺陷修复**：本启动器没有给 JVM 设过任何 locale（见 `launcher.c` 的说明），
+ *    HotSpot 拿到的 C locale 是 `C` ⇒ `Locale.getDefault()` 是**英文** ⇒
+ *    中文设备上全新安装会是英文界面，然后 `LanguageDialog.findClosestLocale()`
+ *    还会把这个结果**写死进 `settings.bin`**（那条「跟随系统」只用一次就固化）。 */
+export const GAME_LOCALE_FOLLOW: boolean = true;
+
+/** 读「游戏语言是否跟随系统」。文件不在或读不懂 ⇒ **跟随系统**（出厂值）。 */
+export function readGameLocaleFollow(filesDir: string): boolean {
+  const path: string = filesDir + '/' + GAME_LOCALE_FILE_NAME;
+  try {
+    if (!fs.accessSync(path)) {
+      return GAME_LOCALE_FOLLOW;
+    }
+    const raw: string = fs.readTextSync(path).trim();
+    if (raw === 'auto') {
+      return true;
+    }
+    if (raw === 'manual') {
+      return false;
+    }
+    /* ⚠️ 认不出的值**不静默当成某一个** —— 记一条再回退（`readLaunchMode` 那条同款）。 */
+    hilog.warn(DOMAIN, TAG, 'prefs: game locale file says "%{public}s" -- following the system', raw);
+    return GAME_LOCALE_FOLLOW;
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'prefs: reading the game locale failed (%{public}s)', err.message);
+    return GAME_LOCALE_FOLLOW;
+  }
+}
+
+/** 写「游戏语言是否跟随系统」。 */
+export function writeGameLocaleFollow(filesDir: string, follow: boolean): void {
+  const path: string = filesDir + '/' + GAME_LOCALE_FILE_NAME;
+  try {
+    const f: fs.File = fs.openSync(path,
+      fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
+    try {
+      fs.writeSync(f.fd, (follow ? 'auto' : 'manual') + '\n');
+    } finally {
+      fs.closeSync(f);
+    }
+    hilog.info(DOMAIN, TAG, 'prefs: game locale -> %{public}s', follow ? 'auto' : 'manual');
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'prefs: saving the game locale failed (%{public}s)', err.message);
+  }
+}
+
+/* ====================================================================
  * 异形屏避让（vp，四边统一一个值）
  * ==================================================================== */
 
