@@ -1315,6 +1315,23 @@ export struct LauncherHome {
     return head + String(g.versions.length) + ' 个版本共用同一份数据';
   }
 
+  /* ⭐⭐ **一行存档的键** —— 全文件**唯一**的一处定义。
+   *
+   * 凡是「渲染某份存档的那一行」的 `ForEach`，键都必须用它：`id` 只回答「这是哪一份」，
+   * 而这一行还显示**大小与时间**，那两个字段**同一份存档也会变**（玩一局游戏就把它覆盖了）。
+   * ⛔ 别再在别处手写 `sv.id` 当键 —— 那个 `id` 看着像个稳定标识，**正因如此它是个陷阱**。
+   * ⚠️ 三个调用点：「按版本」列表、「按存档」分组的内层、以及 `groupKey()` 内部。 */
+  private saveRowKey(sv: SaveEntry): string {
+    return sv.id + '|' + sv.label + '|' + sv.kind + '|' + String(sv.sectors)
+         + '|' + String(sv.bytes) + '|' + String(sv.mtime);
+  }
+
+  /* ⭐ 首页那一行版本（jar）的键。同一条道理：`path` 不会变，但**同一个路径上换一个 jar 文件**
+   * （覆盖同名文件）会让大小 / 时间 / 版本号全变，而那一行渲染的正是这三样。 */
+  private gameRowKey(g: GameJar): string {
+    return g.path + '|' + g.name + '|' + g.version + '|' + String(g.size) + '|' + String(g.mtime);
+  }
+
   /* ⭐⭐ 「按存档」分组列表**外层** `ForEach` 的键。⛔ 不能只用 `g.dir`，理由见下。
    *
    * 机制（官方文档 `arkts-rendering-control-foreach` 的原话）：
@@ -1326,7 +1343,12 @@ export struct LauncherHome {
    * ⚠️ 2026-10-03 用户报的正是它：「按存档」下长按进多选、只勾一条，**删掉了但列表不刷新**。
    * ⭐ 这是本项目**第二次**踩同一个坑 —— 第一次是垃圾站那张列表（见它 `ForEach` 上方那段注释）。
    *
-   * ⭐ 写法：**键 = 这一组渲染出来的那两行字 + 这一组的存档 id**。
+   * ⭐ 写法：**键 = 这一组渲染出来的那两行字 + 这一组每一行的 `saveRowKey()`**。
+   * ⚠️⚠️ **这里必须是每一行的 `saveRowKey()`，不能只放 `s.id`** —— 这是我 2026-10-03 那一版
+   *   自己犯的错：`id` 是**稳定**的（`manual:0` 永远是 `manual:0`），而**字节数与修改时间会变**
+   *   ⇒ 只放 id 的话外层仍被判为「保留」⇒ 不重建 ⇒ 内层更不会跑，那一行就一直显示旧的
+   *   「多大 / 什么时候存的」。⭐ 判据：**外层键要覆盖内层渲染的一切** —— 外层不重建时，
+   *   内层**根本没有机会**跑，内层的键写得再对也没用。
    * ⛔ 故意**不逐字段列**（目录、孤儿键、版本名单、`isCurrent`、存档 id…）：那种写法**漏一个字段
    *   就复发一次**；而「组头那两行」正好是 `groupTitle` / `groupSub` 的返回值 ⇒ 它们就是
    *   渲染依赖的**全集**，以后改组头版式也不会忘。
@@ -1335,7 +1357,7 @@ export struct LauncherHome {
   private groupKey(g: SaveGroup): string {
     const ids: string[] = [];
     for (const s of g.saves) {
-      ids.push(s.id);
+      ids.push(this.saveRowKey(s));
     }
     return g.dir + '|' + this.groupTitle(g) + '|' + this.groupSub(g) + '|' + ids.join(',');
   }
@@ -2302,7 +2324,7 @@ export struct LauncherHome {
               .backgroundColor($r('app.color.launcher_card'))
               .borderRadius(CARD_RADIUS_VP)
               .onClick(() => { this.pick(g.path); })
-            }, (g: GameJar): string => g.path)
+            }, (g: GameJar): string => this.gameRowKey(g))
           }
           .width('100%')
           .padding({ left: 16, right: 16, top: 16 })
@@ -2469,7 +2491,7 @@ export struct LauncherHome {
                 .width('100%')
                 .margin({ bottom: 8 })
                 .alignItems(VerticalAlign.Top)
-              }, (r: MetaRow) => r.label)
+              }, (r: MetaRow) => r.label + '|' + r.value)
             }
             .width('100%')
           }
@@ -2673,7 +2695,7 @@ export struct LauncherHome {
                  * 两处行为不一致时同一个动作在不同视图下结果不同，而那不是「两个视图」，是「两个东西」。 */
                 this.openSaveRow(this.versionSavesDir(), sv.id);
               })
-            }, (sv: SaveEntry) => sv.id)
+            }, (sv: SaveEntry) => this.saveRowKey(sv))
           }
           .width('100%')
         }
@@ -4041,7 +4063,7 @@ export struct LauncherHome {
                           }
                           this.openSaveRow(g.dir, sv.id);
                         })
-                      }, (sv: SaveEntry) => this.saveKey(g.dir, sv.id))
+                      }, (sv: SaveEntry) => this.saveRowKey(sv))
                     }
                     .width('100%')
                     .margin({ bottom: 16 })
