@@ -23,6 +23,10 @@
     {
       "name": "danger",
       "value": "#E84026"
+    },
+    {
+      "name": "btn_neutral",
+      "value": "#E3E6EA"
     }
   ]
 }
