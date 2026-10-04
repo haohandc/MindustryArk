@@ -77,6 +77,75 @@ export function writeLaunchMode(filesDir: string, mode: string): void {
 }
 
 /* ====================================================================
+ * 深色模式
+ * ==================================================================== */
+
+const APPEARANCE_FILE_NAME = 'appearance.txt';
+
+/** 界面外观偏好。`follow` = 跟随系统（玩家没管过），否则用 `dark`。 */
+export interface AppearancePref {
+  follow: boolean;
+  dark: boolean;
+}
+
+/* 文件里一行两个词：`auto dark` / `auto light` / `manual dark` / `manual light`。
+ *
+ * ⭐ 格式与 `SafePref` 那套**故意一样**（`auto` / `user` + 一个值），因为它们是同一族问题：
+ *    「玩家管过这件事没有」。两处写成一个形状，读代码的人只需要理解一次。
+ *
+ * ⚠️ `auto` 时那个 dark 值**仍然写进去** —— 它不参与判断，只为了让这个文件自己可读
+ *    （诊断时要能看出「跟随系统时系统当时是什么」）。同 `writeSafePref` 对 vp 的做法。
+ *
+ * ⛔ **这份偏好是必须的，不是锦上添花**：`ApplicationContext.setColorMode()` 只对
+ *    **当前进程**有效，进程一重启就回到系统默认。⇒ 想把「强制深色」保住，就得自己记住它，
+ *    并在每次启动后重新应用一次（见 LauncherHome 的 `applyColorMode`）。 */
+function parseAppearance(raw: string): AppearancePref {
+  const parts: string[] = raw.trim().split(/\s+/);
+  if (parts.length >= 2 && (parts[0] === 'auto' || parts[0] === 'manual')) {
+    const dark: boolean = parts[1] === 'dark';
+    /* 第二个词只认 dark/light；写别的说明这个文件不是我们写的 ⇒ 整条当读不懂。 */
+    if (parts[1] === 'dark' || parts[1] === 'light') {
+      return { follow: parts[0] === 'auto', dark: dark };
+    }
+  }
+  return { follow: true, dark: false };
+}
+
+/** 读外观偏好。文件不在或读不懂 ⇒ **跟随系统**（= 本项目一直以来的行为）。 */
+export function readAppearance(filesDir: string): AppearancePref {
+  const path: string = filesDir + '/' + APPEARANCE_FILE_NAME;
+  try {
+    if (!fs.accessSync(path)) {
+      return { follow: true, dark: false };
+    }
+    return parseAppearance(fs.readTextSync(path));
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'prefs: reading the appearance failed (%{public}s)', err.message);
+    return { follow: true, dark: false };
+  }
+}
+
+/** 写外观偏好。 */
+export function writeAppearance(filesDir: string, follow: boolean, dark: boolean): void {
+  const path: string = filesDir + '/' + APPEARANCE_FILE_NAME;
+  try {
+    const f: fs.File = fs.openSync(path,
+      fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
+    try {
+      fs.writeSync(f.fd, (follow ? 'auto ' : 'manual ') + (dark ? 'dark' : 'light') + '\n');
+    } finally {
+      fs.closeSync(f);
+    }
+    hilog.info(DOMAIN, TAG, 'prefs: appearance -> %{public}s %{public}s',
+               follow ? 'auto' : 'manual', dark ? 'dark' : 'light');
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'prefs: saving the appearance failed (%{public}s)', err.message);
+  }
+}
+
+/* ====================================================================
  * 异形屏避让（vp，四边统一一个值）
  * ==================================================================== */
 
