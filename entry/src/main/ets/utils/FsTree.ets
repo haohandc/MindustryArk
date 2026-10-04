@@ -12,8 +12,26 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
 
-/* 环的保护：`statSync` 跟随符号链接，指向上级的链接会让递归不终止、把主线程钉死。 */
+/* 环的保护：跟随符号链接时，指向上级的链接会让递归不终止、把主线程钉死。
+ * ⚠️ 现在两侧都用 `lstatSync`（见 `removeTree` 里那段），软链本身不再被跟进去 ——
+ *    这个上限保留的是一条**独立**的兜底：真目录深到 32 层，或是别的成因。 */
 const MAX_DEPTH = 32;
+
+/** 这个路径**自己**是不是一个目录 —— ⛔ **不跟随符号链接**（`lstatSync`）。
+ *
+ * ⛔⛔ 与下面导出的 `isDir()` **不是同一件事**，⛔ 别合并：
+ *   · `isDir()` 用 `statSync`（**跟随**）—— 问的是「指向的地方是不是目录」。
+ *     别的调用点要的是这个语义（比如「这个路径能不能当目录用」）。
+ *   · 本函数用 `lstatSync`（**不跟随**）—— 问的是「它本身是不是一个目录」。
+ *     **删除**必须用这个：软链自己不是目录，所以它该被 `unlink` 掉而不是被走进去。
+ * ⚠️ 2026-10-05 修的那条正是不区分这两者造成的（见 `removeTree` 里那段）。 */
+function isDirNoFollow(path: string): boolean {
+  try {
+    return fs.lstatSync(path).isDirectory();
+  } catch (e) {
+    return false;
+  }
+}
 
 /** 一次复制/删除的记账。
  *  `firstError` 保留原样（调用点的措辞依赖它），`samples` 额外多留几条 —— 理由见 `recordFailure`。 */
@@ -127,8 +145,15 @@ export function removeTree(path: string, depth: number, acc: TreeStat): void {
    * 原来是缺这一段的，而对文件调 `listFileSync` 只报 `Not a directory`：
    * 隔离那边一直拿目录调它，所以「它删不了文件」从没暴露过，
    * 是回收站的端到端探针（合成数据）才抓到的。
-   * ⇒ 它自己处理两种情况，⛔ 不靠调用方「记得只能传目录」。 */
-  if (!isDir(path)) {
+   * ⇒ 它自己处理两种情况，⛔ 不靠调用方「记得只能传目录」。
+   * ⛔⛔ **`isDirNoFollow`，⛔ 不是 `isDir`**（2026-10-05 修的）：一个**指向目录的软链**
+   *    在 `statSync` 下是 `true` ⇒ 会走进下面那支、把**链接指向的那个目录的内容**删掉，
+   *    而链接本身还留着（最后那句 `rmdirSync` 对软链会失败）。
+   *    ⭐ 危害在于**它删的东西不在我们这棵树里**：外置根是玩家可见、可放东西的地方
+   *    （`Download/<包名>/`），一个指向别处的链接会让「清理游戏数据」变成
+   *    「删掉链接指向的那份东西」。`lstatSync` 下软链不是目录 ⇒ 走下面那支被 `unlink`
+   *    —— **只删链接本身，目标分毫不动**，正是这里想要的行为。 */
+  if (!isDirNoFollow(path)) {
     try {
       fs.unlinkSync(path);
       acc.files += 1;
@@ -149,14 +174,19 @@ export function removeTree(path: string, depth: number, acc: TreeStat): void {
   }
   for (const n of names) {
     const c: string = path + '/' + n;
-    let isDir: boolean = false;
+    /* ⛔⛔ **`lstatSync`，⛔ 不是 `statSync`**（2026-10-05 修的，理由同上面那句：
+     *    跟随时一个指向目录的软链会被当成目录、于是**递归进目标里删**）。
+     * ⚠️ 这里与 `copyTreeInto` 那边的选择一致 —— 而那边本来就用 `lstat` 判定，
+     *    也就是说「复制不跟软链、删除却跟」这个不一致是**真的存在过**，
+     *    它正是本文件顶部那条 MAX_DEPTH 注释所假设的形态。 */
+    let sub: boolean = false;
     try {
-      isDir = fs.statSync(c).isDirectory();
+      sub = fs.lstatSync(c).isDirectory();
     } catch (e) {
       recordFailure(acc, '读状态失败 ' + c);
       continue;
     }
-    if (isDir) {
+    if (sub) {
       removeTree(c, depth + 1, acc);
     } else {
       try {

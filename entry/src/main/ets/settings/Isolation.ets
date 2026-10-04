@@ -354,10 +354,22 @@ export function settingsLocaleIn(dir: string): string {
     /* ⛔ 只读前 64 KB：`settings.bin` 是几 KB 的东西，而这个函数在 refresh() 里被调用。
      *    读整份只是浪费，而且给了「文件被撑大」一个无上限的成本。 */
     const want: number = size > 65536 ? 65536 : size;
+    /* ⛔⛔ **`closeSync` 必须在 `finally` 里**（2026-10-05 修的）。
+     *    原来它排在 `readSync` 后面、同一条直线 ⇒ `readSync` 一抛（IO 错、文件正好被删、
+     *    权限变），那句 `closeSync` **就永远不会执行**，而 `f` 已经是一个打开的描述符
+     *    ⇒ **fd 泄漏**。⚠️ 这个函数在 `refresh()` 里被调用（`dumpDataDirs`），
+     *    而它一次要读**每一个数据目录**（两个根 × 几个隔离键）⇒ 一次失败泄漏一个，
+     *    一轮刷新可能泄漏好几个，而且**没有任何症状**，直到某天 `open` 开始报 EMFILE。
+     * ⭐ 判据：**`openSync` 之后到 `closeSync` 之间的任何一行都可能抛，所以它们之间不能有事。** */
     const f: fs.File = fs.openSync(p, fs.OpenMode.READ_ONLY);
-    const buf: ArrayBuffer = new ArrayBuffer(want);
-    const got: number = fs.readSync(f.fd, buf);
-    fs.closeSync(f);
+    let buf: ArrayBuffer = new ArrayBuffer(0);
+    let got: number = 0;
+    try {
+      buf = new ArrayBuffer(want);
+      got = fs.readSync(f.fd, buf);
+    } finally {
+      fs.closeSync(f);
+    }
     const u: Uint8Array = new Uint8Array(buf, 0, got);
     const key: string = 'locale';
     let seen: number = 0;

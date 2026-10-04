@@ -538,6 +538,14 @@ export struct LauncherHome {
     if (this.showVaultClearAsk) { this.showVaultClearAsk = false; return true; }
     /* 删除版本的确认窗。⚠️ 与上面同理：一个会真删东西的窗必须能被返回键关掉。 */
     if (this.showGameDeleteAsk) { this.showGameDeleteAsk = false; return true; }
+    /* 整包导入的目标选择框。⛔ **2026-10-05 补的**：它在 `build()` 里是以 `if (this.importOpen)`
+     *    渲染的（与上面那些窗同类），但这条链上**没有它** ⇒ 框开着时按返回键会**穿过去**，
+     *    去关下面那一层（或者干脆什么都没关）。
+     * ⚠️ 与上面那些窗的不同之处：它是一个**会写盘**的窗（选完点确认就覆盖目标），
+     *    所以「关不掉」比别的窗更糟 —— 它挡着下面、又只能靠右上角那个 ✕ 出去。
+     * ⭐ 位置在 `transferOp` **之前**：`build()` 里 `importOpen` 那一段声明在 `transferOp` 之后，
+     *    而 Stack 后声明的在上层 ⇒ 它更靠外，返回键就该先关它（同本函数开头那条顺序说明）。 */
+    if (this.importOpen) { this.importOpen = false; return true; }
     if (this.transferOp !== '') { this.transferOp = ''; this.transferNote = ''; return true; }
     if (this.isolationConfirm !== '') { this.isolationConfirm = ''; return true; }
     if (this.showIsolationAsk) {
@@ -638,6 +646,11 @@ export struct LauncherHome {
    * ⚠️ 复制可以多选；移动**只会有一个**（在 `toggleTransferPick` 里强制）。 */
   @State transferPicked: string[] = [];
 
+  /* 数据目录 → 它现在有几个存档。**只在打开这个窗时算一次**（`cacheTransferCounts()`），
+   * 渲染只查表。⛔ 别改回渲染期现算 —— 那会每个目标每帧读一次盘（见那个函数的说明）。
+   * ⚠️ 用 `Map` 而不是 `Record`：ArkTS 对无类型对象字面量是拒绝的（同 `listSaves` 那处）。 */
+  @State transferTargetCounts: Map<string, number> = new Map<string, number>();
+
   /* ── 整包导入 / 导出 ────────────────────────────────────────────────
    * `importRoot` 是**已解压且已校验过**的那个数据根（在沙箱暂存里）。
    * ⛔ 校验没过就**不开**那个对话框 —— 让玩家对着一个坏包选目标是最坏的一种失败。 */
@@ -649,6 +662,23 @@ export struct LauncherHome {
    *    这条就是用户 2026-10-03 要的「互斥逻辑」。 */
   @State importPicked: string[] = [];
   @State importNote: string = '';
+
+  /* ⭐⭐ 「未隔离的那一份」那三样，**在这里存下来给渲染用**（2026-10-05 加的）。
+   *
+   * ⛔⛔ 原来渲染里直接调 `liveImportTarget()`，而那**不是一个取值器** ——
+   *    它内部走 `countsOf(dir)`（列 `saves/` 等几个目录）+ `gameDataExists(dir)`，
+   *    是**真读盘**。而那段界面里它被调了 **6 次**（每个用到它的表达式一次）
+   *    ⇒ 每帧**至少六遍目录扫描**，还全在渲染路径上。
+   * ⭐ 本文件早就写着这条规矩（见 `granularityHintText` 上方那段）：
+   *    **凡是要读盘的，一律在事件处理里算好、存进 @State，渲染只读已算好的值。**
+   *    这一处只是漏了。⚠️ 它是三行原语而不是整个 `VersionEntry`：@State 里放接口对象
+   *    会让观测层次变复杂，而渲染真正需要的只有这三样。
+   * ⚠️ 填值的地点是 `startImport()`（唯一打开这个框的地方），⛔ 不是 `refresh()` ——
+   *    这个框开着的期间 `refresh()` 还会被别的事调，那会让「它有几个存档」在玩家眼皮下变。 */
+  @State importLiveDir: string = '';
+  @State importLiveHasData: boolean = false;
+  @State importLiveCount: number = 0;
+
   @State importMsg: string = '';   /* 非空 = 顶部显示一条进行中/失败的提示 */
   @State importToast: string = ''; /* 成功后的短提示 */
   @State exportMsg: string = '';
@@ -689,8 +719,16 @@ export struct LauncherHome {
   @State showMultiAsk: boolean = false;
   /** 确认框里那张名单展开了吗。⚠️ 默认收起 —— 一次选二十个会把窗撑爆。 */
   @State multiListOpen: boolean = false;
-  /** 多选删除之后的一句话（成功/失败都写这儿）。⚠️ 与 `vaultNote` 分开：
-   * 那个渲染在**回收站**里，而这里是**存档页**。 */
+  /* 存档页上那一句话（成功/失败都写这儿）。⚠️ 与 `vaultNote` 分开：
+   * 那个渲染在**回收站**里，而这里是**存档页** —— 一个字段两个渲染点就是「按了没反应」的病。
+   *
+   * ⛔⛔ **每一个会写它的动作都必须在【开头】先清空它**（2026-10-05 修的）。
+   *    它原来**从来不**被清：只在成功/失败时被重新赋值 ⇒ 上一次那句话会一直挂在存档页上，
+   *    而玩家已经做了另一个动作。最坏的一种是「永久删除」—— 它**成功时故意不说话**
+   *    （那一行消失本身就是反馈），于是屏幕上留着的必然是**上一条错误**
+   *    ⇒ 一次成功的删除之后，玩家读到一条错误。
+   * ⭐ 判据：**一条关于旧状态的提示，比没有提示更坏 —— 它指向一个已经不存在的问题。**
+   *    （同 `staleCopyNote` 那处：状态一解除就把它清掉。） */
   @State savesNote: string = '';
   @State copyTargets: CopyTarget[] = [];
   @State copyPicked: string[] = [];
@@ -1664,9 +1702,6 @@ export struct LauncherHome {
     this.resolution = resolveGame(this.filesDir, this.bundleCodeDir);
     this.bundledVer = bundledGameVersion(this.bundleCodeDir);
     this.hasBundled = hasBundledGame(this.bundleCodeDir);
-    /* ⭐ 设置页那一行的说明：与版本列表同一批算好。⚠️ 它按 `this.granularity`（当前档），
-     * 而弹窗那份按 `pendingGranularity`（待确认档）—— 两者在玩家正切换时不同，不能共用。 */
-    this.granularityHintText = this.granularityHint(readGranularity(this.filesDir));
 
     /* ⭐ 外观：先读偏好、再应用。**每次 refresh 都要重放一次** —— `setColorMode` 不跨进程保留
      * （理由见 `applyColorMode`）。⚠️ 只在「读到的值与当前 State 不同」时才写 State，
@@ -1828,6 +1863,17 @@ export struct LauncherHome {
     /* ⚠️ 版本列表要在 `resolution` / `hasBundled` / `games` **都算好之后**才能建（三样都用），
      * 而建它的那一步会**读每个 jar**（见 versionEntryOf）⇒ 整轮 refresh 只建一次，渲染只用结果。 */
     this.versions = this.buildVersions();
+    /* ⭐ 设置页那一行的说明。⚠️ **必须在 `this.versions` 之后**（2026-10-05 修的）：
+     *    `granularityHint()` 走 `isolationGroups()`，而那个**遍历 `this.versions`**
+     *    —— 排在它前面时就拿到**上一轮**的版本列表。
+     * ⚠️ 症状是**静默的**：导入或删掉一个游戏 jar 之后，那一行说的还是旧分组
+     *    （「v160 的所有版本共用一份」而那个版本已经不在列表里了），
+     *    而它**不会自己纠正** —— 要等下一次 refresh 才变成对的，中间玩家看到的是错的。
+     * ⛔ 原来它排在 `hasBundledGame` 那一带（`versions` 之前约 160 行），看着像「和列表同一批算的」，
+     *    其实差了一整段。**「同一批」必须变成「在它之后」，不是「在它附近」。**
+     * ⚠️ 它按 `this.granularity`（当前档），而弹窗那份按 `pendingGranularity`（待确认档）
+     *    —— 两者在玩家正切换时不同，不能共用。 */
+    this.granularityHintText = this.granularityHint(readGranularity(this.filesDir));
     /* 选中的版本没了（jar 被删了）⇒ 退回当前版本，别让右边空着。
      * ⚠️ 「当前版本」一定在这一批里（要么内置、要么来自 games），这个兜底是可靠的。 */
     if (this.selectedVersion === ''
@@ -2648,6 +2694,9 @@ export struct LauncherHome {
       /* 一个都没勾 ⇒ 什么都不做。⛔ 也不退出 —— 与 toggleMultiPick 同一条规则：退出只归「取消」管。 */
       return;
     }
+    /* ⭐ 新动作开始 ⇒ 清掉上一次那句话（见 `savesNote` 上方的说明）。
+     * ⚠️ 排在上面那个早退**之后**：一个没勾就什么都不做的这一次，不该顺手把屏幕上的东西抹掉。 */
+    this.savesNote = '';
     const now: number = Date.now();
     /* ⭐ 归档那一条要认出**刚搬进去的**那几个。⛔ 不靠「新的在前、数前 N 个」——
      *    那样在「有失败」时会把**原本就在回收站里**的条目误归档。用前后 id 集合求差即可，
@@ -2713,6 +2762,8 @@ export struct LauncherHome {
     if (sv === undefined) {
       return;
     }
+    /* ⭐ 新动作开始 ⇒ 清掉上一次那句话（见 `savesNote` 上方的说明）。 */
+    this.savesNote = '';
     const dir: string = this.selectedSaveDir();
     const now: number = Date.now();
     /* ⭐ 把**来源**一起记下来（回收站里区分不出原来是哪个版本的）。
@@ -2720,7 +2771,13 @@ export struct LauncherHome {
     const err: string = vaultDelete(sv, dir, this.vaultDays, now,
                                     this.ownerOfDir(dir), this.keyOfDir(dir));
     if (err !== '') {
-      this.vaultNote = err;
+      /* ⛔⛔ **写 `savesNote`，⛔ 不是 `vaultNote`**（2026-10-05 修的）。
+       *    `vaultNote` 只在**回收站那一屏**渲染；而这个动作是玩家在**存档页**按的
+       *    ⇒ 失败时他在自己正看着的那一屏上**看不到任何东西**：按了删除、存档还在、
+       *    没有任何解释（那条消息在十几行之外、另一个页面里等着他）。
+       * ⭐ 判据与 `doPermanentDelete` 那条一样：**失败要说在玩家正看着的这一屏。**
+       *    ⚠️ 这两个字段分开本来就是为这个（见 `savesNote` 的声明），只是这个调用点漏了。 */
+      this.savesNote = err;
       this.refresh();
       return;
     }
@@ -2732,8 +2789,8 @@ export struct LauncherHome {
         const e2: string = vaultSetArchived(fresh[0].id, true, this.vaultDays, now);
         if (e2 !== '') {
           /* ⚠️ 搬成功了、归档没设上 ⇒ 说出来：它现在是**普通回收站条目**，到期会被清掉 ——
-           * 而那正是玩家选了归档想避免的事。 */
-          this.vaultNote = '已经搬进回收站了，但归档没设上（它到期仍会被清理）：' + e2;
+           * 而那正是玩家选了归档想避免的事。⛔ 同样写 `savesNote`（理由见上）。 */
+          this.savesNote = '已经搬进回收站了，但归档没设上（它到期仍会被清理）：' + e2;
         }
       }
     }
@@ -2753,6 +2810,11 @@ export struct LauncherHome {
     if (sv === undefined) {
       return;
     }
+    /* ⭐ 新动作开始 ⇒ 清掉上一次那句话。
+     * ⛔⛔ **这一处尤其需要**：永久删除**成功时故意不说话**（那一行消失本身就是反馈），
+     *    所以如果不清，上一次留下的那句错误会**横在屏幕上**，而玩家刚做完一次成功的删除
+     *    ⇒ 他读到的是「刚出错了吗？」。**一条关于旧状态的错误比没有错误更坏。** */
+    this.savesNote = '';
     const err: string = vaultPermanentDelete(sv, this.selectedSaveDir());
     this.selectedSave = '';
     if (err !== '') {
@@ -2764,11 +2826,13 @@ export struct LauncherHome {
   /* 批量永久删除（**真的抹掉**）。⚠️ 逐个删、逐个报失败 —— 这条路上没有回滚可退。 */
   private deleteMultiPermanent(): void {
     this.stopPermHold();
+    /* ⭐ 那次清理排在下面那个早退**之后** —— 见它后面那句。 */
     const rows: SaveRow[] = this.pickedRows();
     if (rows.length === 0) {
       /* 一个都没勾 ⇒ 什么都不做。⛔ 也不退出 —— 与 `toggleMultiPick` 同一条规则。 */
       return;
     }
+    this.savesNote = '';
     const fails: string[] = [];
     let done: number = 0;
     for (const r of rows) {
@@ -3005,6 +3069,11 @@ export struct LauncherHome {
     if (this.transferSourceRows().length === 0) {
       return;
     }
+    /* ⭐ 目标那几行的数目说明**先算好再开窗**（2026-10-05）。理由见 `cacheTransferCounts`：
+     * 原来是渲染期每个目标调一次 `countSavesIn()`（真读盘）。
+     * ⚠️ 排在 `transferOp = op` **之前** —— 那一句就是「开这个窗」，而窗一开就会渲染、
+     *    渲染就会查这张表。⛔ 顺序反了的话，第一帧查到的是一张空表（全 0）。 */
+    this.cacheTransferCounts();
     this.transferOp = op;
     this.transferNote = '';
     /* 每次打开都从**空选择**开始 —— 上一次的选择留在那儿会让玩家以为已经选好了。 */
@@ -3015,6 +3084,24 @@ export struct LauncherHome {
     this.transferOp = '';
     this.transferNote = '';
     this.transferPicked = [];
+    this.transferTargetCounts = new Map<string, number>();
+  }
+
+  /* 目标那一行要显示的「它现在有几个存档」—— 一次算好，渲染只查表。
+   *
+   * ⛔⛔ **原来是渲染期算的**：`transferTargetNote()` 内部调 `countSavesIn(v.dataDir + '/saves')`，
+   *    而它被 `ForEach` 里**每个目标**调一次 ⇒ 每帧每个目标都真读一次盘。
+   *    本项目已经为同一件事写过规矩（见 `granularityHintText` 上方那段）：
+   *    **凡是要读盘的，一律在事件处理里算好存进 @State，渲染只读已算好的值。**
+   * ⚠️ 与那条规则唯一的区别是这里要的是**每个目标一个数**，所以用 Map。
+   * ⚠️ 也把源那一份的数目一起存住：`transferSourceRows()` 同样会读盘，
+   *    而它在渲染里被判据和文案用到好几处。 */
+  private cacheTransferCounts(): void {
+    const m: Map<string, number> = new Map<string, number>();
+    for (const v of this.versions) {
+      m.set(v.dataDir, countSavesIn(v.dataDir + '/saves'));
+    }
+    this.transferTargetCounts = m;
   }
 
   /** 这一项选中了吗。 */
@@ -3060,7 +3147,11 @@ export struct LauncherHome {
    * ⚠️ 多选时要改复数措辞 —— 否则「复制**一份**过去」在一批 3 个时是错的。
    * ⛔ 源 =1 时**逐字保持原样**（那是已经在用的句子，别因为重构改了它）。 */
   private transferTargetNote(v: VersionEntry): string {
-    const n: number = countSavesIn(v.dataDir + '/saves');
+    /* ⭐ 只查表，⛔ 不读盘 —— 表由 `cacheTransferCounts()` 在打开这个窗时填好。
+     * 取不到（表是空的，比如状态被别处改了）就报 0，与「真的一个都没有」一样，
+     * ⛔ 不要回退去读盘：那等于把刚拆掉的每帧读盘又请回来。 */
+    const looked: number | undefined = this.transferTargetCounts.get(v.dataDir);
+    const n: number = looked === undefined ? 0 : looked;
     const head: string = n === 0
       ? '它还没有存档'
       : ('它现在有 ' + String(n) + ' 个存档');
@@ -4894,6 +4985,11 @@ export struct LauncherHome {
      * ⭐ 判据：一个「上次留下的选择」在新一轮里出现，而新一轮的第一步就是让玩家确认它 ——
      *    那种默认值必须清掉，否则玩家会以为那是他自己这次选的。 */
     this.importPicked = [];
+    /* ⭐ 那三行原语在这里算一次（理由见 `importLiveDir` 的声明）—— 唯一打开这个框的地方。 */
+    const live: VersionEntry = this.liveImportTarget();
+    this.importLiveDir = live.dataDir;
+    this.importLiveHasData = live.hasData;
+    this.importLiveCount = live.saveCount;
     this.importOpen = true;
   }
 
@@ -5180,22 +5276,22 @@ export struct LauncherHome {
               Column() {
                 Text('未隔离的那一份')
                   .fontSize(15)
-                  .fontColor(this.isImportPicked(this.liveImportTarget().dataDir)
+                  .fontColor(this.isImportPicked(this.importLiveDir)
                              ? $r('sys.color.brand') : $r('sys.color.font_primary'))
                   .width('100%')
                 Text('所有版本共用它（隔离关着时就是这里）'
-                     + (this.liveImportTarget().hasData
-                        ? '　已有 ' + String(this.liveImportTarget().saveCount) + ' 个存档'
+                     + (this.importLiveHasData
+                        ? '　已有 ' + String(this.importLiveCount) + ' 个存档'
                         : '　还没有数据'))
                   .fontSize(12)
-                  .fontColor(this.liveImportTarget().hasData
+                  .fontColor(this.importLiveHasData
                              ? $r('sys.color.font_secondary') : $r('sys.color.brand'))
                   .width('100%').margin({ top: 3 })
               }
               .alignItems(HorizontalAlign.Start).layoutWeight(1)
               /* ⭐ 勾中的样子**复用本项目已有的那套**（文字变 brand 色 + 右侧 ✓），
                * ⛔ 不引入 `Checkbox` —— 它有自己的一套主题与获焦行为，本项目在焦点上栽过。 */
-              if (this.isImportPicked(this.liveImportTarget().dataDir)) {
+              if (this.isImportPicked(this.importLiveDir)) {
                 Text('✓').fontSize(16).fontColor($r('sys.color.brand'))
               }
             }
@@ -5204,7 +5300,7 @@ export struct LauncherHome {
             .backgroundColor($r('app.color.launcher_card'))
             .borderRadius(CARD_RADIUS_VP)
             .margin({ top: 8 })
-            .onClick(() => { this.toggleImportPick(this.liveImportTarget().dataDir); })
+            .onClick(() => { this.toggleImportPick(this.importLiveDir); })
 
             /* ⚠️ 一个版本都没有时，上面那一项就是唯一的目标 —— 而那正是「管理工具」形态。
              *    不要在这里写「请先导入一个游戏」：管存档本来就不需要游戏。 */

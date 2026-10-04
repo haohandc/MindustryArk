@@ -265,6 +265,9 @@ struct Index {
   @State imeFieldH: number = 1;
   /* 持有它，以便页面销毁时能移除 avoid-area 监听。 */
   private imeWindow: window.Window | undefined = undefined;
+  /* 这一页已经销毁了吗 —— ⛔ **只由 `aboutToDisappear` 置真**，用来给「先 await、后注册」
+   * 的那条异步路径（`watchKeyboardHeight`）一个判据。见那里与 `aboutToDisappear` 的说明。 */
+  private pageGone: boolean = false;
   /* 当前记录在磁盘上的操作方案。显示在开关上，因为改动要到下次启动才生效。 */
   @State controlMode: string = CONTROL_MODE_MOBILE;
   /* 球在哪，以及它的菜单是否打开。ballPlaced：窗口尺寸已知之前球无法定位（它从右边缘开始，
@@ -300,10 +303,24 @@ struct Index {
 
   /** 设置一次，在 XComponent 存在之前：见 aboutToAppear。 */
   @State shieldBlocked: boolean = false;
-  /* Kit 的原始答案：'on' / 'off' / 'no-lib: ...' / 'no-sym: ...' / 'mode=N'。 */
-  @State shieldDiag: string = '';
-  /* 上一次启动的临终遗言，在它的日志还存在时捕获。 */
-  @State jvmFaults: string = '';
+  /* Kit 的原始答案：'on' / 'off' / 'no-lib: ...' / 'no-sym: ...' / 'mode=N'。
+   * ⛔ **不是 `@State`**（2026-10-05 改的）：它在 `aboutToAppear` 里被写、被读（用来算
+   *    `shieldBlocked` 与那行日志），但**从来没有在 `build()` 里被读过** ⇒ 那个 `@State`
+   *    只买到「每次赋值都把这一页标脏」，一次重绘都不产出。同 `jvmFaults`。
+   * ⚠️ `shieldBlocked` **保留 `@State`** —— 它真的在 `build()` 里决定挂不挂 XComponent。 */
+  private shieldDiag: string = '';
+  /* 上一次启动的临终遗言，在它的日志还存在时捕获。
+   * ⛔⛔ **同样不是 `@State`，而且它当前【没有任何读者】**（2026-10-05 记下来的）。
+   *    这里如实写出来，而不是留一个看起来在用的字段：
+   *    · 它捕获的那几行（`mmap(RWX) FAILED` / `FORCING -Xint` / `calling JNI_CreateJavaVM`
+   *      / `execmem:` / `shield now:`）**全部来自 `stderr.log` 的尾部**；
+   *    · 而「导出诊断」已经把 `stderr.log` / `stdout.log` 各 128 KB **原样收进报告**
+   *      （`ExportDiagnostics`）⇒ 这几行的信息**已经在玩家能拿到的那个文件里**了。
+   *    ⭐ 所以它现在是**重复采集**：删掉它不会少任何信息，留着也不会多给。
+   *    ⛔ 但我**没有删**：它是「在标记被清除之前、原生 main() 截断日志之前」抢下来的那一份，
+   *      窗口只有那一下，而删掉它要重新论证「那条窗口真的没有价值」—— 那不是这一轮该做的事。
+   *    ⇒ 保留、标清楚，等哪天有人要动这里时再决定。 */
+  private jvmFaults: string = '';
   /** 启动器留下了「JVM 正在创建」的标记。 */
   @State jvmIncomplete: boolean = false;
 
@@ -499,6 +516,20 @@ struct Index {
     try {
       const ctx = getContext(this) as common.UIAbilityContext;
       const win = await window.getLastWindow(ctx);
+      /* ⛔⛔ **`await` 之后再确认这一页还在**（2026-10-05 修的）。
+       *    上面那句是**异步**的，而 `aboutToDisappear()` 里有一份对称的清理：
+       *      `imeWindow.off('avoidAreaChange'); imeWindow = undefined;`
+       *    ⇒ 若销毁正好发生在这次 `await` 期间，清理**已经跑完了**，而这一句紧接着
+       *      **又把监听注册上去、并把 `imeWindow` 重新赋成一个已经不存在的窗口上的窗口**
+       *      ⇒ 那个监听器**永远不会被摘掉**（`aboutToDisappear` 不会再跑第二次），
+       *      而它的回调还会去写一张已经销毁的页面的 @State。
+       * ⭐ 判据：**「先 await、后注册」的每一处，都要在注册前重新确认目标还活着** ——
+       *    清理点只保证「跑过」，不保证「跑在注册之前」。
+       * ⚠️ 这个标志在 `aboutToDisappear` 里置上，⛔ 别在 `aboutToAppear` 里重置：
+       *    这一页是被重建（新实例）而不是被复用，新实例的字段本来就是初值。 */
+      if (this.pageGone) {
+        return;
+      }
       this.imeWindow = win;
       /* 避让区域以 px 计量，文本框矩形为 .position() 转成了 vp；两者都以 vp 打日志，好让比较同口径。 */
       win.on('avoidAreaChange', (data: window.AvoidAreaOptions) => {
@@ -538,6 +569,10 @@ struct Index {
   }
 
   aboutToDisappear(): void {
+    /* ⭐ **先**置这个标志，再清理 —— 顺序是承重的：那个异步注册（`watchKeyboardHeight`）
+     * 会在每个 await 之后检查它，所以它必须在任何清理动作之前就已经是 true。
+     * 见 `watchKeyboardHeight` 里那段：这里跑完了、那边才注册上去，是那条竞态的形态。 */
+    this.pageGone = true;
     if (this.imeTimer >= 0) {
       clearInterval(this.imeTimer);
       this.imeTimer = -1;

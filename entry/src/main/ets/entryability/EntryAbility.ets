@@ -132,6 +132,12 @@ export function writeUserDirs(filesDir: string): void {
 }
 
 export default class EntryAbility extends UIAbility {
+  /* 退出监视的定时器 id；-1 = 没有在跑。
+   * ⚠️ 提到成员上来（原来是一个局部 `const`）是为了能在 `onDestroy` 里停掉它 ——
+   *   看下面 `onDestroy` 那段：**没有它就有一个最长十分钟的窗口，定时器在 ability 已经没了之后
+   *   还在跑**，而且闭包里还攥着那个 `ctx`。 */
+  private exitWatchTimer: number = -1;
+
   /** 盯着 native 侧结束，然后体面地把 ability 关掉：launcher 过去在 main() 返回后杀掉自己的进程，从框架看就是
    * 「native 进程在 ability 运行时死了」⇒ 系统记成「Cpp Crash」（无信号、无转储）。正常结束要先销毁【ability】
    * 再让框架带下进程，而 ability 是 ArkTS 对象、native 做不到 ⇒ native 丢标记文件，这边轮询（而非回调）。
@@ -167,6 +173,7 @@ export default class EntryAbility extends UIAbility {
           hilog.info(DOMAIN, 'SDL/STARTUP',
                      'native exit marker seen (%{public}s) -- terminating ability', path);
           clearInterval(timer);
+          this.exitWatchTimer = -1;
           ctx.terminateSelf().catch((err: BusinessError) => {
             hilog.error(DOMAIN, 'SDL/STARTUP',
                         'terminateSelf failed: %{public}s (code=%{public}d)', err.message, err.code);
@@ -181,8 +188,28 @@ export default class EntryAbility extends UIAbility {
       // 从不会触发；它存在的意义是让这里的一个 bug 不至于留下一个永远跑着的定时器。
       if (ticks > 2400) {
         clearInterval(timer);
+        this.exitWatchTimer = -1;
       }
     }, 250);
+    this.exitWatchTimer = timer;
+  }
+
+  /* ⛔ **必须停掉那个定时器**（2026-10-05 补的）。
+   *
+   * 背景：`startExitWatch` 的定时器在那个文件里**没有对应的清理点** —— ability 被销毁时
+   * （玩家把应用从最近任务里划掉、系统回收、或者一次不经过标记的退出）它会**继续跑**，
+   * 而它闭包里攥着 `ctx`（那个已经无效的 ability 上下文），还每 250 ms 做两次 `accessSync`。
+   * 上界是那个 2400 tick 的安全阀 —— 也就是**最多十分钟的无效轮询**。
+   * ⭐ 这不是崩溃，是「一次性的事被拖着做」：与「诊断工具不该拖慢被测对象」同一条。
+   * ⚠️ 正常退出那条路（`terminateSelf`）里已经 `clearInterval` 过了，这里再清一次是幂等的
+   *   （`clearInterval` 对已清的 id 无害），所以两条路都不必特判。
+   * ⛔ 这个类原本**没有 `onDestroy`** —— 补上它不是为了做别的事，只为停这一个定时器。 */
+  onDestroy(): void {
+    if (this.exitWatchTimer !== -1) {
+      clearInterval(this.exitWatchTimer);
+      this.exitWatchTimer = -1;
+      hilog.info(DOMAIN, 'SDL/STARTUP', 'exit watch stopped with the ability');
+    }
   }
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
