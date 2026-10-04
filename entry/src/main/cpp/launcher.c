@@ -984,6 +984,14 @@ static void on_fatal_signal(int sig, siginfo_t *info, void *uctx)
                 int hn = SDL_snprintf(hdr, sizeof(hdr),
                     "PC=0x%lx BASE=0x%lx LEN=%llu MAP=%s\n",
                     (unsigned long)pc, base, (unsigned long long)len, map);
+                /* ⛔⛔ `hn` 是**本该写入的长度**，⛔ 不是实际写进去的（标准 `vsnprintf` 语义，
+                 *    见 `SDL_snprintf` → `SDL_vsnprintf`，以及本文件 283 行那段）——
+                 *    **截断时它【大于】`sizeof(hdr)`**。直接拿它当 `write` 的长度，
+                 *    就是从 `hdr` 后面**越界读**最多约 440 字节写进 `cc_dump.bin`
+                 *    （`map` 可到 511，而这里只有 128）。
+                 * ⭐ 内容长度取 `min(hn, sizeof(hdr) - 1)`：`snprintf` 保证最多写
+                 *    `sizeof - 1` 个字符 + 一个 `NUL`，所以这个长度就是**实际有效内容**。 */
+                if (hn > (int)sizeof(hdr) - 1) hn = (int)sizeof(hdr) - 1;
                 ssize_t w = write(fd, hdr, (size_t)hn); (void)w;
                 w = write(fd, (const void *)base, len); (void)w;
                 close(fd);
@@ -1005,6 +1013,15 @@ static void on_fatal_signal(int sig, siginfo_t *info, void *uctx)
         sig, info ? info->si_code : -1, info ? info->si_addr : NULL, name, map,
         pcinfo, regs, insn);
     if (n > 0) {
+        /* ⛔⛔ **`n` 是「本该写入的长度」，⛔ 不是实际写进去的**（与上面 `hdr` 那处同一个坑）。
+         *    这里拼进去的四段最坏是 `map` 511 + `pcinfo` 599 + `regs` 1399 + `insn` 399 ≈ 2900，
+         *    而 `buf` 只有 1600 ⇒ 截断时 `n` 可达 2900
+         *    ⇒ `write(fd, buf, 2900)` **从栈上越界读约 1.4 KB**，写进 `crash.txt` 与 stderr。
+         * ⚠️ 为什么不是「反正已经崩了，无所谓」：
+         *    ① 越界读是**未定义行为**，可能**二次崩溃** ⇒ 把本来要留下的那份报告一起弄丢；
+         *    ② 本项目**崩溃是常态**（一口气抓过 18 条 faultlog），这条路不冷。
+         * ⭐ 内容长度取 `min(n, sizeof(buf) - 1)` —— 理由同上面那一处。 */
+        if (n > (int)sizeof(buf) - 1) n = (int)sizeof(buf) - 1;
         int fd = open(DEST_ROOT "/crash.txt", O_WRONLY | O_CREAT | O_APPEND, 0644);
         if (fd >= 0) { ssize_t w = write(fd, buf, (size_t)n); (void)w; close(fd); }
         ssize_t w2 = write(2, buf, (size_t)n); (void)w2;
