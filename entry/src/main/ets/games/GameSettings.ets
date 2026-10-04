@@ -34,6 +34,9 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 /* ⭐ 「游戏内显示」那两个偏好存在启动器这边（LauncherPrefs），本文件负责把它落进游戏。 */
+/* ⭐ 只为 `pathExistsAnyChannel` 里的第二通道。⚠️ 不成环：`StorageRoot` 的依赖图
+ * 只到 `ModImporter` 与 `libstorprobe.so`，⛔ 不碰本文件（而 `Isolation` 碰，所以不能从它借）。 */
+import { nativePathExists } from '../settings/StorageRoot';
 import { GameDisplayPref, GAME_EDGE_FACTORY, GAME_SCALE_FACTORY,
          writeAppliedGameDisplay } from '../settings/LauncherPrefs';
 
@@ -478,27 +481,71 @@ export function readGameDisplayValues(dataDir: string): GameDisplayValues | null
  *      `values`、其它全部走 `defaults` ⇒ 效果**等同于全新安装 + 我们这两个值**，正是想要的。
  *    ⚠️⚠️ **一个我没有验证过的风险**：`lastBuild` 会缺失，而游戏可能据此判断要不要跑迁移逻辑。
  *      风险低但非零 —— 若将来出现「第一次启动行为怪」的现象，**先怀疑这里**。 */
+/* ⛔⛔ **「这个路径存在吗」必须走双通道 —— 任何一路说有，就算有。**
+ *
+ * 这是 2026-10-05 子 agent 审查查出的一个**能抹掉玩家整份设置的缺陷**：
+ * 本文件原来只问 ArkTS 的 `fs.accessSync`，而**本项目已实测它在外部数据根上会误报读不到**
+ * （见 `Isolation.gameDataExists` 的注释：「ArkTS 的 `fs.accessSync` 在外部根上不可靠，
+ * 而且已经有实测记录」—— native 列出 24 个文件而 ArkTS 一个都读不出来）。
+ *
+ * ⭐ 后果链条（`applyGameDisplay` 里）：
+ *   读取失败 ⇒ `exists=false` **且** `rows===null` ⇒ 走进「照我们的建一份」分支
+ *   ⇒ `writeGameSettings` 拿**只有两个键**的表 + `renameSync` **覆盖玩家那份
+ *     settings.bin**（键位、语言、所有设置项一起没）。
+ * ⛔ 所以「不知道」**绝不能**被当成「不存在」—— 详见下面的保守回退。
+ *
+ * ⚠️ 这里**复制**了一份 `Isolation.gameDataExists` 的判据，而不是 import 它：
+ *    `Isolation` import 了本文件，直接反向 import 会**成环**。
+ *    而 `StorageRoot` 的依赖图里没有本文件（它只到 `ModImporter`/`libstorprobe.so`）
+ *    ⇒ 可以安全地借用它的 `nativePathExists`。 */
+function pathExistsAnyChannel(path: string): boolean {
+  try {
+    if (fs.accessSync(path)) {
+      return true;
+    }
+  } catch (e) {
+    /* `accessSync` 本来就「返回布尔不抛」；这个 catch 只兜住极端情况（如路径非法）。 */
+  }
+  try {
+    return nativePathExists(path) !== 0;
+  } catch (e) {
+    const err = e as BusinessError;
+    /* ⚠️⚠️ **两路都问不到 ⇒ 保守地当作「存在」。**
+     * ⛔ 方向不能反：这个函数的返回值决定「要不要把玩家的设置**覆盖**掉」，
+     *    而两个方向的代价不对称 —— 误判「存在」只是**什么都不做**（下次再说）；
+     *    误判「不存在」是**把玩家的设置写没**。⭐ 同 `Isolation.gameDataExists` 的判据。 */
+    hilog.warn(DOMAIN, TAG, 'gamesettings: cannot tell whether %{public}s exists (%{public}s) '
+               + '-- assuming it does and leaving it alone', path, err.message);
+    return true;
+  }
+}
+
 export function applyGameDisplay(dataDir: string, filesDir: string,
                                  pref: GameDisplayPref, applied: GameDisplayPref | null): string {
   const path: string = dataDir + '/settings.bin';
-  let exists: boolean = false;
-  try {
-    exists = fs.accessSync(path);
-  } catch (e) {
-    exists = false;
-  }
+  const exists: boolean = pathExistsAnyChannel(path);
   let rows: GameSetting[] | null = loadGameSettings(path);
   if (rows === null) {
     if (exists) {
-      /* ⭐ **存在但读不了**（解析失败 / 被压过 / 权限）⇒ **什么都不做**。
+      /* ⭐ **存在但读不了**（解析失败 / 被压过 / 权限 / **在外部根上 ArkTS 读不到**）
+       *    ⇒ **什么都不做**。
        * ⛔ 与「不存在」必须分开：那两种情况要做的处置**相反** ——
-       *    一个是「照我们的建一份」，另一个是「别碰它」。 */
+       *    一个是「照我们的建一份」，另一个是「别碰它」。
+       * ⚠️ 这也是外置存储下**正常**的一次结果（不是故障）：本应用读不到外部根，
+       *    而游戏自己（native）读得到 —— 所以「我们这次没写」是对的。 */
       return '';
     }
-    /* ⭐ 不存在 ⇒ 从空表开始建。⚠️ 先把目录建出来：全新安装时
-     *    `.local/share/Mindustry` 本身可能还不存在，而 `fs.openSync` **不建父目录**。 */
+    /* ⭐ 不存在 ⇒ 从空表开始建。⚠️ 先把目录建出来：全新安装时它可能还不存在，
+     *    而 `fs.openSync` **不建父目录**。
+     * ⛔⛔ **`mkdirSync(dataDir)` —— 别再拼 `/.local/share/Mindustry`。**
+     *    这个函数收到的 `dataDir` **本身就已经是** `…/.local/share/Mindustry`
+     *    （见 `Isolation.liveGameDataDir()` / `isolatedGameDataDir()`），
+     *    再拼一次会在游戏数据目录里造一棵没人读的
+     *    `…/Mindustry/.local/share/Mindustry`，而注释声称要建的那个只是被
+     *    `recursive=true` 顺带建出来的。（2026-10-05 审查查出；`mkdirSync` 的 `true`
+     *    参数掩盖了它，所以一直没报错。） */
     try {
-      fs.mkdirSync(dataDir + '/.local/share/Mindustry', true);
+      fs.mkdirSync(dataDir, true);
     } catch (e) {
       /* 建不出来也不立刻返回 —— 下面 openSync 会给出真正的错误，而它比这里的一句更具体。 */
     }

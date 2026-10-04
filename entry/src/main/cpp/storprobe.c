@@ -461,9 +461,15 @@ static void list_walk(const char *base, const char *dir, int depth, int maxdepth
             continue;
         }
         struct stat st;
-        if (stat(p, &st) != 0) {
+        /* ⛔ **`lstat`，与 `copy_tree` 一致。** 用 `stat`（跟随）时，指向目录的软链会被
+         *    `S_ISDIR` 命中并**递归进去** —— 那既与「跳过软链」的承诺不符，也会让一份清单
+         *    莫名其妙地膨胀（外置那棵树上玩家可能放链接）。
+         * ⚠️ 这一处是 2026-10-05 子 agent 审查查出的**我自己造成的不一致**：我只改了
+         *    `copy_tree`，却在 `pathExists` 的注释里写了「两边对软链的判断一致」——
+         *    那句话当时是**假的**。现在两处都用 `lstat`，那句话才成立。 */
+        if (lstat(p, &st) != 0) {
             const int e = errno;
-            snprintf(sfx, sizeof(sfx), " <stat-errno=%d>", e);
+            snprintf(sfx, sizeof(sfx), " <lstat-errno=%d>", e);
             list_emit(a, p + strlen(base), sfx);
             continue;
         }
@@ -558,14 +564,23 @@ static napi_value PathExists(napi_env env, napi_callback_info info)
 
     size_t argc = 1;
     napi_value argv[1] = { NULL };
+    /* ⛔⛔ **两段式取长**（同 `ProbeWritable` 的写法）。
+     *    ⚠️ 单段式（给了缓冲区）返回的是**已拷入的字节数**（≤ 容量−1），**不是真实长度**
+     *    ⇒ 超长的路径会被**静默截断**，然后 `lstat` 那个截断后的**前缀**——
+     *    若前缀存在（比如 `/a/b` 对 `/a/b/c…`），就会对一条不存在的路径返回「存在」。
+     *    ⭐ 这是我自己写这个函数时抄错的一处（2026-10-05 子 agent 审查查出）：
+     *      本文件里 `ProbeWritable` 本来就是正确示范，`copyTree` 曾经不是。 */
+    size_t need = 0;
     if (napi_get_cb_info(env, info, &argc, argv, NULL, NULL) == napi_ok && argc >= 1
-        && napi_get_value_string_utf8(env, argv[0], buf, sizeof(buf), &len) == napi_ok
-        && len > 0) {
+        && napi_get_value_string_utf8(env, argv[0], NULL, 0, &need) == napi_ok
+        && need > 0 && need < sizeof(buf)
+        && napi_get_value_string_utf8(env, argv[0], buf, sizeof(buf), &len) == napi_ok) {
         struct stat st;
-        /* ⚠️ `stat`/`lstat` 对**太长的路径**返回 ENAMETOOLONG，与「不存在」不同 ——
-         *    但对调用方而言两者都该走「当作没有」之外的保守分支，所以这里不细分。 */
         r = (lstat(buf, &st) == 0) ? 1 : 0;
     }
+    /* 走到这里而 `r == 0` 的三种情形（空参 / 路径超长 / 真的不存在）在**调用方**眼里
+     * 是同一件事：「别把这个路径当成有东西」—— 而调用方 `gameDataExists` 对「问不到」
+     * 另有保守分支（当作存在）。⛔ 所以这里不细分，但**不细分的前提是长度已经挡住了**。 */
 
     napi_value result;
     napi_create_int32(env, r, &result);

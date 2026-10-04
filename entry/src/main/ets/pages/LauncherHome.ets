@@ -892,6 +892,11 @@ export struct LauncherHome {
       const ctx = getContext(this) as common.UIAbilityContext;
       /* ⚠️ `fontSizeScale` 在类型上是**可选**的（`number | undefined`）⇒ 必须判 `undefined`，
        *    否则编译不过（`number | undefined` 不能当 `number` 用）。 */
+      /* ⛔⛔ **按当前配置，这里读到的【永远是 1】** —— 我们没有在 `AppScope/app.json5` 声明
+       *    `configuration` 标签，而它缺省的含义就是「不跟随系统」（见 `GameAutoFit.systemGameScale`
+       *    那段的长注释，那里有出处）。⇒ 读它、判它、用它**都不会出错**，但它是个常数。
+       * ⚠️ 真发生过的误判：早先的记录里写着「界面缩放会跟随系统字体」——**那是假的**，
+       *    用户实测就是 150，因为倍率恒为 1。 */
       const v: number | undefined = ctx.config.fontSizeScale;
       if (v !== undefined && v > 0 && v <= 10 && Number.isFinite(v)) {
         return v;
@@ -1706,8 +1711,10 @@ export struct LauncherHome {
     {
       const gd: GameDisplayPref = readGameDisplay(this.filesDir);
       if (gd.edge !== this.gameEdge) { this.gameEdge = gd.edge; }
-      /* ⭐ 缩放：玩家**设过**就用他的；**没设过** ⇒ 按系统字体缩放推出一个初始值。
-       * ⛔ 这里**不置** `gameScaleSet` —— 它必须保持 false，才会继续跟着系统走。 */
+      /* ⭐ 缩放：玩家**设过**就用他的；**没设过** ⇒ 走 `systemGameScale` 取那个初始值。
+       * ⛔ 这里**不置** `gameScaleSet` —— 保持 false，将来那个倍率真的生效时它才会跟着走。
+       * ⚠️ **「将来」不是客套**：今天 `systemFontScale()` 恒为 1（我们没声明 `configuration`
+       *    标签）⇒ 这一行取到的**就是 150**，与系统字体无关。见 `GameAutoFit.systemGameScale`。 */
       const wantScale: number = gd.scaleSet ? gd.scale : systemGameScale(this.systemFontScale());
       if (wantScale !== this.gameScale) { this.gameScale = wantScale; }
       if (gd.auto !== this.gameAuto) { this.gameAuto = gd.auto; }
@@ -1724,19 +1731,39 @@ export struct LauncherHome {
       const actual: GameDisplayValues | null = readGameDisplayValues(dataDir);
       const applied: GameDisplayPref | null = readAppliedGameDisplay(this.filesDir);
       if (actual !== null) {
-        if (actual.edge !== this.gameEdge) { this.gameEdge = actual.edge; }
-        if (actual.scale !== this.gameScale) { this.gameScale = actual.scale; }
         /* ⭐ 判「这是玩家在游戏里自己设的」用的是与 `applyGameDisplay` **同一套三态判据**：
-         *   既不是出厂值、也不是我们上次写进去的那个 ⇒ 那就是他改的。
+         *   既不是出厂值、也不是我们上次写进去的那个 ⇒ 那就是他改的。 */
+        const edgeIsYours: boolean = (actual.edge !== GAME_EDGE_FACTORY
+            && (applied === null || actual.edge !== applied.edge));
+        const scaleIsYours: boolean = (actual.scale !== GAME_SCALE_FACTORY
+            && (applied === null || actual.scale !== applied.scale));
+
+        /* ⛔⛔ **回显必须【只】发生在「这是玩家自己设的」那一支里** —— 这是 2026-10-05 修的一个
+         *    **我自己引入的回归**（本轮加"显示游戏实际值"时写成无条件回显，子 agent 审查查出）：
+         *
+         *    无条件回显会把**「我们要写进去的那个值」也一起改掉** —— 因为 `applyGameDisplayNow()`
+         *    写进游戏用的就是 `this.gameEdge` / `this.gameScale` 这两个字段（见它构造的 `pref`）。
+         *    于是对一份**从没被碰过**的游戏（`uiscale` 还是出厂 100）：
+         *      · 先按偏好算出 `wantScale = 150` 并赋给 `this.gameScale`
+         *      · 紧接着回显把 `this.gameScale` 压回游戏里的 **100**
+         *      · `applyGameDisplay` 收到 `pref.scale = 100` ⇒ `cur(100) === pref.scale(100)`
+         *        ⇒ `cur !== pref.scale` 为假 ⇒ **一次都不写**
+         *    ⇒ **「启动器默认帮你调到 150%」这个承诺永远不会生效**，而界面上完全看不出来。
+         *      这正是本项目最忌讳的「功能看着在、实际不生效」。
+         *
+         * ⭐ 判据：**「用来显示的」和「要写进去的」是同一个字段，那就不能让回显去动它** ——
+         *    除非回显的那个值恰好就是「该由玩家做主」的值。
+         *    ⚠️ 出厂值/我们自己写的值**都不需要回显**：前者本来就是我们要覆盖的对象，
+         *      后者我们本来就知道它是什么。
          * ⛔ **必须置 `*Set`**：否则下面那句自动适配会把刚显示出来的那个值又算掉 ——
-         *   那就成了「界面明明显示着他的值，一转身被自动值盖了」。
+         *    那就成了「界面明明显示着他的值，一转身被自动值盖了」。
          * ⭐ 它是**每次 refresh 现推的**，所以不依赖 `edgeSet` 有没有被持久化过 —— 更不容易错。 */
-        if (actual.edge !== GAME_EDGE_FACTORY
-            && (applied === null || actual.edge !== applied.edge)) {
+        if (edgeIsYours) {
+          if (actual.edge !== this.gameEdge) { this.gameEdge = actual.edge; }
           this.gameEdgeSet = true;
         }
-        if (actual.scale !== GAME_SCALE_FACTORY
-            && (applied === null || actual.scale !== applied.scale)) {
+        if (scaleIsYours) {
+          if (actual.scale !== this.gameScale) { this.gameScale = actual.scale; }
           this.gameScaleSet = true;
         }
       }
@@ -4860,6 +4887,13 @@ export struct LauncherHome {
     this.importRoot = root;
     this.importNote = countPackable(root);
     this.importMsg = '';
+    /* ⛔ **每次打开都把勾选清空。** 2026-10-05 审查查出：原来只有「导入成功收尾」和
+     *    「全不选」会清 `importPicked`，而「取消」不清 ⇒ 取消一次再导入时，
+     *    上一次勾的**覆盖目标还是勾着的** —— 而导入是「覆盖 / 新建」语义
+     *    （有数据就先整包备到回收站再覆盖），所以这是一条**误覆盖**的路。
+     * ⭐ 判据：一个「上次留下的选择」在新一轮里出现，而新一轮的第一步就是让玩家确认它 ——
+     *    那种默认值必须清掉，否则玩家会以为那是他自己这次选的。 */
+    this.importPicked = [];
     this.importOpen = true;
   }
 
@@ -5046,9 +5080,20 @@ export struct LauncherHome {
     else if (kind === 'toast') { this.importToast = text; }
     else { this.exportMsg = text; }
     setTimeout(() => {
-      const now: string = kind === 'import' ? this.importMsg
-                       : (kind === 'toast' ? this.importToast : this.exportMsg);
-      if (now === text) { this.closePackNotice(); }
+      /* ⛔⛔ **身份校验通过之后，只能清【自己那一个】字段。**
+       *    2026-10-05 审查查出：原来这里调的是 `closePackNotice()` —— 它把
+       *    `importMsg`/`exportMsg`/`importToast` **三个一起清**。于是「校验通过」这件事
+       *    只保证了「我这条还在」，却顺手把**别的种类**正在显示的新提示也抹掉了：
+       *    4 秒内先出一条导入提示、再出一条导出提示 ⇒ 导入那条的旧定时器到点时
+       *    `importMsg === text` 成立 ⇒ **把新的导出提示一起清掉**。
+       * ⭐ 判据：身份校验要**贯穿到副作用** —— 校验的是哪个字段，就只能动那个字段。 */
+      if (kind === 'import') {
+        if (this.importMsg === text) { this.importMsg = ''; }
+      } else if (kind === 'toast') {
+        if (this.importToast === text) { this.importToast = ''; }
+      } else {
+        if (this.exportMsg === text) { this.exportMsg = ''; }
+      }
     }, NOTICE_MS);
   }
 
@@ -5401,8 +5446,16 @@ export struct LauncherHome {
             .margin({ top: 8 })
             .copyOption(CopyOptions.LocalDevice)
 
-          /* 多选那条，以及上一次多选删除的结果。⛔ 结果只说一句就走 —— 它是提示，不是门。 */
-          if (this.multiMode) {
+          /* 多选那条，以及上一次多选删除的结果。⛔ 结果只说一句就走 —— 它是提示，不是门。
+           * ⛔⛔ **必须限定在「按存档」视图**（2026-10-05 修，两个独立审查员确认过）：
+           *    本段在 `SavesTab` 里、**不分视图**，而 `VersionDataPanel` 里**另有一条同样的**
+           *    `MultiBar`（那一屏的注释写着它存在的理由是 2026-10-02 的「右边的选择存档删除页
+           *    应该能长按多选」）。宽屏时两块**同时可见** ⇒ 屏幕上出现两条一模一样的
+           *    「已选 N 项 · 删除/复制/移动/取消」，同义同帧 —— 正是本项目明令的
+           *    「两个意思不同的同名按钮并存」的近亲（这里是**同义**重复，但一样让人以为点错了）。
+           * ⚠️ 反过来删 `VersionDataPanel` 那条是**错的**：**窄屏**的按版本子页不渲染页头，
+           *    删了那边窄屏用户就没有工具栏了。 */
+          if (this.multiMode && this.savesView === SAVES_VIEW_SAVE) {
             this.MultiBar()
           }
           if (this.savesNote !== '') {
