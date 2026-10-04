@@ -138,13 +138,21 @@
  * granularity（native 不用，只留痕）。⛔ 文件不在 ⇒ enabled=0 ⇒ 用 DEST_ROOT ⇒【与今天逐字节相同】。 */
 #define ISOLATION_FILE "/data/storage/el2/base/haps/entry/files/isolation.txt"
 
-/* 隔离根。⛔ 在 DEST_ROOT 之下、但在游戏那棵树【之外】：游戏的数据目录是 user.home 拼上 ARC
- * 强加的 ".local/share/Mindustry"，所以 instances/ 永远不会被游戏当成数据看。布局：
- *     DEST_ROOT/instances/<粒度键>/sets/default/  ← -Duser.home 指到这里；游戏建的是 …/.local/share/Mindustry/
+/* 隔离根的那一层子目录。⛔ 在数据根之下、但在游戏那棵树【之外】：游戏的数据目录是 user.home
+ * 拼上 ARC 强加的 ".local/share/Mindustry"，所以 instances/ 永远不会被游戏当成数据看。布局：
+ *     <数据根>/instances/<粒度键>/sets/default/  ← -Duser.home 指到这里；游戏建的是 …/.local/share/Mindustry/
  * ⚠️ A 阶段 sets 恒为 default（界面看不见）；现在就铺这层，是为以后加「集合」时不必搬玩家数据。
- * ⛔ ISOLATION_ROOT / ISOLATION_SET 的字面必须与 ArkTS 侧逐字一致，改一处不会报错、只会落错地方。 */
-#define ISOLATION_ROOT  DEST_ROOT "/instances"
-#define ISOLATION_SET   "sets/default"
+ * ⛔ ISOLATION_SUBDIR / ISOLATION_SET 的字面必须与 ArkTS 侧逐字一致，改一处不会报错、只会落错地方。
+ *
+ * ⛔⛔ **这里曾经是一个编译期常量 `ISOLATION_ROOT = DEST_ROOT "/instances"`，2026-10-04 拆掉了。**
+ *    存储根可以在运行期切到外置，而只要这个前缀还钉在 DEST_ROOT 上，就会出现：
+ *      隔离开 + 外置 ⇒ launcher 在【沙箱】里 mkdir、把 user.home 指向【沙箱】那棵树，
+ *      而 `record_user_home()` 照样写 `reason=on` ⇒ **界面上显示「外置、正常」，游戏却写在沙箱**。
+ *    ⇒ 根改成运行期决定（`resolve_user_home` 里那个 `base`），这里只留那一段**相对**后缀。
+ *    ⭐ 拆掉常量而不是「让调用点记得用 base」，是为了让**错误写法根本写不出来** ——
+ *      留下那个宏，任何人（包括以后的我）都可能顺手再用它一次，而那一次是无声的。 */
+#define ISOLATION_SUBDIR "/instances"
+#define ISOLATION_SET    "sets/default"
 
 /* read_kv 的定义在下面（与 read_user_dir 同处，共用解析规则）。这里先声明是因为
  * resolve_user_home() 要用它 —— ⚠️ 少了这一行会造出【非 static】的隐式声明，后面那个
@@ -169,48 +177,118 @@ static void record_user_home(const char *reason, const char *home)
     fclose(f);
 }
 
+/* 一个数据根能不能用。⛔ 这是**native 自己的闸门** —— ArkTS 那边也校验，但那是防写坏，
+ * 这里防读坏，与 `key` 的处理同一套道理（两边都要有）。
+ * ⚠️ 判据故意**从严**：路径是我们自己拼出来的，没有任何理由出现相对形式或 `..`；
+ *    一条不该出现的路径出现了，说明上游出了别的问题，回退沙箱比照着用更安全。 */
+static int root_is_usable(const char *p)
+{
+    if (p[0] != '/') {
+        return 0;                       /* 必须绝对 —— 相对路径会被当成 cwd 的兄弟 */
+    }
+    if (strstr(p, "..") != NULL) {
+        return 0;
+    }
+    return 1;
+}
+
+/* 去掉结尾的斜杠。⛔ 不因为「有结尾斜杠」就**拒绝**这个根：拼后缀时双斜杠在 Linux 上合法，
+ * 为这点小事把玩家的设置判死，代价不对等。 */
+static void strip_trailing_slashes(char *p)
+{
+    size_t n = strlen(p);
+    while (n > 1 && p[n - 1] == '/') {
+        p[n - 1] = 0;
+        n--;
+    }
+}
+
 static void resolve_user_home(char *out, size_t outlen)
 {
     char enabled[8];
     char key[128];
+    /* ⚠️ root 用 512，**不是**像 key 那样的 128：外置路径本身就有 ~61 字符，再拼上
+     * `/instances/<key>/sets/default` 会超过 128 —— 而 `read_kv` 遇到放不下的值是
+     * 「整行当作不存在」（`n >= outlen` ⇒ break）⇒ **静默回退沙箱**。
+     * ⭐ 一个尺寸写错、症状是「设置没生效」的洞。 */
+    char root[512];
 
     enabled[0] = 0;
     key[0] = 0;
+    root[0] = 0;
     read_kv(ISOLATION_FILE, "enabled", enabled, sizeof(enabled));
     read_kv(ISOLATION_FILE, "key", key, sizeof(key));
+    read_kv(ISOLATION_FILE, "root", root, sizeof(root));
 
+    /* ⭐⭐ **① 先定根，再进隔离分支。顺序是承重的。**
+     * ⛔ 原来「隔离关着」那条早退直接返回 `DEST_ROOT`（编译期常量）。如果把读 root 塞进
+     *    「隔离开着」那一支里，**隔离关着时外置就不生效** —— 而出厂就是不隔离，
+     *    也就是说**最常见的那条路会静默忽略玩家的设置**。
+     * ⚠️ root 缺省（老桥文件、或玩家选的就是沙箱）时 `base` 落回 DEST_ROOT
+     *    ⇒ **与从前逐字节相同**（那条不变量：隔离关着 ⇒ 结果等于 DEST_ROOT）。 */
+    const char *base = DEST_ROOT;
+    if (root[0] != 0) {
+        if (root_is_usable(root)) {
+            strip_trailing_slashes(root);
+            base = root;
+        } else {
+            SDL_Log("storage: rejecting root '%s' (not absolute, or contains '..') -- using %s",
+                    root, DEST_ROOT);
+        }
+    }
+
+    /* ② 隔离关着 ⇒ 就是根本身。 */
     if (strcmp(enabled, "1") != 0 || key[0] == 0) {
-        SDL_strlcpy(out, DEST_ROOT, outlen);
-        SDL_Log("isolation: off, user.home=%s", out);
+        SDL_strlcpy(out, base, outlen);
+        SDL_Log("storage: isolation off, root=%s, user.home=%s", base, out);
         record_user_home("off", out);
         return;
     }
 
-    /* ⚠️ key 会进路径。只允许 [A-Za-z0-9._-]，别的一律回退 ——
-     * 它由 ArkTS 从版本号拼出来，本该干净，但「本该」不是一道闸门。 */
+    /* ③ key 会进路径。只允许 [A-Za-z0-9._-]，别的一律回退 ——
+     * 它由 ArkTS 从版本号拼出来，本该干净，但「本该」不是一道闸门。
+     * ⚠️ 回退到 `base` 而不是 DEST_ROOT：这是「不隔离，但用你选的那个根」，
+     *    比把玩家扔回沙箱更贴他的意图。 */
     for (const char *p = key; *p; p++) {
         int ok = (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
                  (*p >= '0' && *p <= '9') || *p == '.' || *p == '_' || *p == '-';
         if (!ok) {
-            SDL_Log("isolation: rejecting key '%s' (bad character), user.home=%s", key, DEST_ROOT);
-            SDL_strlcpy(out, DEST_ROOT, outlen);
+            SDL_Log("isolation: rejecting key '%s' (bad character), user.home=%s", key, base);
+            SDL_strlcpy(out, base, outlen);
             record_user_home("bad-key", out);
             return;
         }
     }
 
+    /* ④ 拼路径，**显式查长度**。
+     * ⛔⛔ `SDL_snprintf` 会**静默截断**成一个「看起来合法的短路径」，而下面紧接着就
+     *    `mkdir` 那个被截断的路径、并把它当 `user.home` 返回 ⇒ **游戏在一个错的但存在的
+     *    目录里启动，而记录里写着 `reason=on`**。量过：最坏 ~224 字符 vs 512 缓冲，
+     *    **今天不会触发** —— 但这是「以后换个更深的路径就静默变错」的那种洞，所以现在就按住。
+     * ⚠️ `SDL_snprintf` 返回的是**本该写入的长度**（同 snprintf）⇒ 拿它对比缓冲区大小即可。 */
     char home[512];
-    SDL_snprintf(home, sizeof(home), "%s/%s/%s", ISOLATION_ROOT, key, ISOLATION_SET);
+    {
+        int n = SDL_snprintf(home, sizeof(home), "%s%s/%s/%s", base, ISOLATION_SUBDIR, key,
+                             ISOLATION_SET);
+        if (n < 0 || (size_t) n >= sizeof(home)) {
+            SDL_Log("storage: user.home would need %d bytes (buffer %d) -- falling back to %s",
+                    n, (int) sizeof(home), DEST_ROOT);
+            SDL_strlcpy(out, DEST_ROOT, outlen);
+            record_user_home("path-too-long", out);
+            return;
+        }
+    }
 
     /* mkdir -p：连着建 instances、<key>、sets、default 四层（mkdir() 不建父目录）。
-     * ⚠️ 前三层失败【不算错】—— 可能是刚被别处建好（EEXIST），最后那一层才说明问题。 */
+     * ⚠️ 前三层失败【不算错】—— 可能是刚被别处建好（EEXIST），最后那一层才说明问题。
+     * ⚠️ 前两层建在 `base` 之下 ⇒ **外置时它们也建在外置**，这正是「根跟着走」的全部内容。 */
     {
         char partial[512];
-        SDL_snprintf(partial, sizeof(partial), "%s", ISOLATION_ROOT);
+        SDL_snprintf(partial, sizeof(partial), "%s%s", base, ISOLATION_SUBDIR);
         mkdir(partial, 0755);
-        SDL_snprintf(partial, sizeof(partial), "%s/%s", ISOLATION_ROOT, key);
+        SDL_snprintf(partial, sizeof(partial), "%s%s/%s", base, ISOLATION_SUBDIR, key);
         mkdir(partial, 0755);
-        SDL_snprintf(partial, sizeof(partial), "%s/%s/sets", ISOLATION_ROOT, key);
+        SDL_snprintf(partial, sizeof(partial), "%s%s/%s/sets", base, ISOLATION_SUBDIR, key);
         mkdir(partial, 0755);
         if (mkdir(home, 0755) != 0 && errno != EEXIST) {
             SDL_Log("isolation: cannot create '%s' (errno=%d), falling back to %s",
@@ -222,7 +300,7 @@ static void resolve_user_home(char *out, size_t outlen)
     }
 
     SDL_strlcpy(out, home, outlen);
-    SDL_Log("isolation: on, key=%s, user.home=%s", key, out);
+    SDL_Log("isolation: on, root=%s, key=%s, user.home=%s", base, key, out);
     record_user_home("on", out);
 }
 

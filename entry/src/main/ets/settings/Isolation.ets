@@ -12,6 +12,9 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { GameVersionParts, gameVersionParts } from '../games/GameLibrary';
 import { copyTreeInto, newTreeStat, TreeStat } from '../utils/FsTree';
+/* ⭐ 存储根的唯一真相源。⛔ 这里 import 它**不会成环**：`StorageRoot` 只依赖 `ModImporter`，
+ *    而 `ModImporter` 谁都不依赖（2026-10-04 查过整张图）。 */
+import { gameDataRoot } from './StorageRoot';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
@@ -207,8 +210,18 @@ export function writeIsolationBridge(filesDir: string, granularity: string, key:
      * 它会进路径，而 native 那侧也会再挡一次（两层都要有：这里防写坏，那里防读坏）。 */
     hilog.error(DOMAIN, TAG, 'isolation: key "%{public}s" has characters that are not allowed -- isolating nothing', key);
   }
+  /* ⭐⭐ 存储根（2026-10-04）。**与 key 写在同一次 writeSync 里**，不是新开一个文件 ——
+   * 两次写之间有一个窗口，可能出现「根是新的、键是旧的」，而这两个值**合起来**才决定
+   * `user.home` ⇒ 撕裂的后果是数据落到一个谁也没打算用的地方。
+   *
+   * ⚠️ 这里写的是**意图**（玩家选的），native 那边**自己再校验一遍**（`root_is_usable`），
+   *    不合格就回退沙箱。两道闸门都要有：这里防写坏、那边防读坏 —— 与 `key` 的处理同一套道理。
+   * ⭐ 根**在这里算**、而不是当参数传进来：这样「哪个根」只有一处决定，
+   *    以后的调用方**没有机会**传错或忘记传（同 `ISOLATION_ROOT` 那个宏被拆掉的理由）。 */
+  const root: string = gameDataRoot(filesDir);
   const body: string = 'enabled=' + (safeKey === '' ? '0' : enabled) + '\n'
                      + 'key=' + safeKey + '\n'
+                     + 'root=' + root + '\n'
                      + 'granularity=' + granularity + '\n';
   const path: string = filesDir + '/' + BRIDGE_FILE_NAME;
   try {
