@@ -239,6 +239,10 @@ export interface GameDisplayPref {
   edge: number;
   /** `uiscale`：UI 缩放（百分数）。 */
   scale: number;
+  /** ⭐ **实验性**：避让值由系统参数（挖孔 + 密度）自动算出，而不是用上面的 `edge`。
+   * ⛔ **出厂关闭**（用户 2026-10-04：「标注为实验性功能，这个不默认开启」）。
+   * ⚠️ 自动模式**只接管避让**，不碰缩放 —— 依据见 `GameAutoFit.ets` 的文件头。 */
+  auto: boolean;
 }
 
 /** 出厂值 = **游戏自己的默认值**（= 什么都不改变）。
@@ -251,6 +255,7 @@ export interface GameDisplayPref {
 export const GAME_DISPLAY_DEFAULT: GameDisplayPref = {
   edge: GAME_EDGE_FACTORY,
   scale: GAME_SCALE_FACTORY,
+  auto: false,
 };
 
 /** 把数值夹进量程。⛔ 读文件与滑条两处都要走它 —— 文件是可以被改坏的。
@@ -282,6 +287,7 @@ export function readGameDisplay(filesDir: string): GameDisplayPref {
     }
     let edge: number = GAME_DISPLAY_DEFAULT.edge;
     let scale: number = GAME_DISPLAY_DEFAULT.scale;
+    let auto: boolean = GAME_DISPLAY_DEFAULT.auto;
     let sawOne: boolean = false;
     for (const part of fs.readTextSync(path).trim().split(/\s+/)) {
       const eq: number = part.indexOf('=');
@@ -289,7 +295,13 @@ export function readGameDisplay(filesDir: string): GameDisplayPref {
         continue;
       }
       const k: string = part.substring(0, eq);
-      const n: number = Number.parseInt(part.substring(eq + 1), 10);
+      const raw: string = part.substring(eq + 1);
+      if (k === 'auto') {
+        auto = (raw === '1');
+        sawOne = true;
+        continue;
+      }
+      const n: number = Number.parseInt(raw, 10);
       if (!Number.isFinite(n)) {
         continue;
       }
@@ -306,7 +318,7 @@ export function readGameDisplay(filesDir: string): GameDisplayPref {
       hilog.warn(DOMAIN, TAG, 'prefs: game display file has nothing usable -- using defaults');
       return GAME_DISPLAY_DEFAULT;
     }
-    return { edge: clampEdge(edge), scale: clampScale(scale) };
+    return { edge: clampEdge(edge), scale: clampScale(scale), auto: auto };
   } catch (e) {
     const err = e as BusinessError;
     hilog.warn(DOMAIN, TAG, 'prefs: reading the game display failed (%{public}s)', err.message);
@@ -325,7 +337,8 @@ export function writeGameDisplay(filesDir: string, p: GameDisplayPref): void {
     } finally {
       fs.closeSync(f);
     }
-    hilog.info(DOMAIN, TAG, 'prefs: game display -> edge=%{public}d scale=%{public}d', p.edge, p.scale);
+    hilog.info(DOMAIN, TAG, 'prefs: game display -> auto=%{public}s edge=%{public}d scale=%{public}d',
+               p.auto ? 'on' : 'off', p.edge, p.scale);
   } catch (e) {
     const err = e as BusinessError;
     hilog.warn(DOMAIN, TAG, 'prefs: saving the game display failed (%{public}s)', err.message);
@@ -372,7 +385,9 @@ export function readAppliedGameDisplay(filesDir: string): GameDisplayPref | null
     if (edge < 0 || scale < 0) {
       return null;
     }
-    return { edge: edge, scale: scale };
+    /* ⚠️ `applied` 里**不**记 auto：它记的是「我们往游戏里写了什么数」，而 auto 只是
+     * 「这个数是谁算出来的」。判据（不覆盖玩家设置）只用得上那两个数。 */
+    return { edge: edge, scale: scale, auto: false };
   } catch (e) {
     return null;
   }

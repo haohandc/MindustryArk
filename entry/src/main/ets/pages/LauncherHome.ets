@@ -39,6 +39,8 @@ import { readLaunchMode, writeLaunchMode,
          GameDisplayPref, readGameDisplay, writeGameDisplay, readAppliedGameDisplay,
          GAME_EDGE_MIN, GAME_EDGE_MAX, GAME_SCALE_MIN, GAME_SCALE_MAX, GAME_SCALE_STEP,
          GAME_EDGE_FACTORY, GAME_SCALE_FACTORY } from '../settings/LauncherPrefs';
+/* ⭐ 实验性：由系统参数（挖孔 + 密度）算游戏该用的避让值。 */
+import { displayDensity, autoEdgePadding } from '../games/GameAutoFit';
 /* ⭐ 写游戏自己的 settings.bin（异形屏避让 / UI 缩放）。格式与判据见那个文件。 */
 import { applyGameDisplay } from '../games/GameSettings';
 /* ⭐ 「设备语言 → 游戏认得的那个值」的翻译（值必须是游戏认的，见那个文件）。 */
@@ -453,6 +455,17 @@ export struct LauncherHome {
   /** 游戏内的两个显示值（写进游戏自己的 settings.bin）。出厂 = 游戏的默认值，见 LauncherPrefs。 */
   @State gameEdge: number = GAME_EDGE_FACTORY;
   @State gameScale: number = GAME_SCALE_FACTORY;
+  /** ⭐ 实验性：避让由系统参数自动算（出厂关，见 LauncherPrefs）。 */
+  @State gameAuto: boolean = false;
+  /** 自动算出来的那个值（给界面显示用；自动关着时也留着，便于对照）。 */
+  @State gameAutoEdge: number = GAME_EDGE_FACTORY;
+  /* ⛔⛔ **探测完成之前不许用自动值** —— 这个标志是承重的，别删。
+   *    `initSafeArea()` 是 **async**，而 `refresh()` 是同步的：刷新先跑，那时
+   *    `detectedSafeVp` 还是 0 ⇒ 自动值算出来是 0 ⇒ 而 0 会被当成「我们要写 0」
+   *    ⇒ **把游戏里原来的避让抹掉**（而那正是自动模式最该保护的东西）。
+   *    ⚠️ 这个 bug 的症状是「刚拨上自动适配，避让就归零了」，而且只在启动的头一瞬间发生 ——
+   *    正是那种「手动复现要碰运气」的形态，所以用标志挡死而不是指望时序。 */
+  private safeDetected: boolean = false;
   /** 写失败时给玩家看的一句话（成功时为空）。 */
   @State gameDisplayNote: string = '';
   /** 上一次尝试过的那组「数据目录 + 两个值」。
@@ -798,6 +811,60 @@ export struct LauncherHome {
    *   玩家自己设过 ⇒ **完全听他的**，探测值只用来在设置页里显示作参考；
    *   没设过     ⇒ 用这次探测的结论**播种**一次，之后那也成了「玩家的选择」。
    * ⛔ 「设过没有」看的是**文件在不在**，不是「值是不是 0」—— 0 是合法选择（不让开）。 */
+  /* 把存储位置 + 自动适配的那几行写成一个 hdc 读得到的小文件。
+   *
+   * ⛔ **抽成方法是因为它有【两个】调用点，而那两处缺一不可**：
+   *    ① `refresh()` —— 常规时机；
+   *    ② `initSafeArea()` 探测完成之后 —— ⭐ **少了它，自动适配的值永远不进这个文件**。
+   *       探测是 async、`refresh()` 是 sync：文件在探测完成前就写好了，而之后没有第二次
+   *       `refresh()`（我只在应用启动时跑一次）⇒ 文件里会永久留着一个 `derived:0`，
+   *       看起来像「公式算出来是 0」。**2026-10-04 真的这样量到过一次。**
+   * ⛔ 只在内容变了时写：它在 `refresh()` 里，而每渲染周期写一次文件本身就是卡顿源。 */
+  private dumpStorageDiagnostics(): void {
+    const dump: string = readStorageMode(this.filesDir) + '|' + this.storageUsed + '|'
+                       + this.storageUsedReason + '|' + String(this.isolationStale)
+                       /* ⭐ 自动适配的**输入与结果**也进这个键 ⇒ 它们一变就重写这个文件。
+                        * 那几个数只在探测完成后才算得出来（`safeDetected`），
+                        * 加进键里正是为了让**那一次**触发重写。 */
+                       + '|' + String(this.safeDetected) + '|' + String(this.gameAuto)
+                       + '|' + String(this.gameAutoEdge) + '|' + String(this.detectedSafeVp);
+    if (dump === this.storageDumped) {
+      return;
+    }
+    /* ⚠️ 那份目录清单**在这里算**（而不是每次都算）—— 它要递归列两个根下每一份数据，
+     *    比另外几行贵得多，而它只在真正写文件时才被用到。
+     * ⛔ 缓存键里**不包含它**：清单会随游戏运行而变，把清单本身当键会让每次 refresh 都写。
+     *    判据是「这几行没变就不重写」—— 而这个文件的用途是**事后**排查，写多了没意义。 */
+    const dirs: string = dumpDataDirs(this.filesDir);
+    /* ⭐ 自动适配那几个数落成文本行 —— 没有它们，「公式算得对不对」只能靠点滑条看效果
+     *    （而本应用的 hilog 读不到，`game=` 那行只说游戏文件里现在是什么）。 */
+    const extra: string = 'autofit=on:' + (this.gameAuto ? '1' : '0')
+                        + ' detected:' + String(this.safeDetected)
+                        + ' insetVp:' + String(this.detectedSafeVp)
+                        + ' density:' + String(displayDensity())
+                        + ' derived:' + String(this.gameAutoEdge) + NL;
+    if (dumpStorageState(this.filesDir, this.storageIntent, this.storageUsed,
+                                  this.storageUsedReason, this.isolationStale, extra, dirs)) {
+      this.storageDumped = dump;
+    }
+  }
+
+  /* 算自动避让值。输入是**探测到的 vp 内缩 × 密度**（游戏用的是像素）。
+   * ⛔ 只用探测结果，**不读游戏文件** —— 它要能在 `refresh()` 里便宜地跑。
+   * ⚠️ 缩放那一项用滑条里的值：同一份公式里避让与缩放是**相乘**的（见 `GameAutoFit.gameScl`），
+   *    而自动模式**只接管避让**、缩放始终由玩家管，所以取哪个都说得通；取滑条值省一次读文件。 */
+  private computeGameAutoEdge(): void {
+    if (!this.safeDetected) {
+      return;                      /* 探测还没回来 ⇒ 不动（见 safeDetected 那段） */
+    }
+    const density: number = displayDensity();
+    const insetPx: number = Math.round(this.detectedSafeVp * density);
+    const v: number = autoEdgePadding(insetPx, density, this.gameScale);
+    if (v !== this.gameAutoEdge) {
+      this.gameAutoEdge = v;
+    }
+  }
+
   private async initSafeArea(): Promise<void> {
     let ins: SafeInsets = { top: 0, right: 0, bottom: 0, left: 0 };
     try {
@@ -828,6 +895,17 @@ export struct LauncherHome {
     hilog.info(DOMAIN, TAG,
                'safearea: auto=%{public}s applied=%{public}d vp (detected %{public}d)',
                String(this.safeAuto), this.safeVp, this.detectedSafeVp);
+
+    /* ⭐ **探测回来了** ⇒ 现在才允许自动避让参与计算，并立刻重算一次 + 重试写入。
+     * ⛔ 这两行是承重的：`refresh()` 早就在探测完成之前跑过了，那一次的自动值是 0
+     *    （被 `safeDetected` 挡在计算之外，所以**没写进去**）。不复算的话，自动模式要等到
+     *    下一次 `refresh()`（切页签之类）才会生效 —— 也就是「拨了开关没反应，过一会儿又好了」。 */
+    this.safeDetected = true;
+    this.computeGameAutoEdge();
+    this.applyGameDisplayNow();
+    /* ⛔ 再把诊断文件写一次 —— 上面那几个数刚变，而这次不再有 `refresh()` 了。
+     *    少了这一句，文件里会永久留着探测之前的 `derived:0`（2026-10-04 踩过）。 */
+    this.dumpStorageDiagnostics();
   }
 
   /** 滑条真正作用在哪几边（探测为空时是「只上边」，见 edgeVp）。 */
@@ -1430,7 +1508,8 @@ export struct LauncherHome {
    * ⚠️ 只有松手才写（`End` / `Click`）—— 拖动中每次变化都写盘会写上百次，而这是块闪存。
    *    同 `writeSafePref` 那条既有规矩。 */
   private saveGameDisplay(): void {
-    const p: GameDisplayPref = { edge: this.gameEdge, scale: this.gameScale };
+    const p: GameDisplayPref = { edge: this.gameEdge, scale: this.gameScale,
+                            auto: this.gameAuto };
     writeGameDisplay(this.filesDir, p);
     this.gameDisplayTried = '';        /* 值变了 ⇒ 让下面那个缓存失效，立刻重算一次 */
     this.applyGameDisplayNow();
@@ -1442,7 +1521,9 @@ export struct LauncherHome {
   private applyGameDisplayNow(): void {
     const dataDir: string = resolveGameDataDir(this.granularity, this.resolution.source,
                                               this.resolution.path, this.bundledJar());
-    const pref: GameDisplayPref = { edge: this.gameEdge, scale: this.gameScale };
+    /* ⭐ 自动模式下**用算出来的避让值**，缩放仍走滑条（我们不自动设缩放，理由见 GameAutoFit）。 */
+    const useEdge: number = this.gameAuto ? this.gameAutoEdge : this.gameEdge;
+    const pref: GameDisplayPref = { edge: useEdge, scale: this.gameScale, auto: this.gameAuto };
     /* ⭐ 缓存键里**带上 dataDir**：换版本 / 换粒度 / 换存储根都会指到另一个 settings.bin，
      *    而那一次必须重新尝试写入。 */
     const key: string = dataDir + '|' + String(pref.edge) + '|' + String(pref.scale);
@@ -1535,6 +1616,8 @@ export struct LauncherHome {
       const gd: GameDisplayPref = readGameDisplay(this.filesDir);
       if (gd.edge !== this.gameEdge) { this.gameEdge = gd.edge; }
       if (gd.scale !== this.gameScale) { this.gameScale = gd.scale; }
+      if (gd.auto !== this.gameAuto) { this.gameAuto = gd.auto; }
+      this.computeGameAutoEdge();
       this.applyGameDisplayNow();
     }
 
@@ -1558,21 +1641,8 @@ export struct LauncherHome {
     /* ⭐⭐ 存储位置那几行落盘（**放在这里**，因为 `stale` 也是它的一部分）。
      * ⚠️ 它**刻意排在 `isolationStale` 之后**：那个标志决定界面上有没有那条「数据没搬过来」的
      *    提示，而**本应用的 hilog 读不到** ⇒ 不写进这个文件，「提示到底有没有出现」就只能
-     *    靠眼睛看屏幕。⛔ 别为了「就近」把它挪回上面去。
-     * ⛔ 只在内容变了时写：它在 `refresh()` 里，而每渲染周期写一次文件本身就是卡顿源。 */
-    const dump: string = readStorageMode(this.filesDir) + '|' + this.storageUsed + '|'
-                       + this.storageUsedReason + '|' + String(this.isolationStale);
-    if (dump !== this.storageDumped) {
-      /* ⚠️ 那份目录清单**在这里算**（而不是每次都算）—— 它要递归列两个根下每一份数据，
-       *    比另外几行贵得多，而它只在真正写文件时才被用到。
-       * ⛔ 缓存键里**不包含它**：清单会随游戏运行而变，把清单本身当键会让每次 refresh 都写。
-       *    判据是「这几行没变就不重写」—— 而这个文件的用途是**事后**排查，写多了没意义。 */
-      const dirs: string = dumpDataDirs(this.filesDir);
-      if (dumpStorageState(this.filesDir, this.storageIntent, this.storageUsed,
-                                    this.storageUsedReason, this.isolationStale, dirs)) {
-        this.storageDumped = dump;
-      }
-    }
+     *    靠眼睛看屏幕。⛔ 别为了「就近」把它挪回上面去。 */
+    this.dumpStorageDiagnostics();
 
     /* ⚠️ 只在**异常**时才记一行 —— 那正是需要日志的时候，一旦修好就自动安静。
      * ⭐ 它把「界面上有没有那条警告」变成一条**能读出来的**事实，不必靠眼睛看屏幕。
@@ -5651,11 +5721,41 @@ export struct LauncherHome {
           .width('100%')
           .margin({ top: 20 })
         Column() {
+          /* ⭐⭐ **实验性：自动适配**（用户 2026-10-04：「标注为实验性功能，这个不默认开启」）。
+           * ⛔ 出厂关闭（见 `LauncherPrefs.GAME_DISPLAY_DEFAULT`）。
+           * 算法与依据全在 `GameAutoFit.ets` 的文件头 —— 那里也记着**它算出来的值（84）
+           * 比你在真机上实测最好的值（100）小**，而那是**有意的**：它给的是「刚好让开挖孔」的下限。 */
+          Row() {
+            Column() {
+              Text('自动适配（实验性）')
+                .fontSize(14).fontColor($r('sys.color.font_primary'))
+              Text(this.gameAuto
+                   ? ('按本机挖孔算出的避让值：' + String(this.gameAutoEdge))
+                   : '关闭时用下面的滑条自己定')
+                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                .margin({ top: 4 })
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+
+            Toggle({ type: ToggleType.Switch, isOn: this.gameAuto })
+              .onChange((on: boolean) => {
+                this.gameAuto = on;
+                /* ⛔ 先把值算好再落盘：`computeGameAutoEdge` 在探测没回来时不动，
+                 *    而 `saveGameDisplay` 会立刻把当前的值写进游戏 ⇒ 顺序反了会写一个 0。 */
+                this.computeGameAutoEdge();
+                this.saveGameDisplay();
+              })
+          }
+          .width('100%')
+
           Row() {
             Column() {
               Text('异形屏避让')
                 .fontSize(14).fontColor($r('sys.color.font_primary'))
-              Text('游戏里界面四周留出的空隙（' + String(this.gameEdge) + '）')
+              Text(this.gameAuto
+                   ? ('游戏里界面四周留出的空隙（' + String(this.gameAutoEdge) + '，自动）')
+                   : ('游戏里界面四周留出的空隙（' + String(this.gameEdge) + '）'))
                 .fontSize(12).fontColor($r('sys.color.font_tertiary'))
                 .margin({ top: 4 })
             }
@@ -5663,14 +5763,20 @@ export struct LauncherHome {
             .layoutWeight(1)
           }
           .width('100%')
+          .margin({ top: 18 })
           Slider({
-            value: this.gameEdge,
+            /* ⚠️ 自动开着时滑条显示**算出来的值**并禁用 —— 让它显示旧的手动值会与上面那句
+             *    「按本机挖孔算出的避让值：84」并排显示两个不同的数，看不出哪个在生效。 */
+            value: this.gameAuto ? this.gameAutoEdge : this.gameEdge,
             min: GAME_EDGE_MIN,
             max: GAME_EDGE_MAX,
             step: 1,
             style: SliderStyle.OutSet
           })
             .width('100%')
+            /* ⚠️ `enabled` 是**链式**通用属性，⛔ 不能写进 `Slider({...})` 的选项里
+             *    （那样是编译错误：`SliderOptions` 没有这个字段）。 */
+            .enabled(!this.gameAuto)
             .margin({ top: 6 })
             .onChange((v: number, mode: SliderChangeMode) => {
               const nv: number = Math.round(v);

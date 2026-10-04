@@ -356,7 +356,8 @@ export function ensureGameDataRoot(filesDir: string): void {
  *   所以这份清单在那里算、这里只负责写下来。
  * @returns 写成功了没有（调用方用它决定要不要记住「已经写过这个内容」。） */
 export function dumpStorageState(filesDir: string, intent: string, used: string,
-                                  reason: string, stale: boolean, dirs: string): boolean {
+                                  reason: string, stale: boolean, extra: string,
+                                  dirs: string): boolean {
   /* ⭐ 顺带把**两个探针**的结论也记下来（2026-10-04 加）。
    * ⛔ 为什么必须落成文件而不是只显示在界面上：**本应用的 hilog 读不到**，
    *    而没有这两行时，「探针过了但迁移全废」只能靠玩家照屏幕念（那一轮就是这么来回的）。
@@ -376,6 +377,8 @@ export function dumpStorageState(filesDir: string, intent: string, used: string,
                       * ⛔ 它必须落在这里 —— **本应用的 hilog 读不到**，而那条提示是否出现
                       *    正是「这次是不是看起来像数据丢了」的判据（2026-10-04 那次全靠它）。 */
                      + 'stale=' + String(stale) + '\n'
+                     /* ⭐ 调用方拼的额外几行（自动适配的输入与结果）。⛔ 它自带换行。 */
+                     + extra
                      + probes
                      + dirs;
   const path: string = SANDBOX_ROOT + '/storage_state.txt';
