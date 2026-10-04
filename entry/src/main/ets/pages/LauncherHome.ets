@@ -474,6 +474,12 @@ export struct LauncherHome {
    * ⛔ 它与存档那个删除**不是一回事**：存档是搬进垃圾站（能找回），这里两个选项都是**真删**，
    *     而「连数据一起删」还可能连带别的版本（见 `otherVersionsOnSelectedDir`）⇒ 必须过确认。 */
   @State showGameDeleteAsk: boolean = false;
+  /* 「数据未迁移」那条提示被玩家**手动忽略**了吗。
+   * ⭐ 忽略只在**本次运行内**有效，而且状态一变就会自己复位（见 `refresh()`）——
+   *    否则他忽略了、又改了粒度，新出现的那个空目录就再也不会提示。
+   * ⚠️ 忽略只是**把提示收起来**，不改任何文件 —— 它不是「门」，所以不需要出口。 */
+  @State staleIgnored: boolean = false;
+
   /* 要删的是**哪一个**。⛔ 不用「当前选中的那个」—— 左滑是**对着某一行**做的动作，
    * 而那一行不一定是选中的那一行（选中只决定「点启动游戏时跑哪个」）。
    * ⚠️ 这三样都在**打开确认窗那一刻**存住，理由见 `openGameDeleteAsk`。 */
@@ -946,19 +952,13 @@ export struct LauncherHome {
   @Builder
   StaleCopyOffer() {
     Column() {
-      /* ⭐ 2026-10-04 收紧。原文是**三句连成的一段**（隔离开着 / 这一档是空的 / 进游戏会看到空的）
-       * 外加一句安心话 —— 读完才知道要干什么。现在拆成**标题 + 一行说明**：
-       *   · 「隔离开着」不必说：那是他自己刚开的；
-       *   · 「进游戏会看到空数据」是推论，标题说完状态就够；
-       *   · 留下的只有「存档一直都在」—— 那才是他此刻真正想知道的。
-       * ⚠️ 颜色也从 warning 降成常规：**这是一个状态 + 一条出路，不是错误**。
+      /* ⭐⭐ 2026-10-04 按用户给的文案定稿（他原话：「开启隔离后，数据未迁移到当前版本。
+       * 选项：复制过去；忽略」）。此前那一版是我自己收的，他不要。
+       * ⚠️ 颜色仍是常规色而非 warning：这是**一个状态 + 两个选项**，不是错误 ——
        *    整块报警色会让人以为出了事，而其实什么都没坏。 */
-      Text('这个版本还没有自己的数据')
+      Text('开启隔离后，数据未迁移到当前版本')
         .fontSize(14).fontColor($r('sys.color.font_primary'))
         .width('100%')
-      Text('存档在「未隔离的那一份」里，一直都在。')
-        .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-        .width('100%').margin({ top: 3 })
 
       /* 失败时**留在这块里**说清楚 —— 失败意味着状态没变、这块还会在。⛔ 不写成弹窗：
        * 失败一次就弹一次的话，玩家得先关掉窗才看得见下面还有什么。
@@ -975,12 +975,25 @@ export struct LauncherHome {
        *   这里是个次要出路，不该跟着它们一起定）。
        * ⚠️ 34vp 低于 48vp 那个最小触控目标 —— 有意的取舍：它够宽（左右各 18vp 内边距），
        *    而这块提示本身不该在屏幕上占掉主按钮的分量。 */
+      /* ⭐ 两个选项。「复制过去」是**主**动作（填色），「忽略」是次级（描边感：卡片底色）。
+       * ⚠️ 两个都不走 `BUTTON_FONT_VP` —— 那个常量管着 10 个主按钮，这里是提示里的出路，
+       *    字号 14 / 高 34 是刻意的（用户 2026-10-04：「按钮相较文字提示过大」）。 */
       Row() {
-        Button('复制过来')
+        Button('复制过去')
           .fontSize(14)
           .height(34)
           .padding({ left: 18, right: 18 })
           .onClick(() => { this.copyStaleCurrent(); })
+        /* 「忽略」只把这一块收起来，**不动任何文件** —— 所以它不需要二次确认，
+         * 也不需要「出口」：状态一变提示会自己回来（见 `refresh()` 里那次复位）。 */
+        Button('忽略')
+          .fontSize(14)
+          .height(34)
+          .padding({ left: 18, right: 18 })
+          .fontColor($r('sys.color.font_secondary'))
+          .backgroundColor($r('app.color.launcher_card'))
+          .margin({ left: 8 })
+          .onClick(() => { this.staleIgnored = true; })
       }
       .width('100%')
       .justifyContent(FlexAlign.End)
@@ -1074,6 +1087,9 @@ export struct LauncherHome {
       hilog.error(DOMAIN, TAG, 'isolation: STALE -- on, but %{public}s does not exist '
                 + '(the un-isolated copy does)', dataDir);
     } else {
+      /* ⭐ 状态解除了 ⇒ 把「已忽略」一并复位。⛔ 不复位的话，下次真的又出现这个状态时，
+       *    提示会被上一次的忽略静默吃掉 —— 而那正是最需要它出现的时候。 */
+      this.staleIgnored = false;
       /* 状态解除了 ⇒ 上一次那句「没复制成功」不再关于任何东西 —— 清掉。⛔ 不清的话它会一直挂在
        * `StaleCopyOffer` 里，等下一次出现空的档位时重新露出来，而那时它说的是另一个键的事 ——
        * 一条关于旧状态的错误消息比没有消息更坏：它指向一个已经不存在的问题。 */
@@ -2203,8 +2219,11 @@ export struct LauncherHome {
    *      ⇒「删它的数据」会删到另一份上去。 */
   private openGameDeleteAsk(g: GameJar): void {
     this.gameDeletePath = g.path;
-    /* ⭐ 版本号在前、文件名在后 —— 与那一行列表的次序一致。 */
-    this.gameDeleteLabel = g.version === '' ? g.name : (g.version + '（' + g.name + '）');
+    /* ⭐⭐ **文件名在前**（用户 2026-10-04：「具体哪个文件」）。
+     * ⚠️ 与首页那一行的次序**相反**，而且这次是对的：那一行是**挑版本**时看的（版本号才是要比的），
+     *    这里是**确认删哪个文件** —— 同一个版本号可能有好几个 jar，要认的正是文件名。
+     * 版本号跟在后面（读不出就不跟），它只是补充。 */
+    this.gameDeleteLabel = g.version === '' ? g.name : (g.name + '  ·  ' + g.version);
     this.gameDeleteDir = resolveGameDirAndKey(this.granularity, 'user', g.path,
                                               this.bundledJar()).dir;
     this.gamesNote = '';
@@ -2494,9 +2513,15 @@ export struct LauncherHome {
                 }
                 .width('100%')
                 .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+                /* ⭐⭐ 白底与圆角**必须在【内容】这一层**，不能挂在 `ListItem` 上。
+                 * ⛔ 挂在 ListItem 上的后果（用户 2026-10-04 报的）：`swipeAction` 移动的是
+                 *    **内容**，而 ListItem 自己的背景不动 ⇒ 左滑时**文字滑走了、白卡片原地不动**，
+                 *    看起来像"只有字在动"。挪进来之后整张卡片一起滑。
+                 * ⚠️ `onClick` 与 `swipeAction` 留在 `ListItem` 上 —— 后者是 `ListItemAttribute`
+                 *    的方法，挪不下来。 */
+                .backgroundColor($r('app.color.launcher_card'))
+                .borderRadius(CARD_RADIUS_VP)
               }
-              .backgroundColor($r('app.color.launcher_card'))
-              .borderRadius(CARD_RADIUS_VP)
               .onClick(() => { this.pick(g.path); })
               /* ⭐ 左滑露出「删除」。用系统原生的 `ListItem.swipeAction`，**不自写手势** ——
                * 回弹、只允许一行展开、与纵向滚动抢手势，这些它都已经处理好了。
@@ -3450,9 +3475,19 @@ export struct LauncherHome {
   GameDeleteAskDialog() {
     Column() {
       Column() {
-        Text('删除「' + this.gameDeleteLabel + '」')
-          .fontSize(17).fontColor($r('sys.color.font_primary'))
+        /* ⭐ 标题两行（用户 2026-10-04 给的形状）：
+         *   第一行 = **「永久删除」**，用危险色 —— 它说明【动作的性质】；
+         *   第二行 = **具体哪个文件** —— 它说明【对象】。
+         * ⛔ 原来是一行「删除「160.5（文件名）」」：既没说清是永久删除，又把两件事挤在一起。
+         * ⚠️ 第二行用文件名而不是版本号为主：同一版本号可能有好几个 jar，
+         *    而玩家要确认的正是"删的是哪一个文件"。 */
+        Text('永久删除')
+          .fontSize(17).fontColor($r('app.color.danger'))
           .width('100%').textAlign(TextAlign.Center)
+        Text(this.gameDeleteLabel)
+          .fontSize(13).fontColor($r('sys.color.font_secondary'))
+          .width('100%').textAlign(TextAlign.Center)
+          .margin({ top: 6 })
 
         if (!this.jarHasOwnData()) {
           /* 隔离关着 ⇒ 全应用唯一那份数据。⛔ 这条路连选项都不给。 */
@@ -4305,7 +4340,7 @@ export struct LauncherHome {
                   /* ⭐⭐ 「当前版本那一档是空的」在**存档页**也要有出口 —— 玩家来找存档时就是在这儿看见
                    * 「空」的。⚠️ 放在列表**顶上**而不是塞进那一组里：这个状态意味着当前版本那一组本身是空的，
                    * 把按钮放进一个空组里玩家会以为它只对那一组有效。 */
-                  if (this.isolationStale) {
+                  if (this.isolationStale && !this.staleIgnored) {
                     this.StaleCopyOffer()
                   }
                   ForEach(this.saveGroups, (g: SaveGroup) => {
@@ -4569,7 +4604,7 @@ export struct LauncherHome {
           /* ⭐⭐ 这一条是给**已经踩进去的状态**留的出口。它不是错误提示，而是一句**诊断**：
            * 说清现在什么状态、以及怎么退回去。⛔ 没有它，玩家只能看到「存档全没了」，
            * 而界面上没有任何线索指向隔离。 */
-          if (this.isolationStale) {
+          if (this.isolationStale && !this.staleIgnored) {
             /* ⛔ 原来这里只是一句提示（「请把隔离关掉（或重新打开一次）」）—— 那是让玩家去猜一个
              * **我们该做**的动作。现在它是同一块可点的东西。 */
             this.StaleCopyOffer()
