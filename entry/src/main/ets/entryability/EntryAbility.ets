@@ -11,6 +11,10 @@ import { modFolderPath } from '../mods/ModImporter';
 import { GameResolution, readSelection, resolveGame, bundledGamePath } from '../games/GameLibrary';
 /* 版本隔离：算出这次该用哪个数据目录，写进 isolation.txt 给 native 读。⚠️ 方向同样单向。 */
 import { computeKey, readGranularity, writeIsolationBridge } from '../settings/Isolation';
+/* 应用级沙箱路径的**唯一真相源**。⛔ 别在这里再写一遍 `/data/storage/el2/base/files` 字面量 ——
+ * 本项目的 `NATIVE_FILES` 就因为「四个文件各写一遍」而分叉过（见 StorageRoot 文件头）。
+ * ⚠️ 无环：StorageRoot 只 import ModImporter，而 ModImporter 不 import 本文件。 */
+import { SANDBOX_ROOT } from '../settings/StorageRoot';
 import { stashIfAny } from '../diagnostics/ExportDiagnostics';
 import pointer from "@ohos.multimodalInput.pointer"
 import sdl from 'libSDL3.so';
@@ -21,7 +25,7 @@ const DOMAIN = 0x0000;
  * 为什么需要它：试一个 JVM flag 的代价本是重新构建、重新签名、重装 171 MB、再启动 —— 每猜一次好几分钟；
  * 而主机上没有任何东西能直接写进应用沙箱（hdc 能【读】/data/app/el2/.../files 但不能写）⇒ 唯一入口是
  * 应用自己：`aa start ... --ps jvmopt1 -Xint`，键必须以 "jvmopt" 开头（普通启动参数才会被忽略）。 */
-function writeJvmOptions(want: Want, filesDir: string): void {
+function writeJvmOptions(want: Want): void {
   try {
     const params = want.parameters;
     if (!params) {
@@ -42,7 +46,19 @@ function writeJvmOptions(want: Want, filesDir: string): void {
     if (lines.length === 0) {
       return;
     }
-    const path = filesDir + '/jvm.options';
+    /* ⛔⛔ **写【应用级】那一份，不是 `ctx.filesDir`（ability 级）那一份。** 2026-10-05 改的。
+     *    这两条路原来抢同一个文件，而两者对「下次启动还在不在」的期望**相反**：
+     *      · `Index.setupCompatMode()` 每次启动**双向重写** ability 级那份 —— 写 `-Xint`，
+     *        或者**把整个文件删掉**。那是**有意**的（`-Xint` 不能跨设备升级留成永久的）；
+     *      · 人工注入的 flag（就是这里写的）应当**持有到有人显式清掉**为止。
+     *    ⇒ 合在一个文件里时，启动器**下一次启动就把注入的 flag 删了**。而
+     *      `RELEASE-MAINTENANCE.md` §2.10 正是拿这条路测那个悬着的 SIGSEGV
+     *      （原文：「put `NOHANDLERS` in `jvm.options`」）—— 那条命令当时**不可能生效**，
+     *      而且失败得与「没注入」一模一样。
+     * ⭐ 分开之后两个写入者各有各的文件，`launcher.c` 的 `load_extra_options()` 读**全部**候选。
+     * ⚠️ 这个路径必须与 `launcher.c` 的 `DEST_ROOT "/jvm.options"` 逐字一致 ⇒ 用 `SANDBOX_ROOT`，
+     *    ⛔ 不在这里再写一遍字面量。 */
+    const path = SANDBOX_ROOT + '/jvm.options';
     const file = fs.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
     fs.writeSync(file.fd, lines.join('\n') + '\n');
     fs.closeSync(file);
@@ -175,7 +191,7 @@ export default class EntryAbility extends UIAbility {
      * 只能存活到 native 开始运行之前。向 native 的交接是本方法【末尾】的 provideArkTSObjects()，main() 正是
      * 由它启动 ⇒ 那次调用之上的东西都在报告还在磁盘上时运行；搞错的代价是无声的（见 ExportDiagnostics.ets）。 */
     stashIfAny(this.context.filesDir);
-    writeJvmOptions(want, this.context.filesDir);
+    writeJvmOptions(want);
     writeUserDirs(this.context.filesDir);
     /* ⭐ 版本隔离的拨杆 —— 必须在 provideArkTSObjects()（本方法末尾）【之前】写完，因为那一下会启动
      * native 的 main()，而 -Duser.home= 就是在那儿算的。⚠️ 每次启动都写（包括「不隔离」那一次）：

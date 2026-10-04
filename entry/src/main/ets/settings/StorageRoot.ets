@@ -201,15 +201,45 @@ export const STORAGE_MODE_EXTERNAL: string = 'external';
  * ⛔ 它记的是**意图**；**实际**用了哪个由 native 记在 `userhome_used.txt`（见下面的 `usedUserHome`）。 */
 const STORAGE_MODE_FILE: string = '/storage_mode';
 
+/* ⭐⭐ 外置那一份**自带**的存储位置标记：`<外部文件夹>/.storage_mode`。
+ *
+ * ── 为什么必须有它（2026-10-05 在手机上量出来的）─────────────────────────────
+ * `STORAGE_MODE_FILE` 在**沙箱**里，而沙箱**活不过一次重装/清数据**（`deploy.sh` 开头就是
+ * `hdc uninstall`）。外置那份数据在用户可见的 `Download/<包名>/` 里，**活得下来**。
+ * ⇒ 重装之后启动器**忘了**玩家在用外置：
+ *   · 它指回沙箱（那里只剩一棵刚建的空树：`saves/` 是空的、`settings.bin` 只有几十条），
+ *     于是玩家看到「我的存档全没了」——**而数据一直好好地在旁边**；
+ *   · 更糟的是那时把开关拨到外置，会拿沙箱这棵几乎空的树去**盖掉**外置的 `settings.bin`
+ *     （`settings.bin` 里还存着存档的显示名，见 `DataPack` 文件头）。
+ * 【实测】2026-10-05 手机上就是这样：`installTime` = 10-04 21:12（一次**重装**，
+ *   `firstInstallTime` 是 09-20），沙箱 `saves/` 空、`settings.bin` 28 条；
+ *   外置那份有 1 个存档、27 个蓝图、1167 条 `settings.bin`（ArkTS 侧读得到，不是读不了）。
+ *
+ * ⭐ 判据：**一个「记住我在哪」的偏好，不能只存在它要记住的那个位置【会消失】的那一侧。**
+ *   把同一件事在外置那边也记一份，代价是一个我们自己的小文件，买到的是「重装后自动认回来」。
+ *
+ * ⛔⛔ **不变量：这个标记存在 ⟺ 数据在外置。** 所以切回沙箱时要**删掉**它
+ *   （见 `writeStorageMode`）——否则一次「外置 → 沙箱」之后它会指着一个已经被搬空的目录。
+ *
+ * ⚠️ **只在沙箱那份【完全没有记录】时才读它**（见 `readStorageMode`）：
+ *   「玩家明确选了沙箱」（文件在、内容是 `sandbox`）与「沙箱里什么都没有」（全新安装）
+ *   是**两件不同的事**，前者绝不能被这个标记翻掉。 */
+const EXTERNAL_MODE_MARKER: string = '/.storage_mode';
+
 /** native 记下的「这次启动实际用了哪个 user.home」。恒在**沙箱**里 —— 理由见文件头。 */
 const USERHOME_RECORD: string = SANDBOX_ROOT + '/userhome_used.txt';
 
-/** 读存储位置的意图。文件不在 / 读不懂 ⇒ **沙箱**（= 本项目一直以来的行为）。 */
+/** 读存储位置的意图。**沙箱里没有记录**时去问外置那份自带标记（见 `EXTERNAL_MODE_MARKER`）；
+ *  两者都拿不到 ⇒ **沙箱**（= 本项目一直以来的行为）。 */
 export function readStorageMode(filesDir: string): string {
   const path: string = filesDir + STORAGE_MODE_FILE;
   try {
     if (!fs.accessSync(path)) {
-      return STORAGE_MODE_SANDBOX;
+      /* ⭐ **沙箱里【完全没有记录】** —— 这是「全新安装 / 被重装清过」的样子，而它
+       * **不等于**「玩家选了沙箱」（后者会把 `sandbox` 写进去）。
+       * ⛔ 所以这里不能直接回退沙箱：那样就重现了 2026-10-05 那个「重装后忘了在用外置」。
+       * ⚠️ 这条岔路只在**没有记录**时才走 ⇒ 稳态下是 0 次额外 IO，不是渲染期的负担。 */
+      return readExternalMarker(filesDir);
     }
     const raw: string = fs.readTextSync(path).trim();
     if (raw === STORAGE_MODE_SANDBOX || raw === STORAGE_MODE_EXTERNAL) {
@@ -227,13 +257,74 @@ export function readStorageMode(filesDir: string): string {
   }
 }
 
-/** 写存储位置的意图。只接受两个已知值。 */
+/** 读外置那份自带标记。⛔ **只认 `external`** —— 其余（没有 / 读不懂 / 写着 `sandbox`）
+ *  一律**沙箱**，与历来行为一致：宁可回到沙箱，也不要凭一个可疑的文件把玩家指到别处。 */
+function readExternalMarker(filesDir: string): string {
+  const ext: string = externalRootPath(filesDir);
+  if (ext === '') {
+    return STORAGE_MODE_SANDBOX;
+  }
+  const path: string = ext + EXTERNAL_MODE_MARKER;
+  try {
+    if (!fs.accessSync(path)) {
+      return STORAGE_MODE_SANDBOX;
+    }
+    if (fs.readTextSync(path).trim() !== STORAGE_MODE_EXTERNAL) {
+      return STORAGE_MODE_SANDBOX;
+    }
+    /* ⭐ 必须**记一条**：这是「启动器为什么自己指到外置去了」的**唯一**解释
+     * （本应用的 hilog 读不到，所以它进不了 storage_state.txt 就只剩猜）。 */
+    hilog.info(DOMAIN, TAG,
+               'storage: the sandbox has no record -- adopting the external marker %{public}s',
+               path);
+    return STORAGE_MODE_EXTERNAL;
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'storage: reading the external marker failed (%{public}s)',
+               err.message);
+    return STORAGE_MODE_SANDBOX;
+  }
+}
+
+/** 写存储位置的意图。只接受两个已知值。
+ *
+ * ⭐ **外置那一份也一起维护**，不变量是「**标记存在 ⟺ 数据在外置**」：
+ *   · 切到外置 ⇒ 在 `<外部文件夹>/.storage_mode` 写一份；
+ *   · 切回沙箱 ⇒ **删掉**它（数据已经搬回沙箱，留着它就会指着一个被搬空的目录）。
+ * ⚠️ 两处都写**不是**冗余：沙箱那份是权威、外置那份是**重装后的唯一线索**
+ *   （见 `EXTERNAL_MODE_MARKER`）。⛔ 所以别「顺手统一成一份」。
+ * ⚠️ 外置那份是**尽力而为**：写不了不影响任何事（沙箱那份才是判据），只记日志。 */
 export function writeStorageMode(filesDir: string, mode: string): void {
   if (mode !== STORAGE_MODE_SANDBOX && mode !== STORAGE_MODE_EXTERNAL) {
     hilog.error(DOMAIN, TAG, 'storage: refusing to write an unknown mode "%{public}s"', mode);
     return;
   }
-  const path: string = filesDir + STORAGE_MODE_FILE;
+  writeOneStorageMode(filesDir + STORAGE_MODE_FILE, mode, 'mode');
+
+  const ext: string = externalRootPath(filesDir);
+  if (ext === '') {
+    return;
+  }
+  const marker: string = ext + EXTERNAL_MODE_MARKER;
+  if (mode === STORAGE_MODE_EXTERNAL) {
+    writeOneStorageMode(marker, mode, 'external marker');
+    return;
+  }
+  /* 切回沙箱：删掉标记。⚠️ `unlinkSync` **删不存在的文件会抛**（本项目记过这条）⇒ 必须包住。 */
+  try {
+    if (fs.accessSync(marker)) {
+      fs.unlinkSync(marker);
+      hilog.info(DOMAIN, TAG, 'storage: removed the external marker %{public}s', marker);
+    }
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'storage: could not remove the external marker (%{public}s)',
+               err.message);
+  }
+}
+
+/** 往一个路径写一行模式值。`what` 只进日志（沙箱那份 / 外置那份）。 */
+function writeOneStorageMode(path: string, mode: string, what: string): void {
   try {
     const f: fs.File = fs.openSync(path,
       fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
@@ -242,10 +333,11 @@ export function writeStorageMode(filesDir: string, mode: string): void {
     } finally {
       fs.closeSync(f);
     }
-    hilog.info(DOMAIN, TAG, 'storage: mode -> %{public}s', mode);
+    hilog.info(DOMAIN, TAG, 'storage: %{public}s -> %{public}s', what, mode);
   } catch (e) {
     const err = e as BusinessError;
-    hilog.warn(DOMAIN, TAG, 'storage: saving the mode failed (%{public}s)', err.message);
+    hilog.warn(DOMAIN, TAG, 'storage: saving the %{public}s failed (%{public}s)',
+               what, err.message);
   }
 }
 

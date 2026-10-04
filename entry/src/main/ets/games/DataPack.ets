@@ -76,22 +76,50 @@ export function ensureDir(path: string): boolean {
   return pathExists(path);
 }
 
+/* 每拷这么多字节**让出一帧**给界面。
+ *
+ * ⛔⛔ 为什么必须有它（2026-10-05 代码审查查出）：这两个拷贝函数原来是**纯同步**的，而调用方
+ *    是在设好「正在读取压缩包…」之后**紧接一行**调它的 ⇒ UI 线程当场被占满，
+ *    **那句话根本画不出来**。玩家看到的是「点下去卡住十几秒到几十秒，然后突然完成」——
+ *    而那正是这个进度提示唯一想避免的事。
+ * ⭐ 用 `setTimeout(0)` 让出，**不是** taskpool：本项目已经在同一个问题上用这个手法
+ *    （`LauncherHome.askStorageSwitch()` 的「先让出一帧」），行为可预期、不引入线程安全与
+ *    跨线程序列化的问题。
+ * ⚠️ 它**不让拷贝变快**，也**不是**真正的进度条 —— 我们只是在块与块之间让界面有机会刷新。
+ *    真要做进度条得先知道总字节数，而分块拷贝本来就能算（`fs.statSync(src).size`），
+ *    那是另一件事，别顺手做。 */
+const YIELD_EVERY_BYTES: number = 4 * 1024 * 1024;
+
+function yieldToUi(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    setTimeout(() => { resolve(); }, 0);
+  });
+}
+
 /** 把一个沙箱文件拷到**另一个沙箱路径**（两边都是路径，不是 URI）。
  *
  * ⭐ 导出用它，**不按 picker 返回的 URI 当文件写**：`DOWNLOAD` 模式的 picker 返回的是**目录** URI，
  *    文件名得我们自己拼上去 —— 所以拿到的已经是「目录路径」，剩下就是普通文件复制。
  * ⚠️ 仍然是分块读写而不是 `fs.copyFileSync`：这个文件可能几百 MB，
- *    而 `copyFileSync` 没有进度、也没有失败位置。 */
-export function copyLocalFile(srcPath: string, dstPath: string): string {
+ *    而 `copyFileSync` 没有进度、也没有失败位置。
+ * ⚠️ 它现在**是 async 的**（见 `YIELD_EVERY_BYTES`）⇒ 调用方必须 `await`，
+ *    ⛔ 不 await 的话会同时跑两份拷贝、还可能让提示在成功之后才出现。 */
+export async function copyLocalFile(srcPath: string, dstPath: string): Promise<string> {
   let out: fs.File | undefined = undefined;
   try {
     const inF: fs.File = fs.openSync(srcPath, fs.OpenMode.READ_ONLY);
     out = fs.openSync(dstPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
     try {
       const buf: ArrayBuffer = new ArrayBuffer(64 * 1024);
+      let sinceYield: number = 0;
       let n: number = fs.readSync(inF.fd, buf);
       while (n > 0) {
         fs.writeSync(out.fd, buf, { length: n });
+        sinceYield += n;
+        if (sinceYield >= YIELD_EVERY_BYTES) {
+          sinceYield = 0;
+          await yieldToUi();
+        }
         n = fs.readSync(inF.fd, buf);
       }
     } finally {
@@ -110,8 +138,9 @@ export function copyLocalFile(srcPath: string, dstPath: string): string {
   }
 }
 
-/** 把一个 picker URI 拷进沙箱 —— **因为 zlib 只吃沙箱路径**（见文件头）。 */
-export function readUriToFile(uri: string, dstPath: string): string {
+/** 把一个 picker URI 拷进沙箱 —— **因为 zlib 只吃沙箱路径**（见文件头）。
+ * ⚠️ 同 `copyLocalFile`：它是 async 的（会中途让出），调用方必须 `await`。 */
+export async function readUriToFile(uri: string, dstPath: string): Promise<string> {
   let src: fs.File | undefined = undefined;
   try {
     src = fs.openSync(uri, fs.OpenMode.READ_ONLY);
@@ -119,10 +148,16 @@ export function readUriToFile(uri: string, dstPath: string): string {
       fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
     try {
       const buf: ArrayBuffer = new ArrayBuffer(64 * 1024);
+      let sinceYield: number = 0;
       let n: number = fs.readSync(src.fd, buf);
       while (n > 0) {
         /* ⛔ **必须带 `length`**：不带的话会把整个 64KB 缓冲区写出去。 */
         fs.writeSync(out.fd, buf, { length: n });
+        sinceYield += n;
+        if (sinceYield >= YIELD_EVERY_BYTES) {
+          sinceYield = 0;
+          await yieldToUi();
+        }
         n = fs.readSync(src.fd, buf);
       }
     } finally {

@@ -4864,7 +4864,7 @@ export struct LauncherHome {
     const staging: string = tmp + '/incoming';
     this.importMsg = '正在读取压缩包…';
 
-    const copyErr: string = readUriToFile(uri, localZip);
+    const copyErr: string = await readUriToFile(uri, localZip);
     if (copyErr !== '') { this.showNotice(copyErr, 'import'); return; }
 
     const acc: TreeStat = newTreeStat();
@@ -5130,7 +5130,7 @@ export struct LauncherHome {
       return;
     }
     const outPath: string = dir + '/' + outName;
-    const wErr: string = copyLocalFile(zip, outPath);
+    const wErr: string = await copyLocalFile(zip, outPath);
     this.showNotice(wErr === '' ? '已导出：' + outPath : wErr, 'export');
   }
   /** 一个**永远存在**的导入目标：未隔离的那一份数据目录。
@@ -6362,6 +6362,19 @@ export struct LauncherHome {
         TabContent() { this.SavesTab() }.tabBar(this.tabItem($r('sys.symbol.doc_text'), '存档'))
         TabContent() { this.SettingsTab() }.tabBar(this.tabItem($r('sys.symbol.gearshape_fill'), '设置'))
       }
+      /* ⛔ **显式写出 `vertical(false)`**（2026-10-05，离线文档的**使用约束**要求
+       *    「`barPosition` 取 `BarPosition.End`」与「`vertical(false)`」并列 —— 而原代码
+       *    只写了前者）。
+       * ⚠️ **它是属性调用，不是构造选项** —— 本机 `tabs.d.ts` 的 `TabsOptions` 逐条读过，
+       *    只有 `barPosition` / `index` / `controller` / `barModifier`，**没有 `vertical`**；
+       *    写进 `HdsTabs({ … })` 里是**编译不过**的。
+       * ⭐ 本机 SDK 里 `HdsTabsAttribute` **自己**声明了
+       *    `vertical(value: boolean): HdsTabsAttribute`，注解原文 "Default value is false."
+       *    ⇒ 实机本来就是这个值，这一行**不改变任何观感**。
+       *    ⭐ 它买到的是**不再依赖一个默认值**：本项目刚为「拿相似组件的默认值去推这个组件的
+       *    行为」吃过一次亏（`HdsTabs.cachedMaxCount` 的文档根本没写默认值），
+       *    而这里组件自带一份默认值声明 ⇒ 更该按它自己的口径写出来，别靠碰巧。 */
+      .vertical(false)
       .barFloatingStyle({
         /* 左右同一个留白 ⇒ 居中由构造保证。见 BAR_MAX_VP。 */
         barSideMargin: this.sideMargin(),

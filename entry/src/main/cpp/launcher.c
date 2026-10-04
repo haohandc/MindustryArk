@@ -1414,27 +1414,53 @@ static void diagnose_loading(void)
 #define MAX_EXTRA_OPTS 32
 static char g_extra[MAX_EXTRA_OPTS][256];
 
-/* 候选位置，按顺序尝试。这里【曾经】有第三个条目 "/data/local/tmp/jvm.options"，2026-09-22
+/* 候选位置。这里【曾经】有第三个条目 "/data/local/tmp/jvm.options"，2026-09-22
  * 移除 —— 它不可能工作：文件推到了那里、从 shell 可读，启动器仍报 "no options file found; tried
  * 3 locations"，每次 fopen 都失败（该路径对应用的 uid 不可达），一个永远打不开的条目只会误导。
- * 真正管用的是第二个条目 DEST_ROOT：hdc 能【读】但不能写它，所以是应用写、shell 读。 */
+ *
+ * ⭐⭐ **两个条目各有【一个】写入者 —— 这一点是承重的**（2026-10-05 才分清，见 load_extra_options）：
+ *   · 第 1 条（ability 级 `/data/storage/el2/base/haps/entry/files`）—— **启动器自己**：
+ *     `Index.setupCompatMode()` 每次启动**双向重写**它（写 `-Xint`，或**把整个文件删掉**）。
+ *     低于 API 26 的手机 JVM 拿不到匿名可执行内存、必须解释执行，故写 `-Xint`
+ *     （RELEASE-MAINTENANCE.md 2.12），且必须双向重写，否则手机升过 26 后 -Xint 会留下、
+ *     游戏永久以解释模式跑。⚠️ probe_exec_mem() 不可用时启动器也强制 -Xint（覆盖 API 26
+ *     商店签名机与无 ACL 平板）：文件是请求，探测才是权威。
+ *   · 第 2 条（应用级 DEST_ROOT）—— **人工注入**：`EntryAbility.writeJvmOptions()`，入口是
+ *     `aa start … --ps jvmoptN <flag>`。**没有任何东西删它** —— 它要持有到有人显式清掉。
+ *   ⛔ 两者共用一个文件时，启动器每次启动都会把注入的 flag 删掉（见 load_extra_options 的说明）。
+ *   ⭐ DEST_ROOT 那一份 hdc 能【读】但不能写（沙箱），所以是「应用写、shell 读」。 */
 static const char *OPTION_PATHS[] = {
-    /* ArkTS 从启动参数写到这里（见 EntryAbility.ets）；context.filesDir 是 ability 自己的 files
-     * 目录，【不是】DEST_ROOT。低于 API 26 的手机 JVM 拿不到匿名可执行内存、必须解释执行，故 ArkTS
-     * 在此写 -Xint（RELEASE-MAINTENANCE.md 2.12），且每次启动必须【双向重写】，否则手机升过 26 后
-     * -Xint 会留下、游戏永久以解释模式跑。⚠️ probe_exec_mem() 不可用时启动器也强制 -Xint（覆盖
-     * API 26 商店签名机与无 ACL 平板）：文件是请求，探测才是权威。 */
     "/data/storage/el2/base/haps/entry/files/jvm.options",
     DEST_ROOT "/jvm.options",
 };
 
-static const char *open_options_file(void)
+/* 读【一个】选项文件，追加到 out[base..]。返回读到的条数（≤ room）。 */
+static int read_options_file(const char *path, JavaVMOption *out, int base, int room)
 {
-    for (unsigned i = 0; i < sizeof(OPTION_PATHS) / sizeof(OPTION_PATHS[0]); i++) {
-        FILE *f = fopen(OPTION_PATHS[i], "r");
-        if (f) { fclose(f); return OPTION_PATHS[i]; }
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        return 0;
     }
-    return NULL;
+    int n = 0;
+    char line[256];
+    while (n < room && fgets(line, sizeof(line), f)) {
+        size_t L = SDL_strlen(line);
+        while (L && (line[L - 1] == '\n' || line[L - 1] == '\r'
+                     || line[L - 1] == ' ' || line[L - 1] == '\t')) {
+            line[--L] = '\0';
+        }
+        if (L == 0 || line[0] == '#') continue;
+        SDL_strlcpy(g_extra[base + n], line, sizeof(g_extra[base + n]));
+        out[base + n].optionString = g_extra[base + n];
+        out[base + n].extraInfo = NULL;
+        n++;
+    }
+    fclose(f);
+    /* ⭐ **每个文件各报一行**，不是合成一句总和 —— 「注入的那条 flag 到底到没到」的
+     *    唯一判据就是这个 `from <路径>`，而本应用的 hilog 读不到、只有 stderr.log 能读
+     *    （hdc 直接可取）。合成一句就把「是哪一份起作用」这个信息丢掉了。 */
+    SDL_Log(" read %d extra option(s) from %s", n, path);
+    return n;
 }
 
 /* 任何一个候选选项文件里含有这个标记吗？（非 static：main 里要用） */
@@ -1452,32 +1478,42 @@ int options_contain(const char *needle)
     return 0;
 }
 
+/* 读【全部候选文件】，按 OPTION_PATHS 的顺序拼接。
+ *
+ * ⛔⛔ 2026-10-05：这里原来是 `open_options_file()` —— **只读第一个存在的**文件。那不只是
+ *    一个优先级细节：它毁掉了一条功能通道，而且是**静默地**毁掉的。
+ *   · ability 级那份由 `Index.setupCompatMode()` 拥有，每次启动**双向重写**（写 `-Xint`，
+ *     或**删掉整个文件**）—— 这是有意的，见 OPTION_PATHS 上面那段。
+ *   · 人工注入的 flag 原先也写在**那一份**里 ⇒ 启动器下一次启动就把它删了。
+ *     `RELEASE-MAINTENANCE.md` §2.10 正是拿这条路去测那个悬着的 SIGSEGV
+ *     （原文：「put `NOHANDLERS` in `jvm.options`」）—— 那条命令**从来不可能生效**。
+ *     ⚠️ 而它失败的样子是「日志里没有 handler」，与「注入没写进去」「选项没被读到」
+ *     **长得一模一样** —— 门从来不触发，和门查了但没查到，区分不开。
+ *   ⇒ 修法两半：**① 两个写入者各用一个文件**（注入搬到 DEST_ROOT 那份，见 EntryAbility.ets）；
+ *     **② 这里读全部候选**（否则「先找到的那个」仍是单点）。
+ *   ⭐ 判据：**一个文件两个写入者、而两者对「下次启动还在不在」的期望相反 ⇒ 那是设计缺陷，
+ *     不是实现细节。** 换掉实现（合并、加标记）都不如把两件事分开来得干净。
+ * ⚠️ 顺序仍然是候选表的顺序：同名选项时**后者生效**（HotSpot 对重复参数的规则）。 */
 static int load_extra_options(JavaVMOption *out, int base)
 {
-    const char *path = open_options_file();
-    if (!path) {
-        SDL_Log(" (no options file found; tried %d locations)",
-                (int)(sizeof(OPTION_PATHS) / sizeof(OPTION_PATHS[0])));
-        return 0;
-    }
-    FILE *f = fopen(path, "r");
-    if (!f) return 0;
+    const unsigned count = (unsigned) (sizeof(OPTION_PATHS) / sizeof(OPTION_PATHS[0]));
     int n = 0;
-    char line[256];
-    while (n < MAX_EXTRA_OPTS && fgets(line, sizeof(line), f)) {
-        size_t L = SDL_strlen(line);
-        while (L && (line[L - 1] == '\n' || line[L - 1] == '\r'
-                     || line[L - 1] == ' ' || line[L - 1] == '\t')) {
-            line[--L] = '\0';
+    int found = 0;
+    for (unsigned i = 0; i < count && n < MAX_EXTRA_OPTS; i++) {
+        FILE *probe = fopen(OPTION_PATHS[i], "r");
+        if (!probe) {
+            continue;
         }
-        if (L == 0 || line[0] == '#') continue;
-        SDL_strlcpy(g_extra[n], line, sizeof(g_extra[n]));
-        out[base + n].optionString = g_extra[n];
-        out[base + n].extraInfo = NULL;
-        n++;
+        fclose(probe);
+        found = 1;
+        n += read_options_file(OPTION_PATHS[i], out, base + n, MAX_EXTRA_OPTS - n);
     }
-    fclose(f);
-    SDL_Log(" read %d extra option(s) from %s", n, path);
+    /* ⛔ 这一行是**既有判据**（RELEASE-MAINTENANCE.md 里多处引用它）：只有【一个文件都不存在】
+     *    时才报。⚠️ 别改成「读到的条数为 0 就报」—— 一个只含注释的选项文件是**存在**的，
+     *    而「没有文件」与「文件在但没有选项」对排查是两件不同的事。 */
+    if (!found) {
+        SDL_Log(" (no options file found; tried %d locations)", (int) count);
+    }
     return n;
 }
 
