@@ -37,7 +37,10 @@ import { readLaunchMode, writeLaunchMode,
          SafePref, readSafePref, writeSafePref, SAFE_VP_MAX, SAFE_VP_STEP,
          readGameLocaleFollow, writeGameLocaleFollow,
          GameDisplayPref, readGameDisplay, writeGameDisplay, readAppliedGameDisplay,
-         GAME_EDGE_MIN, GAME_EDGE_MAX, GAME_SCALE_MIN, GAME_SCALE_MAX, GAME_SCALE_STEP,
+         /* ⚠️ 这里**曾经**还导入 `GAME_EDGE_MIN/MAX` 与 `GAME_SCALE_MIN/MAX/STEP` ——
+          *    那五个只被「自动适配」的两个滑条用过，而滑条 2026-10-05 删了 ⇒ 一并去掉。
+          *    ⛔ 别因为「以后可能还要调」把它们加回来：量程的定义在 `LauncherPrefs` 与
+          *    `GameAutoFit` 里（`autoEdgePadding` 自己夹取），启动器界面不需要知道它。 */
          GAME_EDGE_FACTORY, GAME_SCALE_FACTORY } from '../settings/LauncherPrefs';
 /* ⭐ 实验性：由系统参数（挖孔 + 密度）算游戏该用的避让值。 */
 import { displayDensity, autoEdgePadding, systemGameScale } from '../games/GameAutoFit';
@@ -1630,15 +1633,14 @@ export struct LauncherHome {
   /* 滑条松手：存偏好，并**立刻**把值写进游戏那份 settings.bin。
    * ⚠️ 只有松手才写（`End` / `Click`）—— 拖动中每次变化都写盘会写上百次，而这是块闪存。
    *    同 `writeSafePref` 那条既有规矩。 */
-  private saveGameDisplay(which: string): void {
-    /* ⭐ `which` = 玩家刚动过的那一项（`'edge'` / `'scale'` / `''` = 只拨了开关）。
-     * ⛔ 只有**真正动过**的那一项才置 `*Set` —— 否则「把初值写一遍」就等于「他选了这个数」，
-     *    而那正是让默认值改不动的那个坑（2026-10-04 实测踩到）。 */
-    if (which === 'edge') {
-      this.gameEdgeSet = true;
-    } else if (which === 'scale') {
-      this.gameScaleSet = true;
-    }
+  private saveGameDisplay(): void {
+    /* ⛔ **它【不】置 `gameEdgeSet` / `gameScaleSet`** —— 这一点是承重的：那两个标志的语义是
+     *    「**玩家自己设过**这一个值」，而「把当前值存一遍」不等于他设过（那正是让默认值改不动的
+     *    那个坑，2026-10-04 实测踩到）。
+     * ⚠️ 2026-10-05 起它**没有参数**了：原来那个 `which` 是给两个滑条用的
+     *    （`'edge'` / `'scale'` 各自置一个标志），而滑条已删 ⇒ 只剩「拨开关」这一个调用点。
+     * ⛔ 别把参数加回来「以备将来」：将来真要有手动入口，它该自己带一个明确的标志语义，
+     *    而不是复用这个已经与滑条绑在一起的形状。 */
     const p: GameDisplayPref = { edge: this.gameEdge, scale: this.gameScale,
                             auto: this.gameAuto,
                             edgeSet: this.gameEdgeSet, scaleSet: this.gameScaleSet };
@@ -6255,7 +6257,7 @@ export struct LauncherHome {
                 if (on) {
                   this.seedGameEdgeFromDevice();
                 }
-                this.saveGameDisplay('');      /* 只是拨开关 => 两项都不算「他设过」 */
+                this.saveGameDisplay();      /* 只是拨开关 => 两项都不算「他设过」 */
               })
           }
           .width('100%')
@@ -6270,97 +6272,49 @@ export struct LauncherHome {
            *    启动器复制一份出来只会让人分不清哪个在生效。
            * ⭐ 所以滑条的定位是「**给自动算出来的值做微调**」，而不是「另一个调这两项的地方」。
            * ⚠️ 关着时这一整段不渲染 ⇒ 卡片高度会变，这是**接受**的代价（同深色模式那张卡的做法）。 */
+          /* ⭐⭐ **两个滑条已删**（用户 2026-10-05：「滑条可以去掉了，只留下一行提示和数值说明」）。
+           *
+           * ⛔⛔ **为什么删得掉、而且删了更好**：项目里**本来就有这两个设置**，在游戏自己的设置界面里
+           *    （`setting.uiEdgePadding.name` / `setting.uiscale.name`）。启动器再摆一份滑条，
+           *    玩家就得猜「哪个在生效」—— 这正是用户 2026-10-04 说「游戏内能调的**不给别人看**」
+           *    的那条理由。**把那一份收掉，启动器这边就只剩一件事：按本机挖孔算一个值。**
+           * ⭐ 附带的效果（是好事，不是代价）：**没有滑条 ⇒ 没有「微调」** ⇒ `gameEdgeSet` /
+           *    `gameScaleSet` 再也不会被手动置真（只剩「游戏里那个值本来就不是出厂值」那条回显会置）
+           *    ⇒ `refresh()` / `initSafeArea()` 里那两个 `!gameEdgeSet` 守卫**恒成立**，
+           *    自动值每次都按当次输入重算。⚠️ 也因此**彻底不存在**「重新打开开关会不会盖掉微调」
+           *    这个问题了 —— 它连被问的前提都没有了（那句提示刚被删，见上面那段）。
+           *
+           * ⚠️ 留下的这一行是**用户 2026-10-05 挑的版式**：左提示、右数值。
+           *    · 提示那句是**他点选的那个选项里的原话**，⛔ 别改写。
+           *    · 两个数值的名字用**游戏自己的原话**（`UI 内边距` / `界面缩放比例`），
+           *      理由与原来一致：玩家在游戏设置里看到的就是这两个词，两边同一套说法他才对得上号。
+           *      ⚠️ 数值**必须显示** —— 这一行现在是这两个值的**唯一**出口（滑条没了）。
+           * ⛔ 只在**开关开着**时显示（用户 2026-10-05 定的）：关着时这两个数只是游戏里的现状，
+           *    与这张卡要做的事无关。⚠️ 关着时卡片高度会变，与原来一样是**接受**的。 */
           if (this.gameAuto) {
-            /* ⭐⭐ **标签一律用游戏自己的原话，数值显示在旁边**（用户 2026-10-04 定的）。
-             * 文案取自 jar 里的 `bundles/bundle_zh_CN.properties`（⭐ 权威来源，别自己编）：
-             *     `setting.uiEdgePadding.name = UI 内边距`
-             *     `setting.uiscale.name       = 界面缩放比例`
-             * ⛔ 别改写成「异形屏避让」这类**我的**说法 —— 玩家在游戏设置里看到的是上面那两个词，
-             *    两边用同一套说法他才对得上号（这正是他要求「改成游戏内的原话」的理由）。
-             * ⚠️ 数值**必须显示**：滑条没有刻度，不给数字就不知道拖到哪了。 */
             Row() {
-              Text('UI 内边距')
-                .fontSize(14).fontColor($r('sys.color.font_primary'))
+              Text('按本机挖孔自动设置')
+                .fontSize(13).fontColor($r('sys.color.font_secondary'))
                 .layoutWeight(1)
-              Text(String(this.gameEdge))
-                .fontSize(14).fontColor($r('sys.color.font_secondary'))
+                .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+              Text('UI 内边距 ' + String(this.gameEdge)
+                   + '　界面缩放比例 ' + String(this.gameScale) + '%')
+                .fontSize(13).fontColor($r('sys.color.font_tertiary'))
             }
             .width('100%')
-            .margin({ top: 18 })
-            Slider({
-              /* ⭐ 只有一个值，所以显示它、并且**两个模式下都能拖**（自动开着时拖的就是刚算出来的那个数）。 */
-              value: this.gameEdge,
-              min: GAME_EDGE_MIN,
-              max: GAME_EDGE_MAX,
-              step: 1,
-              style: SliderStyle.OutSet
-            })
-              .width('100%')
-              /* ⚠️ `enabled` 是**链式**通用属性，⛔ 不能写进 `Slider({...})` 的选项里。 */
-              .margin({ top: 6 })
-              .onChange((v: number, mode: SliderChangeMode) => {
-                const nv: number = Math.round(v);
-                /* ⚠️ 只在**手指离开**时写盘（`End` / `Click`）—— 拖动中每次变化都写会写上百次，
-                 * 而这是一块闪存。`Moving` 时只改内存里的值，界面照常实时预览。 */
-                const end: boolean = (mode === SliderChangeMode.End
-                                      || mode === SliderChangeMode.Click);
-                /* ⛔⛔ 这个守卫【不能】把 `end` 那次也挡掉 —— 它挡掉过一次，代价是**值永远存不下来**：
-                 *      拖动时 `Moving` 已经把 `gameEdge` 跟到了终点，于是 `End` 那一刻
-                 *      `nv === gameEdge` 成立 ⇒ 直接 return ⇒ `saveGameDisplay` **一次都没执行**。
-                 *      内存里是对的（界面看着正常），文件里还是旧值 ⇒ 下次 `refresh()` 又把它改回去
-                 *      = 「滑条白拖」。⚠️ 那两个滑条**只在自动开着时才显示**，所以这不是边角路径。
-                 * ⭐ 同文件里 `safeVp` 那条滑条踩过**同一个坑**（见它上面那段注释）——
-                 *    「跳过没变化的更新」与「只在结束时写盘」是两条各自合理的规则，
-                 *    叠在一起时**后者成了前者的受害者** ⇒ 写盘那一路必须从守卫里豁免。 */
-                this.gameEdge = nv;
-                if (!end) {
-                  return;
-                }
-                this.saveGameDisplay('edge');
-              })
-
-            /* ⭐ 同上：游戏的原话 + 数值旁边。`%` 是游戏自己的显示方式
-             *    （用户在游戏里看到的就是「界面缩放比例：100%」）。 */
-            Row() {
-              Text('界面缩放比例')
-                .fontSize(14).fontColor($r('sys.color.font_primary'))
-                .layoutWeight(1)
-              Text(String(this.gameScale) + '%')
-                .fontSize(14).fontColor($r('sys.color.font_secondary'))
-            }
-            .width('100%')
-            .margin({ top: 18 })
-            Slider({
-              value: this.gameScale,
-              min: GAME_SCALE_MIN,
-              max: GAME_SCALE_MAX,
-              step: GAME_SCALE_STEP,
-              style: SliderStyle.OutSet
-            })
-              .width('100%')
-              .margin({ top: 6 })
-              .onChange((v: number, mode: SliderChangeMode) => {
-                const nv: number = Math.round(v);
-                /* ⚠️ 同上：只有手指离开才写盘；`Moving` 只改内存。 */
-                const end: boolean = (mode === SliderChangeMode.End
-                                      || mode === SliderChangeMode.Click);
-                /* ⛔⛔ 同避让那条：守卫不能把 `end` 也挡掉，否则**拖完不落盘**，
-                 *    而 `scaleSet` 保持 false ⇒ 连「玩家设过」这件事都没记下来
-                 *    ⇒ 下次 `refresh()` 立刻用系统字体推算值把它覆盖掉。
-                 *    理由与踩坑经过见上面避让滑条那段注释（同一个缺陷的两处）。 */
-                this.gameScale = nv;
-                if (!end) {
-                  return;
-                }
-                this.saveGameDisplay('scale');
-              })
+            .margin({ top: 10 })
           }
 
-          /* ⭐ 这张卡的**第二处、也是最后一处文字**（用户 2026-10-04 指定的）。
+          /* ⭐ 这是这张卡的**最后一行文字**（用户 2026-10-04 指定的）。
            * ⛔ 它把「不覆盖玩家已经调过的值」这条规则一句话说完 —— 所以**它同时取代了**
            *    我原来那句更长的说明，以及我在 `applyGameDisplay` 里为「自动模式没写进去」
            *    单独加的那条提示（那条已删：这条更短，而且涵盖同一个意思）。
-           * ⇒ 别在它旁边再加解释。 */
+           * ⇒ 别在它旁边再加解释。
+           * ⚠️ **卡片上现在一共三行文字**（标题 + 上面那行读值 + 这一行）——
+           *    原本这里写的是「第二处、也是最后一处」，而 2026-10-05 删滑条时上面又加回了一行
+           *    ⇒ 那句话当场就过期了。⭐ 凡是「第 N 处 / 最后一处」这种**计数式**的表述，
+           *    只要旁边增删一次就会变成假的 —— 写的时候尽量用**位置描述**（「最后一行」），
+           *    或者干脆不写数量。 */
           Text('只覆盖默认设置')
             .fontSize(12).fontColor($r('sys.color.font_tertiary'))
             .width('100%').margin({ top: 14 })
