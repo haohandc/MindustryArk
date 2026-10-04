@@ -11,7 +11,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { GameVersionParts, gameVersionParts } from '../games/GameLibrary';
-import { copyTreeInto, newTreeStat, TreeStat } from '../utils/FsTree';
+import { copyTreeInto, removeTree, newTreeStat, TreeStat } from '../utils/FsTree';
 /* ⭐ 存储根的唯一真相源。⛔ 这里 import 它**不会成环**：`StorageRoot` 只依赖 `ModImporter`，
  *    而 `ModImporter` 谁都不依赖（2026-10-04 查过整张图）。 */
 import { gameDataRoot } from './StorageRoot';
@@ -411,34 +411,79 @@ export function describeCounts(c: GameDataCounts): string {
  * 沙箱里**连一个空目录都复制不了**（`Invalid argument`）。⛔ 别在这里重抄一遍（会分叉）。 */
 
 
-/* 把一个数据根**整个**搬到另一个根。⛔ 只用于「切换存储位置」那一次迁移 ——
- * ⚠️ 它显式吃两个根（迁移天然同时需要「从哪」和「到哪」），⛔ **不读** `GAME_DATA_ROOT`。
+/* 切换存储位置时要搬的**那几棵子树**（相对于根的路径）。
  *
- * ⭐⭐ 搬的是**整根**（连 `instances/` 一起），不是只有不隔离那一份：
- *    隔离开着时玩家的存档在 `instances/<键>/…` 里，只搬 `.local/share/Mindustry`
- *    会**静默丢掉那几棵树** —— 而「界面上看起来完全正常」正是本项目反复吃亏的地方。
- * ⚠️ **源永不删**，与 `copyLiveDataInto` 同一条：失败了至少原地还有一份。
- * ⚠️ 「没有数据可搬」**不算失败**（全新安装第一次就切，走的就是这条）。 */
-export function copyRootInto(fromRoot: string, toRoot: string): string {
-  if (fromRoot === toRoot || fromRoot === '' || toRoot === '') {
+ * ⛔⛔ **2026-10-04：第一版搬的是【整个根】，结果 jdk/、那些 .so、stderr.log、save-vault/
+ *    全被复制到了外置目录**（用户当场看到）。根因是我把两个概念混了 ——
+ *    `gameDataRoot()` 返回的「根」在沙箱里**同时**是 JDK、日志、垃圾站住的地方；
+ *    它只是「游戏数据树恰好长在这底下」，**不等于**「这底下的东西都是游戏数据」。
+ *    ⭐ 判据：**搬的是一个【概念】，不是一个【目录】** —— 所以才要显式列出这几棵。
+ *    ⛔ 以后要加游戏数据的新子树，**加到这里**，别把整个根塞进去。
+ *
+ * ⚠️ `.local/share` 而不是 `.local/share/Mindustry`：前者是 ARC 自己那一层
+ *    （`OS.getAppDataDirectoryString()` = `user.home + "/.local/share/" + appname`），
+ *    搬整层不会多带什么，少搬一层却会漏掉 ARC 可能放在同级的东西。
+ * ⚠️ `instances/` **必须**在列：隔离开着时玩家的存档在 `instances/<键>/…` 里，
+ *    只搬不隔离那一份会**静默丢掉那几棵树** —— 「界面上看起来完全正常」正是本项目反复吃亏的地方。
+ * ⛔ 垃圾站（`save-vault/`）**不在列**：用户 2026-10-04 定的「垃圾站留在沙箱」（它是兜底恢复副本）。 */
+const MIGRATED_SUBTREES: string[] = ['/.local/share', '/instances'];
+
+/* 把游戏数据在两个根之间搬迁。`move` = 搬完之后把源删掉。
+ *
+ * @returns '' 成功；否则一句给玩家看的话。
+ *
+ * ⚠️ 它显式吃两个根（迁移天然同时需要「从哪」和「到哪」），⛔ **不读** `GAME_DATA_ROOT`。
+ * ⚠️ 顺序是承重的：**先全部复制成功，再删源**。反过来（先删）一旦中途失败就是真的丢数据；
+ *    而「复制成功才落盘/才删」这条本项目已经付过一次代价（隔离那次的「存档全没了」）。
+ *⚠️ 「没有数据可搬」**不算失败**（全新安装第一次就切，走的就是这条）。 */
+export function migrateGameData(fromRoot: string, toRoot: string, move: boolean): string {
+  if (fromRoot === '' || toRoot === '' || fromRoot === toRoot) {
     return '';
   }
-  if (!gameDataExists(fromRoot)) {
-    hilog.info(DOMAIN, TAG, 'storage: nothing to copy (%{public}s does not exist)', fromRoot);
-    return '';
+  /* ① 复制。逐个记成功的那几棵，**没复制成功的绝不删**。 */
+  const copied: string[] = [];
+  let dirs: number = 0;
+  let files: number = 0;
+  for (const rel of MIGRATED_SUBTREES) {
+    const src: string = fromRoot + rel;
+    const dst: string = toRoot + rel;
+    if (!gameDataExists(src)) {
+      continue;                     /* 这棵本来就没有 —— 不是错（全新安装就是这样） */
+    }
+    const acc: TreeStat = newTreeStat();
+    copyTreeInto(src, dst, 0, acc);
+    dirs += acc.dirs;
+    files += acc.files;
+    if (acc.failed > 0) {
+      /* ⚠️ 路径与**第一个**错误都进日志：只报错误码会把排查的第一步推给下一个人。
+       * ⛔ 这里直接返回 ⇒ **连前面已经复制成功的那几棵也不删**（`move` 时更该如此）。 */
+      hilog.error(DOMAIN, TAG,
+                  'storage: migrating %{public}s had %{public}d failure(s), first: %{public}s',
+                  rel, acc.failed, acc.firstError);
+      return '复制没完成（' + String(acc.failed) + ' 个文件没复制过去）：' + acc.firstError;
+    }
+    copied.push(rel);
   }
-  const acc: TreeStat = newTreeStat();
-  copyTreeInto(fromRoot, toRoot, 0, acc);
-  if (acc.failed > 0) {
-    /* ⚠️ 路径与**第一个**错误都进日志：只报错误码会把排查的第一步推给下一个人。 */
-    hilog.error(DOMAIN, TAG,
-                'storage: root copy had %{public}d failure(s), first: %{public}s (%{public}s -> %{public}s)',
-                acc.failed, acc.firstError, fromRoot, toRoot);
-    return '复制没完成（' + String(acc.failed) + ' 个文件没复制过去）：' + acc.firstError;
+
+  /* ② 删源（仅 `move`，且**只删真的复制成功的那几棵**）。 */
+  if (move) {
+    for (const rel of copied) {
+      const acc: TreeStat = newTreeStat();
+      removeTree(fromRoot + rel, 0, acc);
+      if (acc.failed > 0) {
+        /* ⚠️ 删不干净**不是**失败：新位置那份是好的，玩家的数据没丢。说清楚即可。 */
+        hilog.warn(DOMAIN, TAG, 'storage: could not remove %{public}s (%{public}d failure(s))',
+                   fromRoot + rel, acc.failed);
+        return '已经搬到新位置了，但旧的那份没删干净（' + String(acc.failed)
+             + ' 个文件）。可以在文件管理里手动删掉 ' + fromRoot + '，或者先不管它。';
+      }
+    }
   }
+
   hilog.info(DOMAIN, TAG,
-             'storage: copied %{public}d dir(s) / %{public}d file(s) %{public}s -> %{public}s',
-             acc.dirs, acc.files, fromRoot, toRoot);
+             'storage: %{public}s %{public}d dir(s) / %{public}d file(s) %{public}s -> %{public}s (%{public}s)',
+             move ? 'moved' : 'copied', dirs, files, fromRoot, toRoot,
+             copied.length === 0 ? 'nothing to move' : copied.join('+'));
   return '';
 }
 

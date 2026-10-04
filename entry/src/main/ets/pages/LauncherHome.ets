@@ -57,7 +57,7 @@ import { GRANULARITY_OFF, GRANULARITY_NUMBER, GRANULARITY_BUILD, GRANULARITY_PAT
          GameDataCounts, countsOf, describeCounts,
          resolveGameDataDir, resolveGameDirAndKey, GameDirForKey,
          listInstanceKeys, granularityKey, KEY_UNKNOWN,
-         setGameDataRoot, copyRootInto } from '../settings/Isolation';
+         setGameDataRoot, migrateGameData } from '../settings/Isolation';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
@@ -1330,13 +1330,14 @@ export struct LauncherHome {
     this.showStorageAsk = true;
   }
 
-  /* 询问窗上的三个按钮。⭐ **复制失败就不落盘** —— 与隔离那套同一条（「先复制，成功了才落盘」，
+  /* 询问窗上的出口。`how` = `'copy'` / `'move'` / `'keep'`（什么都不搬）。
+   * ⭐ **复制/移动失败就不落盘** —— 与隔离那套同一条（「先复制，成功了才落盘」，
    * 那条教训是「存档全没了」）。 */
-  private confirmStorageSwitch(copyData: boolean): void {
+  private confirmStorageSwitch(how: string): void {
     const from: string = gameDataRoot(this.filesDir);
     const to: string = gameDataRootFor(this.filesDir, this.storagePending);
-    if (copyData) {
-      const err: string = copyRootInto(from, to);
+    if (how !== 'keep') {
+      const err: string = migrateGameData(from, to, how === 'move');
       if (err !== '') {
         this.storageNote = err;
         this.showStorageAsk = false;
@@ -1345,10 +1346,14 @@ export struct LauncherHome {
     }
     writeStorageMode(this.filesDir, this.storagePending);
     this.showStorageAsk = false;
-    /* ⚠️ 说清「要重启游戏」：native 在**启动那一刻**读桥，所以现在游戏那边还是旧的根。 */
-    this.storageNote = copyData
+    /* ⚠️ 说清「要重启游戏」：native 在**启动那一刻**读桥，所以现在游戏那边还是旧的根。
+     * ⛔ 三种出口的话术分开 —— 「移动」最要紧的一句是**旧的已经删了**，玩家得知道，
+     *    否则他会去旧位置找一个已经不在了的东西。 */
+    this.storageNote = how === 'copy'
       ? '已切换并复制。下次启动游戏才会用新的位置。'
-      : '已切换（没有复制）。下次启动游戏才会用新的位置。';
+      : (how === 'move'
+         ? '已切换并搬走了，旧位置那份已经删除。下次启动游戏才会用新的位置。'
+         : '已切换（数据没有搬）。下次启动游戏才会用新的位置。');
     this.refresh();
   }
 
@@ -4035,14 +4040,24 @@ export struct LauncherHome {
           .backgroundColor($r('sys.color.brand'))
           .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
           .margin({ top: 16 })
-          .onClick(() => { this.confirmStorageSwitch(true); })
+          .onClick(() => { this.confirmStorageSwitch('copy'); })
 
-        Button('不复制')
+        /* ⭐ 移动（2026-10-04 用户要的）：搬完把**源删掉**。⚠️ 它是这一排里唯一的**破坏性**动作，
+         * 所以不给满色 —— 同 `SaveActionRow` 那条判据（主操作给满色，破坏性的给底色 + 警示词）。 */
+        Button('移动过去')
+          .fontSize(15)
+          .fontColor($r('sys.color.warning'))
+          .backgroundColor($r('app.color.btn_neutral'))
+          .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
+          .margin({ top: 10 })
+          .onClick(() => { this.confirmStorageSwitch('move'); })
+
+        Button('不搬动')
           .fontSize(15)
           .backgroundColor($r('app.color.btn_neutral'))
           .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
           .margin({ top: 10 })
-          .onClick(() => { this.confirmStorageSwitch(false); })
+          .onClick(() => { this.confirmStorageSwitch('keep'); })
 
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
         Button('取消')
@@ -4083,7 +4098,8 @@ export struct LauncherHome {
          + (c.mods > 0 ? ('、' + String(c.mods) + ' 个模组') : '')
          + (c.schematics > 0 ? ('、' + String(c.schematics) + ' 份蓝图') : ''));
     return '要放到：' + where + '。\n' + what + '。\n\n'
-         + '复制过去 = 在新位置留一份，旧的**不动**；不复制 = 新位置从空的开始。';
+         + '复制过去 = 新的留一份、旧的**不动**；移动过去 = 旧的**删掉**；'
+         + '不搬动 = 新位置从空的开始。';
   }
 
   @Builder
