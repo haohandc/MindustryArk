@@ -243,7 +243,32 @@ JIT 需要它）。它只在**商店构建**时由 `scripts/make_store_app.sh` �
 | 模式 | 设备 | 可执行内存权限 | 内容 |
 |---|---|---|---|
 | `bash scripts/make_store_app.sh tablet` | 平板 + 2in1 | **注入** | 完整：JDK + 游戏 |
-| `bash scripts/make_store_app.sh tools` | 手机 + 平板 + 2in1 | **不注入** | **无 JDK、无游戏**（管理工具，约 8 MB） |
+| `bash scripts/make_store_app.sh tools` | 手机 + 平板 + 2in1 | **不注入** | **无 JDK、无游戏**（管理工具，约 1.5 MB） |
+
+⭐ **想在自己机器上试这个包形状**，加 `--hap`：产出**可以侧载的 debug 签名 HAP**，
+而不是只能上传的 release `.app`。
+
+| 命令 | 产物 | 能不能装到自己的设备上 |
+|---|---|---|
+| `bash scripts/make_store_app.sh tools` | `dist/store/…-tools.app` | ⛔ **不能**（release 证书，只给上传） |
+| `bash scripts/make_store_app.sh tools --hap` | `dist/…-tools-hap.hap` | ✅ 可以 |
+
+⚠️ **`--hap` 不改包形状** —— 权限注不注入、`deviceTypes` 是哪一组，仍由模式决定，
+`entry/libs/` 也**照样挪走再挪回**（所以出来的确实是「无运行时」那个）。
+它只改**容器与签名**。⚠️⚠️ 少了「挪走」那一步，出来的就是**带 JDK 的完整包**，
+而它在手机上**装得上** ⇒ 这次测试会安静地测错东西。
+
+它用 **`product=default` + `buildMode=release`**，两半各管一件事：前者给**调试证书**（所以能侧载），
+后者让原生库**按商店包那样 strip 与优化**。⛔ 别改成 `buildMode=debug`：实测产物从
+**3.9 MB 涨到 9.2 MB**，而体积闸门的上限是 10 MB ⇒ 一条该不该报的闸门会变成边界值检查；
+而且**商店包就是 release 档**，拿 debug 档的原生库测的不是要上架的那个东西。
+
+⛔ **别用 `bash deploy.sh` 装它** —— 那个脚本会自己构建**带运行时**的 HAP，并且带
+`hdc uninstall`（会清空应用沙盒）。直接装这个文件：
+
+```bash
+hdc install -r dist/ArkLauncher-<版本>-tools-hap.hap
+```
 
 ⛔⛔ **`tools` 只属于 Ark Launcher（`lite` 分支）。** 范围是「拆分包体仅限于 Ark Launcher，
 Mindustry Ark 不做实际的拆分包体」。脚本里有一道门：在 `config.SHIPS_GAME` 为 `True` 的树上
@@ -496,7 +521,35 @@ which devices it claims):
 | Mode | Devices | Executable-memory permission | Contents |
 |---|---|---|---|
 | `bash scripts/make_store_app.sh tablet` | tablet + 2in1 | **injected** | full: JDK + game |
-| `bash scripts/make_store_app.sh tools` | phone + tablet + 2in1 | **not injected** | **no JDK, no game** (a management tool, ~8 MB) |
+| `bash scripts/make_store_app.sh tools` | phone + tablet + 2in1 | **not injected** | **no JDK, no game** (a management tool, ~1.5 MB) |
+
+⭐ **To try that shape on your own device**, add `--hap`: it produces a **sideload-able,
+debug-signed HAP** instead of the upload-only release `.app`.
+
+| Command | Artifact | Installable on your own device |
+|---|---|---|
+| `bash scripts/make_store_app.sh tools` | `dist/store/…-tools.app` | ⛔ no (release certificate, upload only) |
+| `bash scripts/make_store_app.sh tools --hap` | `dist/…-tools-hap.hap` | ✅ yes |
+
+⚠️ **`--hap` does not change the package shape** -- whether the permission is injected and which
+`deviceTypes` are claimed still come from the mode, and `entry/libs/` is **still moved aside and
+back** (which is why the result really is the no-runtime one). Only the container and the signing
+config differ. ⚠️⚠️ Without that move you get the full package **with** the JDK, and it *does*
+install on a phone -- so the test would quietly test the wrong thing.
+
+It uses **`product=default` + `buildMode=release`**, and the two halves do different jobs: the
+first gives the **debug certificate** (hence sideload-able), the second strips and optimises the
+native libraries **the way the store package does**. ⛔ Do not switch it to `buildMode=debug`:
+measured, the artifact goes from **3.9 MB to 9.2 MB** against a 10 MB size gate, so a check that
+ought to catch regressions becomes a boundary value; and the store package is a release build, so
+debug natives test something other than what ships.
+
+⛔ **Do not use `bash deploy.sh` to install it** -- that script builds its own HAP *with* the
+runtime and runs `hdc uninstall` (wiping the app sandbox). Install the file directly:
+
+```bash
+hdc install -r dist/ArkLauncher-<version>-tools-hap.hap
+```
 
 ⛔⛔ **`tools` belongs to Ark Launcher (the `lite` branch) only.** The scope is 拆分包体仅限于
 Ark Launcher, Mindustry Ark 不做实际的拆分包体. The script refuses the mode unless
