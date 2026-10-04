@@ -55,7 +55,8 @@ import { GRANULARITY_OFF, GRANULARITY_NUMBER, GRANULARITY_BUILD, GRANULARITY_PAT
          copyLiveDataInto, gameDataExists, liveGameDataDir, isolatedGameDataDir,
          GameDataCounts, countsOf, describeCounts,
          resolveGameDataDir, resolveGameDirAndKey, GameDirForKey,
-         listInstanceKeys, granularityKey, KEY_UNKNOWN } from '../settings/Isolation';
+         listInstanceKeys, granularityKey, KEY_UNKNOWN,
+         setGameDataRoot } from '../settings/Isolation';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
@@ -1301,6 +1302,13 @@ export struct LauncherHome {
   }
 
   private refresh(): void {
+    /* ⭐⭐ **第一件事**：把游戏数据根告诉 `Isolation`（2026-10-04 起可切换）。
+     * ⛔ **必须在任何算出游戏数据目录的调用之前** —— 它下面紧接着就会用
+     *    `resolveGameDataDir()` / `liveGameDataDir()` 去列存档，而那两个读的就是这个根。
+     *    顺序反了 ⇒ 这一次刷新列的还是**上一个根**的存档，界面看起来正常、内容却是旧的。
+     * ⚠️ 根只有这一处设：别在事件处理里也调一次（两处赋值 = 两份真相，且不知道谁后跑）。 */
+    setGameDataRoot(gameDataRoot(this.filesDir));
+
     ensureGameJarDir(this.filesDir);
     this.games = listGameJars(this.filesDir);
     this.selected = readSelection(this.filesDir);

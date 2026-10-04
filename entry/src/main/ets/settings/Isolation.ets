@@ -132,14 +132,17 @@ export function computeKey(granularity: string, source: string, jarPath: string,
  * 一改合并规则，昨天的键今天就没有版本指向它了，而「界面上看不见」与「数据没了」在玩家眼里是同一件事。
  * ⚠️ 只认**名字合法**的目录（与 native 的 `resolve_user_home()` 同一套判据）。返回**键**不是路径。 */
 export function listInstanceKeys(): string[] {
+  /* ⚠️ 每次都问 `instancesRoot()`，**不要在函数外缓存** —— 根是可以换的，缓存住就等于
+   * 换根之后还在列旧的地方（同 `GAME_DATA_ROOT` 那段说明）。 */
+  const root: string = instancesRoot();
   try {
-    if (!fs.accessSync(INSTANCES_ROOT)) {
+    if (!fs.accessSync(root)) {
       return [];
     }
-    return fs.listFileSync(INSTANCES_ROOT).filter((n: string) => KEY_SAFE.test(n));
+    return fs.listFileSync(root).filter((n: string) => KEY_SAFE.test(n));
   } catch (e) {
     const err = e as BusinessError;
-    hilog.warn(DOMAIN, TAG, 'isolation: listing %{public}s failed (%{public}s)', INSTANCES_ROOT, err.message);
+    hilog.warn(DOMAIN, TAG, 'isolation: listing %{public}s failed (%{public}s)', root, err.message);
     return [];
   }
 }
@@ -250,22 +253,47 @@ export function writeIsolationBridge(filesDir: string, granularity: string, key:
  * 症状是「什么都没发生」。同款：`ExportDiagnostics.ets` 的 NATIVE_FILES、`Index.ets` 的 IME_*_FILE。 */
 const NATIVE_FILES: string = '/data/storage/el2/base/files';
 
-/* 隔离根与游戏数据的那一层后缀 —— ⛔ **两个都必须与 launcher.c 里的宏逐字一致**：
- *     ISOLATION_ROOT = DEST_ROOT "/instances"、ISOLATION_SET = "sets/default"，
- *     而 ".local/share/Mindustry" 是 ARC 的 OS.getAppDataDirectoryString() 拼出来的。
+/* ⭐⭐ **游戏数据根**（2026-10-04 起可切换）。由 `LauncherHome.refresh()` 每次刷新时设定：
+ *     `setGameDataRoot(gameDataRoot(filesDir))`。
+ *
+ * ⛔ 为什么是**模块级的一个值**、而不是给下面每个函数加一个 `filesDir` 参数：
+ *    这里有 28 处调用点。加参数意味着**每一处都要记得传对**，而漏掉任何一处都不会报错 ——
+ *    它只会让那一条路读到**另一个根**，也就是「界面上看起来完全正常」。本文件头上那条
+ *    「三处里任何一处改了，另一处不会报错，只会让数据落到别处 —— 这是无声的」说的就是这个。
+ * ⭐ 判据与 `launcher.c` 那边拆掉 `ISOLATION_ROOT` 宏同源：**让错误写法根本写不出来。**
+ *     没有参数，就没有「忘了传」。
+ *
+ * ⚠️ 默认值 = 沙箱 = **本项目一直以来的行为** ⇒ 没被设定过时不会跑到别处去。
+ * ⚠️ 它是 `let` 而不是 `const`，所以**只在 `refresh()` 里改它**；别在别处顺手赋值。 */
+let GAME_DATA_ROOT: string = NATIVE_FILES;
+
+/** 设定游戏数据根。⛔ 只有 `LauncherHome.refresh()` 该调它 —— 见上面那段。 */
+export function setGameDataRoot(root: string): void {
+  GAME_DATA_ROOT = (root === '' ? NATIVE_FILES : root);
+}
+
+/* 隔离根与游戏数据的那一层后缀 —— ⛔ **都必须与 `launcher.c` 里的宏逐字一致**：
+ *     ISOLATION_SUBDIR = "/instances"、ISOLATION_SET = "sets/default"，
+ *     而 ".local/share/Mindustry" 是 ARC 的 `OS.getAppDataDirectoryString()` 拼出来的。
  * ⚠️ 三处里任何一处改了，另一处不会报错，只会让数据落到别处 —— 这是无声的。 */
-const INSTANCES_ROOT: string = NATIVE_FILES + '/instances';
+const INSTANCES_SUBDIR: string = '/instances';
 const SETS_SUFFIX: string = '/sets/default';
 const GAME_DATA_SUFFIX: string = '/.local/share/Mindustry';
 
-/** 某个粒度键对应的游戏数据目录（= `user.home` + ARC 那一层）。 */
-export function isolatedGameDataDir(key: string): string {
-  return INSTANCES_ROOT + '/' + key + SETS_SUFFIX + GAME_DATA_SUFFIX;
+/** 隔离根（在**当前数据根**之下）。⚠️ 它以前是个引用 `NATIVE_FILES` 的常量 —— 那样根一换，
+ * 这里就还指着沙箱，症状是「设置里写着外置，存档列表却是沙箱那一份」。 */
+export function instancesRoot(): string {
+  return GAME_DATA_ROOT + INSTANCES_SUBDIR;
 }
 
-/** 隔离关着时游戏用的数据目录，也就是今天的位置。 */
+/** 某个粒度键对应的游戏数据目录（= `user.home` + ARC 那一层）。 */
+export function isolatedGameDataDir(key: string): string {
+  return instancesRoot() + '/' + key + SETS_SUFFIX + GAME_DATA_SUFFIX;
+}
+
+/** 隔离关着时游戏用的数据目录 —— 就在当前根底下。 */
 export function liveGameDataDir(): string {
-  return NATIVE_FILES + GAME_DATA_SUFFIX;
+  return GAME_DATA_ROOT + GAME_DATA_SUFFIX;
 }
 
 /* 按【这一次的粒度与选中项】解出游戏数据目录 —— 与 native 启动时算 `user.home` 用的是同一套输入。
