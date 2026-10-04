@@ -321,16 +321,19 @@ static void resolve_user_home(char *out, size_t outlen)
 
 /* 游戏语言（`-Duser.language=` / `-Duser.country=`），2026-10-04。
  *
- * ⛔⛔ **为什么必须有它**：游戏的 `Vars.loadLocales()` 在 `settings.bin` 的 `locale` 是 `default`
- *    时用 **`Locale.getDefault()`**，而本启动器此前**没有给 JVM 设过任何 locale**
- *    ⇒ HotSpot 拿到的 C locale 是 `C` ⇒ `Locale.getDefault()` 是**英文**
- *    ⇒ 中文设备上全新安装是英文界面；随后 `LanguageDialog.findClosestLocale()`
- *    还会把这个结果**写死进 `settings.bin`**（那条「跟随系统」只用一次就固化，再也不变）。
+ * ⭐⭐ **这是在补一个本来没有的能力，不是修缺陷**（用户 2026-10-04 纠正过：「这不是缺陷，
+ *    正常 mindustry 就没有跟随」）。Mindustry **没有**「跟随系统」这个设置项：它的语言就是
+ *    `settings.bin` 里那个值，而 **`default` 的含义是「用 JVM 的默认 locale」** ——
+ *    桌面版看起来「跟着系统」，只是因为桌面 JVM 的默认 locale 跟着操作系统环境走。
+ *    本启动器此前没给 JVM 传过 locale ⇒ HotSpot 的 C locale 是 `C` ⇒ 那个 `default` 落在
+ *    **英文**上（随后 `LanguageDialog.findClosestLocale()` 还会把结果写死进 `settings.bin`）。
+ *    这里做的就是**告诉 JVM 设备语言是什么**，出厂打开。
+ *
  * ⭐ 局部实测（JDK17，宿主 zh_CN）：不给 `-D` ⇒ `zh_CN`（宿主）；`-Duser.language=ja -Duser.country=JP`
  *    ⇒ `ja_JP`；**只给 language** ⇒ `de_CN`（**地区跟着宿主走了**）⇒ **两个都要给，别只给一个。**
  * ⚠️ 值是 ArkTS 侧翻译好的（`GameLocale.systemGameLocale()`），已是游戏认得的写法（`zh_CN`）；
  *    这里只做**形状**校验，不重做翻译 —— 那份知识（游戏认哪些 locale）在 ArkTS 那边。
- * ⚠️ 空串 ⇒ 两个选项都留 NULL、由末尾那次压缩丢掉，**行为与这个功能存在之前逐字节相同**。 */
+ * ⚠️ 空串 ⇒ 两个选项都留 NULL、由末尾那次压缩丢掉，**行为与本功能存在之前逐字节相同**。 */
 static char opt_language[32];
 static char opt_country[16];
 
@@ -338,6 +341,7 @@ static char opt_country[16];
  *
  * ⭐ 值由 ArkTS 翻译好（`GameLocale.systemGameLocale()`）后写进同一个桥文件 ——
  *    「游戏认哪些 locale」那份知识（35 个 ID，抄自 jar 的 `locales` 资产）**只有一处**。
+ *    ⚠️ **不要**把那份清单抄到这里来：两份清单会分叉，而分叉的症状是「某个语言静默变英文」。
  *    这里**只校验形状**，不重做翻译：重做一遍就是两份会分叉的实现。
  *
  * ⛔ 校验是必须的，虽然来源是我们自己：值要拼进 `-D` 字符串，而且它来自一个**文件**

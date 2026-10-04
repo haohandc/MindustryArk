@@ -4,8 +4,13 @@
  * 游戏的 `Vars.loadLocales()` 在 `settings.bin` 的 `locale` 值是 `default` 时用
  * `Locale.getDefault()`；而 `LanguageDialog.findClosestLocale()` 拿这个 Locale 去
  * `Vars.locales` 里找「language 相同」的那一项，**找不到就硬编码 `new Locale("en")`**
- * 并把它写回 `settings.bin`。本启动器此前没给 JVM 设过 locale ⇒ C locale ⇒ 默认是英文
- * ⇒ 中文设备上全新安装是英文，且这个结果会被**固化**下来。
+ * 并把它写回 `settings.bin`。
+ *
+ * ⚠️ **这不是游戏或本项目的缺陷**（用户 2026-10-04 纠正过）—— Mindustry 本来就**没有**
+ *    「跟随系统」这个设置项，`default` 的含义只是「用 JVM 的默认 locale」。桌面版看起来
+ *    「跟着系统」，是因为桌面 JVM 的默认 locale 跟着操作系统走，同一套机制。
+ *    本启动器此前没给 JVM 传过 locale ⇒ HotSpot 的 C locale 是 `C` ⇒ 那个 `default`
+ *    落在英文上。这里做的是**把设备语言喂给 JVM**，不是修谁。
  *
  * 本文件负责给出那个**能被游戏匹配上**的字符串。翻译是必需的，不是周全：
  *   · 系统的语言标签常带文字子标签（`zh-Hans`），而游戏的单位是 `zh_CN` / `zh_TW`；
@@ -44,7 +49,9 @@ export function systemGameLocale(): string {
     region = i18n.System.getSystemRegion();
   } catch (e) {
     /* ⚠️ 拿不到就**什么都不设**，别硬猜一个 —— 猜错会让游戏写死一个错的 locale。
-     * 不设 ⇒ 落回今天的行为（也就是「跟随系统」在游戏里本来就有的那条路）。 */
+     * ⛔ 不设**不等于**「跟随系统」：游戏那边 `default` 会落到 JVM 的默认 locale，
+     *    而本启动器不传 locale 时那是 `C`/英文。也就是「不设 = 可能是英文」。
+     *    ⚠️ 这条以前写成「落回游戏本来就有的跟随系统那条路」——**是错的**，游戏没有那条路。 */
     return '';
   }
   /* ⚠️ 系统的语言标签可能带文字子标签（`zh-Hans` / `sr-Latn`），取第一段。
@@ -63,24 +70,4 @@ export function systemGameLocale(): string {
   /* 退到语言本身 —— ⚠️ 只在清单里**确实有**它时才给（`en`/`ja`/`de`… 都是裸语言），
    * 否则宁可空着：给一个游戏没有的值，结果是它静默落在英文根包上。 */
   return GAME_LOCALES.indexOf(base) !== -1 ? base : '';
-}
-
-/** 给界面看的一句话（「中文 (中国)」那种），以及给日志用的原值。
- * ⭐ 分两个返回值而不是一个：界面上要的是**人话**，而桥文件里要的是**游戏认的值**。 */
-export interface GameLocaleInfo {
-  /** 会写进桥的值，`''` = 什么都不设。 */
-  value: string;
-  /** 系统报的原始语言标签（诊断用，别拿它进桥）。 */
-  raw: string;
-}
-
-/** 一次拿到「写进桥的值」与「系统原值」。 */
-export function gameLocaleInfo(): GameLocaleInfo {
-  let raw: string = '';
-  try {
-    raw = i18n.System.getSystemLanguage();
-  } catch (e) {
-    raw = '';
-  }
-  return { value: systemGameLocale(), raw: raw };
 }

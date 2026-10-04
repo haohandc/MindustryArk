@@ -155,11 +155,13 @@ const GAME_LOCALE_FILE_NAME = 'game_locale.txt';
  * ⭐ 格式与 `AppearancePref` / `SafePref` **故意一样**（`auto` / `manual` 一族），
  *    它们是同一类问题：「这件事由系统定还是由你定」。
  *
- * ⛔⛔ **出厂必须是 `auto`（跟随系统）** —— 用户 2026-10-04 定的。而这一条**不是偏好问题，
- *    是缺陷修复**：本启动器没有给 JVM 设过任何 locale（见 `launcher.c` 的说明），
- *    HotSpot 拿到的 C locale 是 `C` ⇒ `Locale.getDefault()` 是**英文** ⇒
- *    中文设备上全新安装会是英文界面，然后 `LanguageDialog.findClosestLocale()`
- *    还会把这个结果**写死进 `settings.bin`**（那条「跟随系统」只用一次就固化）。 */
+ * ⭐ **出厂 `auto`（跟随系统）** —— 用户 2026-10-04 定的。
+ *
+ * ⚠️ **这是启动器补的一个能力，不是修缺陷**（用户 2026-10-04 纠正过：「这不是缺陷，正常
+ *    mindustry 就没有跟随」）。Mindustry 本来就没有「跟随系统」这个设置项：它的语言就是
+ *    `settings.bin` 里那个值，`default` 的含义是「用 JVM 的默认 locale」。
+ *    本启动器此前没给 JVM 传 locale ⇒ C locale ⇒ 那个 `default` 落在英文上。
+ *    出厂打开，是为了让中文设备上开箱就是中文。 */
 export const GAME_LOCALE_FOLLOW: boolean = true;
 
 /** 读「游戏语言是否跟随系统」。文件不在或读不懂 ⇒ **跟随系统**（出厂值）。 */

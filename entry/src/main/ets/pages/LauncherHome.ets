@@ -37,7 +37,6 @@ import { readLaunchMode, writeLaunchMode,
          SafePref, readSafePref, writeSafePref, SAFE_VP_MAX, SAFE_VP_STEP,
          readGameLocaleFollow, writeGameLocaleFollow } from '../settings/LauncherPrefs';
 /* ⭐ 「设备语言 → 游戏认得的那个值」的翻译（值必须是游戏认的，见那个文件）。 */
-import { gameLocaleInfo, GameLocaleInfo } from '../settings/GameLocale';
 /* 异形屏探测（挖孔 / 刘海）。⛔ 游戏画面不归它管，只用于启动器自己的界面。 */
 import { SafeInsets, detectInsets, uniformOf, edgesOf, dumpSafeArea } from '../utils/SafeArea';
 /* 入场动画（退场刻意不做 —— 见那个文件的开头）。 */
@@ -446,11 +445,6 @@ export struct LauncherHome {
   @State storageBusy: boolean = false;
   /* ⭐ 游戏语言是否跟随系统。⛔ 出厂 `true` —— 这不是偏好，是**修缺陷**（见 LauncherPrefs 那段）。 */
   @State gameLocaleFollow: boolean = true;
-  /** 翻译好的、要写进桥的那个值（`zh_CN` 之类）。`''` = 认不出系统语言。 */
-  @State gameLocaleValue: string = '';
-  /** 游戏那份 `settings.bin` 里**已经写死**的语言（`''` = 没写/读不出/就是我们会给的那个）。
-   * ⚠️ 只在它非空时界面上才多说一句 —— 它是唯一会让玩家觉得「拨了开关没用」的情形。 */
-  @State gameLocalePinned: string = '';
   /** 探针的原始结论 / 切换结果。⛔ 原样显示，别改写探针的话。 */
   @State storageNote: string = '';
 
@@ -1479,18 +1473,14 @@ export struct LauncherHome {
     this.savesDirShown = dir;
     this.saves = listSaves(dir);
 
-    /* ⭐⭐ 游戏语言（2026-10-04）。放在这里是因为 `dataDir` 要到上面才解得出来 ——
-     *    而「游戏那份 settings.bin 里已经写死了什么」必须问**游戏真正在读的那个目录**。
-     * ⚠️ `gameLocaleInfo()` 每次都会问系统一次 i18n（很便宜，但不是常量）⇒ 与别的偏好一样
-     *    只在 `refresh()` 里取一次，⛔ 别挪进渲染或 `build()`。 */
-    const gl: GameLocaleInfo = gameLocaleInfo();
+    /* ⭐ 游戏语言（2026-10-04）。界面上只有标题 + 开关，所以这里只需读偏好。
+     * ⚠️ 那两样**曾经**在这里算：翻译好的值（`gameLocaleValue`）与「游戏那份 settings.bin
+     *    里已经写死了什么」（`gameLocalePinned`）—— 它们只喂那段被删掉的解释文字。
+     *    ⛔ 别因为「也许以后要显示」就留着：留着的是**每次 refresh 都要问一次 i18n、还要读
+     *    一次游戏正在读的那个 settings.bin 头部**的代价，而当前没有任何界面用到它们。
+     *    ⭐ 真需要看游戏那份写的是什么，`storage_state.txt` 里每个数据目录都有 `locale=` 一行
+     *      （`dumpDataDirs` → `settingsLocaleIn`），那条路才是排查用的。 */
     this.gameLocaleFollow = readGameLocaleFollow(this.filesDir);
-    this.gameLocaleValue = gl.value;
-    /* 读游戏那份 `settings.bin` 里**已经写死**的语言。 */
-    const pin: string = settingsLocaleIn(dataDir);
-    /* ⚠️ 这个正则同时排掉了 `default`（7 个字母，超长）与 `no-settings` / `ERR(…)`。 */
-    const pinLooksLikeLocale: boolean = /^[A-Za-z]{2,3}(_[A-Za-z]{2})?$/.test(pin);
-    this.gameLocalePinned = (pinLooksLikeLocale && pin !== gl.value) ? pin : '';
     /* 「开关拨过去了、数据没过去」。判据是两条**都**成立：① 隔离开着；② **蓝图 / 自制地图
      * 只在未隔离那棵树里**（那说明玩家一直在用的是未隔离那一份，而游戏现在读的是隔离目录）。
      *
@@ -5549,37 +5539,27 @@ export struct LauncherHome {
 
           /* ⭐⭐ 游戏语言跟随系统（2026-10-04 用户要求）。
            *
-           * ⛔⛔ **这不是「加一个偏好」，是修一个缺陷。** 本启动器此前没有给 JVM 设过任何 locale
-           *    ⇒ HotSpot 拿到的 C locale 是 `C` ⇒ `Locale.getDefault()` 是**英文**
-           *    ⇒ 中文设备上全新安装是英文界面，而 `LanguageDialog.findClosestLocale()`
-           *    还会把这个结果**写死进 `settings.bin`**（那条「跟随系统」只用一次就固化）。
-           * ⭐ 所以出厂值必须是「跟随系统」（见 `LauncherPrefs.GAME_LOCALE_FOLLOW`）。
+           * ⛔⛔ **这是启动器**补**的一个能力，不是修游戏或本项目的缺陷** —— 用户 2026-10-04 明确
+           *    纠正过一次：「这不是缺陷，正常 mindustry 就没有跟随」。他是对的，别再把这条写成
+           *    「修复」：
+           *      · Mindustry **本来就没有**「跟随系统」这个设置项。它的语言就是 `settings.bin`
+           *        里那个值，`default` 的含义是「用 **JVM 的默认 locale**」。
+           *      · 桌面版看起来「跟着系统」，只是因为桌面 JVM 的默认 locale 跟着操作系统环境走 ——
+           *        同一套机制，不需要游戏做任何事。
+           *      · 本启动器此前没给 JVM 传 locale ⇒ HotSpot 的 C locale 是 `C` ⇒ 那个
+           *        `default` 落在**英文**上。这是**没人告诉过 JVM 设备语言**，不是谁坏了。
+           *    ⭐ 所以这里做的是「把设备语言喂给 JVM」，出厂打开（见 `LauncherPrefs`）。
            *
-           * ⚠️⚠️ **对已经在 `settings.bin` 里写死了语言的存档无效** —— 游戏读的是那个显式值，
-           *    `-Duser.language` 只在它等于 `default` 时才起作用。⇒ 副标题必须把这一条说出来，
-           *    否则玩家会以为拨了开关却没生效。改回中文的办法是**在游戏里重选一次语言**。 */
+           * ⚠️ **对已经在 `settings.bin` 里写死了语言的存档无效** —— 游戏读的是那个显式值，
+           *    `-Duser.language` 只在它等于 `default` 时才起作用。改回中文的办法是**在游戏里
+           *    「设置 → 语言」重选一次**。
+           * ⛔ **这一条【不】在界面上写出来**（用户 2026-10-04：「提示不需要，冗余了」）。
+           *    所以：界面上只有标题 + 开关，一个字的解释都没有。别再自己加回来 ——
+           *    与深色模式那张卡同一个口味（那边也明确删过两条文字提示）。 */
           Row() {
-            Column() {
-              Text('游戏语言跟随系统')
-                .fontSize(14).fontColor($r('sys.color.font_primary'))
-              Text(this.gameLocaleFollow
-                   ? (this.gameLocaleValue === ''
-                      ? '认不出系统语言，不改动游戏的语言设置'
-                      : ('用系统的语言启动游戏（' + this.gameLocaleValue + '）'))
-                   : '不改动 —— 用游戏内「设置 → 语言」里选的那个')
-                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-                .margin({ top: 4 })
-              /* ⚠️ 只在「跟随」且游戏那份 settings.bin 里已经写了别的语言时才提一句 ——
-               *    这是唯一会让玩家觉得「拨了没用」的情形，而它**必须**指出去游戏里改。 */
-              if (this.gameLocaleFollow && this.gameLocalePinned !== '') {
-                Text('这份存档的语言已经被写成「' + this.gameLocalePinned
-                     + '」，要去游戏里「设置 → 语言」改一次才会跟着系统走')
-                  .fontSize(12).fontColor($r('sys.color.font_secondary'))
-                  .margin({ top: 4 })
-              }
-            }
-            .alignItems(HorizontalAlign.Start)
-            .layoutWeight(1)
+            Text('游戏语言跟随系统')
+              .fontSize(14).fontColor($r('sys.color.font_primary'))
+              .layoutWeight(1)
 
             Toggle({ type: ToggleType.Switch, isOn: this.gameLocaleFollow })
               .onChange((on: boolean) => {
