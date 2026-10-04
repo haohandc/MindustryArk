@@ -158,6 +158,19 @@ export function nativeCopyTree(src: string, dst: string): string {
 }
 
 
+/** 用 **native** 列一棵树（诊断用）。⛔ 返回 native 的原话，调用方别改写 ——
+ *  它把「不存在」「不是目录」「截断了」分开报，压成一句话就把判据丢了。
+ *  ⚠️ 与 `nativeCopyTree` 同一条理由：那个文件夹 ArkTS 侧不一定读得到，native 能。 */
+export function nativeListTree(dir: string, depth: number): string {
+  try {
+    return storprobe.listTree(dir, depth);
+  } catch (e) {
+    const err = e as BusinessError;
+    return 'threw: ' + err.message;
+  }
+}
+
+
 /* ====================================================================
  * 两个根：沙箱 / 外置
  * ==================================================================== */
@@ -335,9 +348,15 @@ export function ensureGameDataRoot(filesDir: string): void {
  *    `/data/storage/el2/base/files/safearea.txt`，就是为了让 hdc 读得到）。
  * ⛔ **只在内容变了的时候写** —— 它在 `refresh()` 里被调用，而每个渲染周期写一次文件
  *    本身就是卡顿源（本项目为「诊断工具拖慢被测对象」付过代价）。
+ * @param dirs **两个根下每个游戏数据目录的清单**（由 `Isolation.dumpDataDirs()` 算）。
+ *   ⭐ 它存在的理由：**外置那棵树在排查里原本是不存在的** —— ArkTS 的 fileIo 在那个文件夹上
+ *   不一定能读，而 `hdc shell` **连 `/storage/Users` 都看不见**（实测 `ls /storage` 只有
+ *   `cloud media`）。于是「搬过去之后到底少了什么」只能靠玩家照屏幕念，而「126 个文件里少了
+ *   哪几个」是念不出来的。⛔ **布局的真相源在 `Isolation`**（`instances/<键>/sets/default` 那几段），
+ *   所以这份清单在那里算、这里只负责写下来。
  * @returns 写成功了没有（调用方用它决定要不要记住「已经写过这个内容」。） */
 export function dumpStorageState(filesDir: string, intent: string, used: string,
-                                  reason: string): boolean {
+                                  reason: string, stale: boolean, dirs: string): boolean {
   /* ⭐ 顺带把**两个探针**的结论也记下来（2026-10-04 加）。
    * ⛔ 为什么必须落成文件而不是只显示在界面上：**本应用的 hilog 读不到**，
    *    而没有这两行时，「探针过了但迁移全废」只能靠玩家照屏幕念（那一轮就是这么来回的）。
@@ -353,7 +372,12 @@ export function dumpStorageState(filesDir: string, intent: string, used: string,
   const body: string = 'intent=' + intent + '\n'
                      + 'used=' + used + '\n'
                      + 'reason=' + reason + '\n'
-                     + probes;
+                     /* ⭐ `stale` = 界面上那条「数据没搬过来」的提示有没有出现。
+                      * ⛔ 它必须落在这里 —— **本应用的 hilog 读不到**，而那条提示是否出现
+                      *    正是「这次是不是看起来像数据丢了」的判据（2026-10-04 那次全靠它）。 */
+                     + 'stale=' + String(stale) + '\n'
+                     + probes
+                     + dirs;
   const path: string = SANDBOX_ROOT + '/storage_state.txt';
   try {
     const f: fs.File = fs.openSync(path,

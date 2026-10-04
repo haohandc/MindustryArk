@@ -27,6 +27,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <stdlib.h>
 
 /* 沙箱前缀。⛔ 只用来**判定「这不是外部」**，不用来拼任何路径。
  * 理由：如果外部根被解析成了沙箱里的某个目录，那这个功能就是自欺欺人 ——
@@ -359,11 +360,185 @@ done:
     }
 }
 
+/* ====================================================================
+ * 列一棵树（**诊断用**）
+ * ====================================================================
+ *
+ * ⛔ **为什么这件事必须由 native 做，而不能由 ArkTS 做**：外置那个文件夹**ArkTS 侧读不
+ *    一定行**（同一条路上 ArkTS 的 fileIo 报 EPERM、native 成功，见上面 `copyTree`），
+ *    而 `hdc shell` **连 `/storage/Users` 都看不见**（实测：`ls /storage` 只有
+ *    `cloud media`）⇒ 外置那棵树**在排查里是不存在的**。
+ *    2026-10-04 为这个盲区付了好几轮：只能靠玩家照屏幕念，而屏幕上有多少个文件是念不清的。
+ *
+ * ⭐ 输出的是**每个文件的大小**，这是关键 —— 拿它跟沙箱里同一份的字节数一比，
+ *    「复制是不是把文件截短了」从一句推测变成一个数（垃圾站里就存着几个已知大小的存档）。
+ */
+
+#define LIST_NAME_MAX    256
+#define LIST_MAX_ENTRIES 512
+#define LIST_MAX_LINES   400
+#define LIST_BUF_MAX     65536
+
+typedef struct {
+    char *buf;
+    size_t used;
+    size_t cap;
+    int lines;
+    int maxlines;
+    int truncated;
+} ListAcc;
+
+/* 追加一行：`<相对路径><后缀>`。后缀由调用点拼（`/` 表示目录、` 1234` 表示文件大小）。 */
+static void list_emit(ListAcc *a, const char *rel, const char *suffix)
+{
+    if (a->lines >= a->maxlines) {
+        a->truncated = 1;
+        return;
+    }
+    const int room = (int) (a->cap - a->used);
+    if (room < 64) {
+        a->truncated = 1;
+        return;
+    }
+    const int n = snprintf(a->buf + a->used, (size_t) room, "%s%s\n", rel, suffix);
+    if (n > 0) {
+        a->used += (size_t) n;
+        a->lines++;
+    }
+}
+
+static int list_cmp(const void *x, const void *y)
+{
+    return strcmp((const char *) x, (const char *) y);
+}
+
+/* 印出 `dir` 之下 `maxdepth` 层，路径相对于 `base`（那样输出短、可比）。 */
+static void list_walk(const char *base, const char *dir, int depth, int maxdepth, ListAcc *a)
+{
+    char sfx[80];
+    if (a->truncated || depth > maxdepth) {
+        return;
+    }
+    DIR *d = opendir(dir);
+    if (d == NULL) {
+        const int e = errno;
+        snprintf(sfx, sizeof(sfx), "/ <opendir-errno=%d>", e);
+        list_emit(a, dir + strlen(base), sfx);
+        return;
+    }
+    /* ⛔ **先收名字、排序再印。** readdir 的顺序不保证，而不排序时两次运行的输出
+     *    无法逐行对比 —— 而「逐行对比」正是这个函数存在的理由。 */
+    char *names = (char *) malloc((size_t) LIST_NAME_MAX * (size_t) LIST_MAX_ENTRIES);
+    if (names == NULL) {
+        closedir(d);
+        return;
+    }
+    int cnt = 0;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL && cnt < LIST_MAX_ENTRIES) {
+        if (e->d_name[0] == '.' && (e->d_name[1] == 0 ||
+            (e->d_name[1] == '.' && e->d_name[2] == 0))) {
+            continue;
+        }
+        snprintf(names + (size_t) LIST_NAME_MAX * (size_t) cnt, LIST_NAME_MAX, "%s", e->d_name);
+        cnt++;
+    }
+    closedir(d);
+
+    qsort(names, (size_t) cnt, (size_t) LIST_NAME_MAX, list_cmp);
+    for (int i = 0; i < cnt && !a->truncated; i++) {
+        char p[COPY_PATH_MAX];
+        if (snprintf(p, sizeof(p), "%s/%s", dir,
+                     names + (size_t) LIST_NAME_MAX * (size_t) i) >= (int) sizeof(p)) {
+            continue;
+        }
+        struct stat st;
+        if (stat(p, &st) != 0) {
+            const int e = errno;
+            snprintf(sfx, sizeof(sfx), " <stat-errno=%d>", e);
+            list_emit(a, p + strlen(base), sfx);
+            continue;
+        }
+        if (S_ISDIR(st.st_mode)) {
+            list_emit(a, p + strlen(base), "/");
+            list_walk(base, p, depth + 1, maxdepth, a);
+        } else if (S_ISREG(st.st_mode)) {
+            snprintf(sfx, sizeof(sfx), " %lld", (long long) st.st_size);
+            list_emit(a, p + strlen(base), sfx);
+        } else {
+            list_emit(a, p + strlen(base), " <not-regular>");
+        }
+    }
+    free(names);
+}
+
+/** `listTree(dir[, maxDepth])` → 一棵树的清单。
+ *  缺失：`absent: errno=N <strerror>`｜不是目录：`not-a-dir`｜其余为若干行。
+ *  ⚠️ 截断时会**显式写出** `...(truncated)` —— 本项目为「测量工具自己截断、看起来像
+ *     结果就是这么多」付过代价（见教训 #93），所以这里不静默。 */
+static napi_value ListTree(napi_env env, napi_callback_info info)
+{
+    char dirbuf[COPY_PATH_MAX];
+    char *out = (char *) malloc(LIST_BUF_MAX);
+    size_t dlen = 0;
+    int maxdepth = 2;
+
+    if (out == NULL) {
+        napi_value r;
+        napi_create_string_utf8(env, "fail: out of memory", NAPI_AUTO_LENGTH, &r);
+        return r;
+    }
+
+    size_t argc = 2;
+    napi_value argv[2] = { NULL, NULL };
+    if (napi_get_cb_info(env, info, &argc, argv, NULL, NULL) != napi_ok || argc < 1 ||
+        napi_get_value_string_utf8(env, argv[0], dirbuf, sizeof(dirbuf), &dlen) != napi_ok ||
+        dlen == 0) {
+        snprintf(out, LIST_BUF_MAX, "bad-args: want (dir[, maxDepth])");
+        goto ret;
+    }
+    if (argc >= 2) {
+        int32_t d = 0;
+        if (napi_get_value_int32(env, argv[1], &d) == napi_ok && d >= 0 && d <= 8) {
+            maxdepth = (int) d;
+        }
+    }
+
+    struct stat st;
+    if (stat(dirbuf, &st) != 0) {
+        snprintf(out, LIST_BUF_MAX, "absent: errno=%d %s", errno, strerror(errno));
+        goto ret;
+    }
+    if (!S_ISDIR(st.st_mode)) {
+        snprintf(out, LIST_BUF_MAX, "not-a-dir");
+        goto ret;
+    }
+
+    ListAcc a;
+    memset(&a, 0, sizeof(a));
+    a.buf = out;
+    a.cap = LIST_BUF_MAX;
+    a.maxlines = LIST_MAX_LINES;
+    list_walk(dirbuf, dirbuf, 0, maxdepth, &a);
+    if (a.truncated) {
+        list_emit(&a, "", "...(truncated)");
+    }
+
+ret:
+    {
+        napi_value result;
+        napi_create_string_utf8(env, out, NAPI_AUTO_LENGTH, &result);
+        free(out);
+        return result;
+    }
+}
+
 static napi_value Init(napi_env env, napi_value exports)
 {
     napi_property_descriptor desc[] = {
         { "probeWritable", NULL, ProbeWritable, NULL, NULL, NULL, napi_default, NULL },
         { "copyTree", NULL, CopyTree, NULL, NULL, NULL, napi_default, NULL },
+        { "listTree", NULL, ListTree, NULL, NULL, NULL, napi_default, NULL },
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;

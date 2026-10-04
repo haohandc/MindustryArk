@@ -9,3 +9,9 @@ export const probeWritable: (dir: string) => string;
  * 而 native 的裸 POSIX 拷贝成功。不做解释，走被证明的那条路。
  * 返回 `ok: N files, M dirs` 或 `fail N: <第一条错误，带源与目标路径>`。 */
 export const copyTree: (src: string, dst: string) => string;
+
+/* 列一棵树的清单（**每行带文件大小**），诊断用。
+ * ⛔ 它存在的理由：外置那个文件夹 **ArkTS 侧不一定读得到、hdc 连 `/storage/Users` 都看不见**
+ *    ⇒ 不靠它，那棵树在排查里就是不存在的（2026-10-04 为这个盲区返工过）。
+ * 返回 `absent: errno=N …` / `not-a-dir` / 若干行（截断会写明）。 */
+export const listTree: (dir: string, maxDepth?: number) => string;

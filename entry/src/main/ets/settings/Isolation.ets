@@ -16,7 +16,8 @@ import { copyTreeInto, removeTree, newTreeStat, TreeStat } from '../utils/FsTree
 import { nativeCopyTree } from './StorageRoot';
 /* ⭐ 存储根的唯一真相源。⛔ 这里 import 它**不会成环**：`StorageRoot` 只依赖 `ModImporter`，
  *    而 `ModImporter` 谁都不依赖（2026-10-04 查过整张图）。 */
-import { gameDataRoot } from './StorageRoot';
+import { gameDataRoot, gameDataRootFor, nativeListTree,
+         STORAGE_MODE_SANDBOX, STORAGE_MODE_EXTERNAL } from './StorageRoot';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
@@ -304,6 +305,82 @@ export function liveGameDataDir(): string {
   return GAME_DATA_ROOT + GAME_DATA_SUFFIX;
 }
 
+/* ⭐⭐ 两个根下**每一个**游戏数据目录的清单（每行带文件大小）—— 只给诊断用。
+ *
+ * ⛔ **为什么必须有它**：外置那棵树在排查里原本是不存在的 —— ArkTS 的 fileIo 在那个文件夹上
+ *   不一定读得到，而 `hdc shell` **连 `/storage/Users` 都看不见**（实测 `ls /storage` 只有
+ *   `cloud media`）。于是「搬过去之后到底少了什么」只能靠玩家照屏幕念，而「126 个文件里少了
+ *   哪几个」是念不出来的。2026-10-04 追一个「复制少了东西」的报障，就卡在这里。
+ * ⭐ **文件大小是关键**：拿外置那份的字节数跟沙箱那份一比，「复制把文件截短了」就从一句推测
+ *   变成一个数 —— 垃圾站里正存着几个已知大小的存档，可以直接当参照物。
+ * ⚠️ 用 native 列（见 `StorageRoot.nativeListTree`）—— 同一条路上 ArkTS 报 EPERM 而 native 成功。 */
+export function dumpDataDirs(filesDir: string): string {
+  /* ArkTS 侧列一个目录能拿到几条 —— 只给上面那行对照用。
+   * ⛔ 读不到要**报出来**（`ERR …`），不能当 0：`0 条` 与 `读不到` 是两件事。 */
+  const arktsEntryCount = (d: string): string => {
+    try {
+      return String(fs.listFileSync(d).length);
+    } catch (e) {
+      const err = e as BusinessError;
+      return 'ERR(' + err.message + ')';
+    }
+  };
+  let out: string = '';
+  const roots: string[] = ['sandbox', 'external'];
+  for (const which of roots) {
+    const root: string = gameDataRootFor(filesDir,
+                                         which === 'external' ? STORAGE_MODE_EXTERNAL
+                                                              : STORAGE_MODE_SANDBOX);
+    if (root === '') {
+      continue;
+    }
+    out += '=== ' + which + ' ' + root + '\n';
+    /* ① 不隔离的那一份（就在根底下）。 */
+    /* ⛔ 用 `root + GAME_DATA_SUFFIX` 而**不是** `liveGameDataDir()` —— 后者读的是
+     * `GAME_DATA_ROOT`（**当前**那个根），于是列「另一个根」时会印出当前根的路径，
+     * 看上去像两份一样的清单（这个函数存在的全部意义就是对比两个根）。 */
+    out += '--- ' + which + ':live ' + root + GAME_DATA_SUFFIX + '\n'
+         + nativeListTree(root + GAME_DATA_SUFFIX, 2);
+    /* ⭐⭐ **对照**：同一棵树 **ArkTS 侧能看见多少**。
+     * ⛔ 这一行的用途是把「读不到」和「里面没有」分开 —— 两者在 ArkTS 这边长得一模一样，
+     *    而**整个存档管理器都走 ArkTS 的 `fs`**（`listSaves` / `countsOf` / `namesIn`）。
+     *    2026-10-04 实测：native 列出外置那棵树里有 24 个 `.msch`，而 ArkTS 侧一个都读不出来
+     *    ⇒ 「有没有玩家的数据」这个判据算出来是 false、界面上那条提示永远不出现。
+     * ⭐ 判据：**两个通道给出的数不一致时，先问哪一个在说谎、为什么**，别拿一个去覆盖另一个。 */
+    out += '--- ' + which + ':arkts ' + root + GAME_DATA_SUFFIX + '\n'
+         + '  entries=' + arktsEntryCount(root + GAME_DATA_SUFFIX)
+         + ' saves=' + arktsEntryCount(root + GAME_DATA_SUFFIX + '/saves')
+         + ' schematics=' + arktsEntryCount(root + GAME_DATA_SUFFIX + '/schematics') + '\n';
+    /* ② 每一个隔离键那一份。⚠️ 键用 native 列 —— ArkTS 的 `fs` 在外部根上不一定读得到，
+     *    而「读不到」与「没有」在这里长得一模一样，正是要避免的那种混淆。 */
+    const keysRaw: string = nativeListTree(root + INSTANCES_SUBDIR, 1);
+    const keys: string[] = [];
+    for (const line of keysRaw.split('\n')) {
+      const t: string = line.trim();
+      /* ⛔ **只收【一层】的名字**：`/b160.4/` 是键，`/b160.4/sets/` 不是。
+       *    第一版没这条，于是把 `/b160.4/sets`、`/bundled/sets` 也当成了键 ——
+       *    症状是清单里多出几段指向 `…/sets` 的「absent」，而**真正的键那两段是对的**，
+       *    所以看上去只是「多了几行」，不会报错（踩过，2026-10-04）。 */
+      if (!t.startsWith('/') || !t.endsWith('/') || t.startsWith('<')) {
+        continue;
+      }
+      const body: string = t.substring(1, t.length - 1);
+      if (body === '' || body.indexOf('/') !== -1 || body.indexOf(' ') !== -1) {
+        continue;
+      }
+      keys.push(body);
+    }
+    if (keys.length === 0) {
+      out += '--- ' + which + ':keys none (' + keysRaw.trim() + ')\n';
+    }
+    for (const k of keys) {
+      out += '--- ' + which + ':' + k + '\n'
+           + nativeListTree(root + INSTANCES_SUBDIR + '/' + k + SETS_SUFFIX + GAME_DATA_SUFFIX, 2);
+    }
+  }
+  return out;
+}
+
 /* 按【这一次的粒度与选中项】解出游戏数据目录 —— 与 native 启动时算 `user.home` 用的是同一套输入。
  * ⭐ 为什么要有它：存档管理器必须**看同一个目录**，否则它会列出另一份存档，而那是最坏的一类不一致。
  * ⚠️ 两者仍可能分叉：native 在**启动那一刻**读桥，这里在**页面读到的时候**算 —— 玩家改了粒度还没重启
@@ -387,6 +464,28 @@ export function countsOf(dir: string): GameDataCounts {
     mods: namesIn(dir, 'mods').length,
     schematics: namesIn(dir, 'schematics').length,
   };
+}
+
+/** 这棵树里有没有**玩家自己放进去、游戏不会自己生成**的东西：蓝图与自制地图。
+ *
+ * ⛔⛔ **为什么不能用「目录存不存在」「有没有 settings.bin」「有没有存档」当判据**
+ *    （2026-10-04 实测，在这一个判据上**连错三次**，每次都是被同一个机制打败）：
+ *    ① **「目录不存在」** —— 游戏**每跑一次就会在那个目录里写一份 `settings.bin`**
+ *       ⇒ 那个目录立刻「存在」，判据**从第一次启动之后永久为假**。
+ *    ② **「有没有 `settings.bin`」** —— 同上，游戏自己会写一份（实测 2414 字节的默认值）。
+ *    ③ **「有没有存档」** —— ⭐ **存档两棵树各自都会长出来**：游戏在哪个目录里跑就往哪里写。
+ *       实测的形状最说明问题：**当前隔离目录里有 40 个 `.msav`（玩家的整个战役），
+ *       而未隔离那棵里有 53 KB 的设置 + 27 张蓝图 + 1 张自制地图、却一份存档都没有。**
+ *       ⇒ 拿「有没有存档」去问**哪一棵是他在用的**，得到的答案是反的。
+ * ⭐ 而蓝图（`.msch`）与自制地图（`maps/*.msav`）**只有玩家会放进去** ⇒ 它们出现在哪棵树里，
+ *    就说明**那一棵才是他一直在用的那一份**。这条判据在实测的那两份数据上给出正确答案。
+ * ⚠️ 它问的是「**有没有**」，不是「哪边更新」—— 两边都有时它答不出哪边是对的，那时**不提示**
+ *    （⛔ 宁可不说，也不要给一条我自己判断不了的建议）。 */
+export function hasUserMadeFiles(dir: string): boolean {
+  if (namesIn(dir, 'schematics').filter((n: string) => n.endsWith('.msch')).length > 0) {
+    return true;
+  }
+  return namesIn(dir, 'maps').filter((n: string) => n.endsWith('.msav')).length > 0;
 }
 
 /** 把数量说成一句人话，例如「15 个战役区块 · 3 个手动存档 · 2 个模组」。
@@ -526,22 +625,22 @@ export function copyLiveDataInto(key: string): string {
     return '';
   }
 
-  /* ⭐ 走**自己的递归复制**，不是 `fs.copyDirSync`（那个 API 在我们的沙箱里连空目录都复制不了，见 FsTree.ets）。
-   * ⛔⛔ 订正（2026-10-02）：我曾认定「失败是因为 dst 的父目录没建」并照改了一版，那是错的 —— 探针显示
-   * 父目录建好了、依然同一 EINVAL。⇒ **报错文案列了多个成因时，先设计一个能区分它们的实验**（四用例二分）。 */
-
-  const acc: TreeStat = newTreeStat();
-  copyTreeInto(src, dst, 0, acc);
-  if (acc.failed > 0) {
-    /* ⚠️⚠️ 把 src / dst 与**第一个**错误都打进日志。
-     *    上一版只报错误码、不报路径，于是我只能去设备上翻目录树 ——
-     *    一条不写路径的日志，等于把排查的第一步推给下一个人。 */
-    hilog.error(DOMAIN, TAG,
-                'isolation: copy had %{public}d failure(s), first: %{public}s (%{public}s -> %{public}s)',
-                acc.failed, acc.firstError, src, dst);
-    return '复制没完成（' + String(acc.failed) + ' 个文件没复制过去）：' + acc.firstError;
+  /* ⛔⛔ **走 native，不走 ArkTS 的 `copyTreeInto`** —— 2026-10-04 改的，理由是实测出来的：
+   *    同一个文件、同一个外部目标，ArKTS 的 `copyFileSync` 报 **EPERM（126 个文件全废）**
+   *    而 native 的裸 POSIX 拷贝成功。而这里的目标**可能是外置那个文件夹**
+   *    （存储根切过去之后就是这样）⇒ 用 ArkTS 那条路，这个「复制过去」按钮会**当场失败**，
+   *    而那正是玩家唯一能自救的那个按钮。
+   * ⚠️ 这条与 `migrateGameData` 一致：**跨根或可能跨根的一切复制都走 native。**
+   *    `FsTree.copyTreeInto` 保留给**确定在同一棵树内**的用途（垃圾站的取放等）。
+   * ⛔ 订正记录（2026-10-02，别重犯）：我曾认定「失败是因为 dst 的父目录没建」并照改了一版，
+   *    那是错的 —— 探针显示父目录建好了、依然同一 EINVAL。⇒ **报错文案列了多个成因时，
+   *    先设计一个能区分它们的实验**（那次做了四用例二分）。 */
+  const err: string = nativeCopyTree(src, dst);
+  if (err !== '') {
+    hilog.error(DOMAIN, TAG, 'isolation: copy failed %{public}s -> %{public}s: %{public}s',
+                src, dst, err);
+    return err;
   }
-  hilog.info(DOMAIN, TAG, 'isolation: copied %{public}d dir(s) / %{public}d file(s) %{public}s -> %{public}s',
-             acc.dirs, acc.files, src, dst);
+  hilog.info(DOMAIN, TAG, 'isolation: copied %{public}s -> %{public}s (via native)', src, dst);
   return '';
 }

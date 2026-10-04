@@ -57,7 +57,8 @@ import { GRANULARITY_OFF, GRANULARITY_NUMBER, GRANULARITY_BUILD, GRANULARITY_PAT
          GameDataCounts, countsOf, describeCounts,
          resolveGameDataDir, resolveGameDirAndKey, GameDirForKey,
          listInstanceKeys, granularityKey, KEY_UNKNOWN,
-         setGameDataRoot, migrateGameData } from '../settings/Isolation';
+         setGameDataRoot, migrateGameData, dumpDataDirs,
+         hasUserMadeFiles } from '../settings/Isolation';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
@@ -1403,13 +1404,6 @@ export struct LauncherHome {
     this.syncStorageToggle();
     this.storageUsed = usedUserHome();
     this.storageUsedReason = usedUserHomeReason();
-    const dump: string = this.storageIntent + '|' + this.storageUsed + '|' + this.storageUsedReason;
-    if (dump !== this.storageDumped) {
-      if (dumpStorageState(this.filesDir, this.storageIntent, this.storageUsed,
-                                    this.storageUsedReason)) {
-        this.storageDumped = dump;
-      }
-    }
 
     /* 存档。⚠️ 目录**取决于隔离状态** —— 用与 native 算 `user.home` 同一套输入，否则这里会列出
      * 另一份存档，那是最坏的一类不一致：界面上看起来完全正常。⚠️ 两者仍可能分叉：玩家改了粒度
@@ -1419,17 +1413,49 @@ export struct LauncherHome {
     const dir: string = dataDir + '/saves';
     this.savesDirShown = dir;
     this.saves = listSaves(dir);
-    /* 「开关拨过去了、数据没过去」。判据是两条**都**成立：① 隔离开着；② 目标数据目录不存在，
-     * 而**未隔离**那一份存在（真的丢不了东西）。⚠️ 第二个条件不能省：全新安装、第一次就打开
-     * 隔离时目标也是空的，那是**正常**的（玩家选了「不复制」），只有「原来有数据、现在指向空目录」才是异常。 */
+    /* 「开关拨过去了、数据没过去」。判据是两条**都**成立：① 隔离开着；② **蓝图 / 自制地图
+     * 只在未隔离那棵树里**（那说明玩家一直在用的是未隔离那一份，而游戏现在读的是隔离目录）。
+     *
+     * ⛔⛔ **这个判据的形态改过两次，两次都是被同一个机制打败的**（2026-10-04 实测）：
+     *     · 第一版：`!gameDataExists(dataDir)` —— **游戏每跑一次就会在那个目录里写一份
+     *       `settings.bin`** ⇒ 目录立刻「存在」⇒ 判据**从第一次启动之后永久为假**，提示一次没出现过。
+     *     · 第二版：改成「目标目录里没有玩家的东西（存档/模组/蓝图）」—— 仍然不对，因为
+     *       **存档两棵树各自都会长出来**。实测形状：当前隔离目录里 **40 个 `.msav`（整个战役）**，
+     *       未隔离那棵里 **53 KB 的设置 + 27 张蓝图 + 1 张自制地图、零存档** ⇒
+     *       用「有没有存档」去问「哪一棵是他在用的」，答案正好是反的。
+     * ⭐ 现在只问**蓝图与自制地图**（`.msch` / `maps/*.msav`）—— 那两样**只有玩家会放进去**。
+     * ⭐ 一般化：**判据要落在「游戏不会自己生成的东西」上。** 凡是游戏自己会写的文件
+     *    （`settings.bin`、存档、`steam_autocloud.vdf`），都只能证明「游戏在这里跑过」，
+     *    不能证明「玩家的东西在这里」。 */
     this.isolationStale = (this.granularity !== GRANULARITY_OFF)
-                       && !gameDataExists(dataDir)
-                       && gameDataExists(liveGameDataDir());
+                       && !hasUserMadeFiles(dataDir)
+                       && hasUserMadeFiles(liveGameDataDir());
+    /* ⭐⭐ 存储位置那几行落盘（**放在这里**，因为 `stale` 也是它的一部分）。
+     * ⚠️ 它**刻意排在 `isolationStale` 之后**：那个标志决定界面上有没有那条「数据没搬过来」的
+     *    提示，而**本应用的 hilog 读不到** ⇒ 不写进这个文件，「提示到底有没有出现」就只能
+     *    靠眼睛看屏幕。⛔ 别为了「就近」把它挪回上面去。
+     * ⛔ 只在内容变了时写：它在 `refresh()` 里，而每渲染周期写一次文件本身就是卡顿源。 */
+    const dump: string = readStorageMode(this.filesDir) + '|' + this.storageUsed + '|'
+                       + this.storageUsedReason + '|' + String(this.isolationStale);
+    if (dump !== this.storageDumped) {
+      /* ⚠️ 那份目录清单**在这里算**（而不是每次都算）—— 它要递归列两个根下每一份数据，
+       *    比另外几行贵得多，而它只在真正写文件时才被用到。
+       * ⛔ 缓存键里**不包含它**：清单会随游戏运行而变，把清单本身当键会让每次 refresh 都写。
+       *    判据是「这几行没变就不重写」—— 而这个文件的用途是**事后**排查，写多了没意义。 */
+      const dirs: string = dumpDataDirs(this.filesDir);
+      if (dumpStorageState(this.filesDir, this.storageIntent, this.storageUsed,
+                                    this.storageUsedReason, this.isolationStale, dirs)) {
+        this.storageDumped = dump;
+      }
+    }
+
     /* ⚠️ 只在**异常**时才记一行 —— 那正是需要日志的时候，一旦修好就自动安静。
-     * ⭐ 它把「界面上有没有那条警告」变成一条**能读出来的**事实，不必靠眼睛看屏幕。 */
+     * ⭐ 它把「界面上有没有那条警告」变成一条**能读出来的**事实，不必靠眼睛看屏幕。
+     *    ⚠️ 但**读得出来的那条是 `storage_state.txt` 里的 `stale=`** —— hilog 读不到。 */
     if (this.isolationStale) {
-      hilog.error(DOMAIN, TAG, 'isolation: STALE -- on, but %{public}s does not exist '
-                + '(the un-isolated copy does)', dataDir);
+      hilog.error(DOMAIN, TAG, 'isolation: STALE -- %{public}s has no player data, '
+                + 'but the un-isolated tree %{public}s does',
+                dataDir, liveGameDataDir());
     } else {
       /* ⭐ 状态解除了 ⇒ 把「已忽略」一并复位。⛔ 不复位的话，下次真的又出现这个状态时，
        *    提示会被上一次的忽略静默吃掉 —— 而那正是最需要它出现的时候。 */
