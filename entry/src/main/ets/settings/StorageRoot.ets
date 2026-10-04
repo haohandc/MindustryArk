@@ -1,14 +1,40 @@
 /* 游戏数据根在哪 —— **这一件事的唯一真相源**。
  *
  * ── 为什么要有这个文件 ──────────────────────────────────────────────────────
- * 现在 `NATIVE_FILES` 在四个文件里各写一遍（`Isolation` / `SaveVault` / `ExportDiagnostics` /
- * `SafeArea`），而**数据根一旦可切换，四处硬编码就会各自指向不同的地方**。
- * 参考项目 AMCL 的做法是把「游戏数据根」做成一个同步解析器
+ * `NATIVE_FILES` 原先在四个文件里各写一遍，而**数据根一旦可切换，四处硬编码就会各自指向
+ * 不同的地方**。参考项目 AMCL 的做法是把「游戏数据根」做成一个同步解析器
  * （`GameStorage.resolveMcDir(context, location)`），模块头写着「所有需要 .minecraft 根的地方
  * 都走它，不再各自硬编码」—— 本文件就是同一件事。
  *
- * ⛔ **不动 `ExportDiagnostics` 与 `SafeArea` 的路径**：那两个是**诊断通道**（hdc 要读），
- *    必须钉死在沙箱。它们与「游戏数据在哪」无关，不是漏改。
+ * ── ⛔⛔ 哪些**跟**着根走、哪些**故意不跟**（2026-10-04 定的，别去「统一」它们）────
+ *
+ *   | 用途                              | 跟？ | 为什么 |
+ *   |-----------------------------------|------|--------|
+ *   | 游戏数据（`Isolation` 的根）        | ✅ 跟 | 就是这件事本身 |
+ *   | 存档垃圾站（`SaveVault`）           | ⛔ 不跟 | 它是**兜底恢复副本**：外置一旦不可用，连恢复副本也够不着就糟了 |
+ *   | `ExportDiagnostics`（`crash.txt`/`stderr.log`）| ⛔ 不跟 | **诊断通道**，hdc 要按固定路径读走 |
+ *   | `SafeArea`（`safearea.txt`）        | ⛔ 不跟 | 同上，异形屏数据的唯一可读通道 |
+ *
+ *   ⚠️ 所以「四处硬编码要统一」这个说法**已经作废**了 —— 只有一处该跟。
+ *     ⛔ 判据是**「这个东西是给谁读的」**：给**游戏**读的跟着走；给**启动器自己 / hdc**
+ *     读的钉在沙箱，因为它们的读者不会去外置目录找。
+ *
+ * ── ⭐⭐ 谁说了算：不是这里，是 native 的记录 ───────────────────────────────
+ * `user.home` **只有 native 能决定**（它要 mkdir、要回退、要处理键非法），而 `launcher.c` 的
+ * `record_user_home()` **早就把它实际用的那个值连同原因写了下来**：
+ *
+ *     /data/storage/el2/base/files/userhome_used.txt
+ *       reason=off | bad-key | mkdir-failed | on
+ *       home=<实际用的 user.home>
+ *
+ * ⭐ 所以本文件的 `gameDataRoot()` 只回答「**意图**是哪个根」，而
+ *   `usedUserHome()` 读的是「**实际**用了哪个」—— 两者不一致就是「改了设置但没重启」，
+ *   而那是**语义上的不一致**，不是 bug（native 在启动那一刻读桥）。
+ * ⛔ **不要去让 ArkTS 独立再算一遍实际值**：那就是把 native 的回退逻辑抄一份，两份必然分叉
+ *   （本项目已经在 `Isolation` 的说明里写着「三处里任何一处改了，另一处不会报错，只会让数据
+ *   落到别处 —— 这是无声的」）。
+ * ⭐ 那份记录**恒在沙箱**（`USERHOME_RECORD_FILE = DEST_ROOT "/userhome_used.txt"`），
+ *   ⛔ **别把它挪进数据根**：外置根坏掉时，你正需要读它来知道发生了什么。
  *
  * ── 外部根为什么是 `Download/<包名>` ────────────────────────────────────────
  * ⭐ 因为这个目录**本项目已经在用**（`ModImporter.ensureModFolder` 建的模组文件夹就是它），
@@ -31,6 +57,7 @@
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { modFolderPath } from '../mods/ModImporter';
+import { fileIo as fs } from '@kit.CoreFileKit';
 /* native 探针，见 cpp/storprobe.c 的文件头。 */
 import storprobe from 'libstorprobe.so';
 
@@ -70,5 +97,164 @@ export function probeExternalRoot(filesDir: string): string {
   } catch (e) {
     const err = e as BusinessError;
     return 'threw: ' + err.message;
+  }
+}
+
+/* ====================================================================
+ * 两个根：沙箱 / 外置
+ * ==================================================================== */
+
+/* ⚠️ 应用级目录的【字面路径】。ArkTS 拿不到它：`ctx.filesDir` 是 **HAP 级**的
+ * `/data/storage/el2/base/haps/entry/files`，而 native 与游戏共享的是**应用级**的
+ * `/data/storage/el2/base/files` —— 两个目录长得很像但不可互换，写错了 native 永远看不见，
+ * 症状是「什么都没发生」。
+ * ⛔ 必须与 `launcher.c` 的 `DEST_ROOT` 逐字一致。 */
+export const SANDBOX_ROOT: string = '/data/storage/el2/base/files';
+
+/** 存储位置的两种取值。字符串（不是枚举）—— 与 `LauncherPrefs` 里 launch mode 那套一致。 */
+export const STORAGE_MODE_SANDBOX: string = 'sandbox';
+export const STORAGE_MODE_EXTERNAL: string = 'external';
+
+/** 记「玩家选的是哪个根」的状态文件名（放在 HAP 级 `filesDir` 里，与 `mod_folder` 同一处）。
+ * ⛔ 它记的是**意图**；**实际**用了哪个由 native 记在 `userhome_used.txt`（见下面的 `usedUserHome`）。 */
+const STORAGE_MODE_FILE: string = '/storage_mode';
+
+/** native 记下的「这次启动实际用了哪个 user.home」。恒在**沙箱**里 —— 理由见文件头。 */
+const USERHOME_RECORD: string = SANDBOX_ROOT + '/userhome_used.txt';
+
+/** 读存储位置的意图。文件不在 / 读不懂 ⇒ **沙箱**（= 本项目一直以来的行为）。 */
+export function readStorageMode(filesDir: string): string {
+  const path: string = filesDir + STORAGE_MODE_FILE;
+  try {
+    if (!fs.accessSync(path)) {
+      return STORAGE_MODE_SANDBOX;
+    }
+    const raw: string = fs.readTextSync(path).trim();
+    if (raw === STORAGE_MODE_SANDBOX || raw === STORAGE_MODE_EXTERNAL) {
+      return raw;
+    }
+    /* ⛔ 不认识的值**不静默当成另一个有效值**：记一条日志再回退（「降级默认值」会把
+     * 「读错了」掩盖成「看起来正常」，本项目为此付过代价）。 */
+    hilog.warn(DOMAIN, TAG,
+               'storage: mode "%{public}s" is not usable -- assuming the sandbox', raw);
+    return STORAGE_MODE_SANDBOX;
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'storage: reading the mode failed (%{public}s)', err.message);
+    return STORAGE_MODE_SANDBOX;
+  }
+}
+
+/** 写存储位置的意图。只接受两个已知值。 */
+export function writeStorageMode(filesDir: string, mode: string): void {
+  if (mode !== STORAGE_MODE_SANDBOX && mode !== STORAGE_MODE_EXTERNAL) {
+    hilog.error(DOMAIN, TAG, 'storage: refusing to write an unknown mode "%{public}s"', mode);
+    return;
+  }
+  const path: string = filesDir + STORAGE_MODE_FILE;
+  try {
+    const f: fs.File = fs.openSync(path,
+      fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
+    try {
+      fs.writeSync(f.fd, mode + '\n');
+    } finally {
+      fs.closeSync(f);
+    }
+    hilog.info(DOMAIN, TAG, 'storage: mode -> %{public}s', mode);
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'storage: saving the mode failed (%{public}s)', err.message);
+  }
+}
+
+/** 这一次启动 native **实际**用的 `user.home`；读不到就是 `''`。
+ *
+ * ⭐ 判据是 native 写的那份记录，**不是**在这里重算 —— 理由见文件头
+ *   （重算就是把 native 的回退逻辑抄一份，两份必然分叉）。
+ * ⚠️ 文件不存在是**正常的**：游戏从没启动过（启动器本来就能独立使用）。
+ *    那时返回 `''`，调用方要说「还不知道」，⛔ 不要拿意图冒充实际。 */
+export function usedUserHome(): string {
+  try {
+    if (!fs.accessSync(USERHOME_RECORD)) {
+      return '';
+    }
+    for (const line of fs.readTextSync(USERHOME_RECORD).split('\n')) {
+      if (line.startsWith('home=')) {
+        return line.substring(5).trim();
+      }
+    }
+    return '';
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'storage: reading userhome_used.txt failed (%{public}s)', err.message);
+    return '';
+  }
+}
+
+/** native 为什么用了那一个：`off` / `bad-key` / `mkdir-failed` / `on`；读不到就是 `''`。
+ * ⭐ 它把「回退发生了」变成一条**能读出来的**事实 —— 否则「用了沙箱」既可能是玩家选的，
+ *   也可能是好几种失败回退来的，而两者处置完全不同。 */
+export function usedUserHomeReason(): string {
+  try {
+    if (!fs.accessSync(USERHOME_RECORD)) {
+      return '';
+    }
+    for (const line of fs.readTextSync(USERHOME_RECORD).split('\n')) {
+      if (line.startsWith('reason=')) {
+        return line.substring(7).trim();
+      }
+    }
+    return '';
+  } catch (e) {
+    return '';
+  }
+}
+
+/** **意图**上的游戏数据根。
+ * ⭐ 外置时返回那个已被授权的外部文件夹（`Download/<包名>`，由 `ModImporter` 维护）；路径拿不到
+ *    就回退沙箱 —— 那与 native 的「任何失败都回退」是同一条不变量。
+ * ⛔ 它**不**回答「游戏现在实际用哪个」：那是 `usedUserHome()`。 */
+export function gameDataRoot(filesDir: string): string {
+  if (readStorageMode(filesDir) !== STORAGE_MODE_EXTERNAL) {
+    return SANDBOX_ROOT;
+  }
+  const ext: string = externalRootPath(filesDir);
+  if (ext === '') {
+    return SANDBOX_ROOT;
+  }
+  return ext;
+}
+
+/* ====================================================================
+ * 给 hdc 读的那一份
+ * ==================================================================== */
+
+/** 把「意图 / 实际 / 原因」写成一个**沙箱里的小文件**。
+ *
+ * ⭐ **为什么要写文件，而不是打 hilog**：本应用的 hilog **读不到**（既有笔记里记过，
+ *    `hdc shell hilog` 拿不到这个应用的日志）—— 而这三行是排查「数据到底落在哪」的第一问。
+ * ⭐ 这不是新发明：异形屏数据走的是**同一条路**（`SafeArea.ets` 写
+ *    `/data/storage/el2/base/files/safearea.txt`，就是为了让 hdc 读得到）。
+ * ⛔ **只在内容变了的时候写** —— 它在 `refresh()` 里被调用，而每个渲染周期写一次文件
+ *    本身就是卡顿源（本项目为「诊断工具拖慢被测对象」付过代价）。
+ * @returns 写成功了没有（调用方用它决定要不要记住「已经写过这个内容」。） */
+export function dumpStorageState(intent: string, used: string, reason: string): boolean {
+  const body: string = 'intent=' + intent + '\n'
+                     + 'used=' + used + '\n'
+                     + 'reason=' + reason + '\n';
+  const path: string = SANDBOX_ROOT + '/storage_state.txt';
+  try {
+    const f: fs.File = fs.openSync(path,
+      fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
+    try {
+      fs.writeSync(f.fd, body);
+    } finally {
+      fs.closeSync(f);
+    }
+    return true;
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'storage: writing storage_state.txt failed (%{public}s)', err.message);
+    return false;
   }
 }

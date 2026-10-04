@@ -15,7 +15,9 @@ import { bundleManager, common, ConfigurationConstant } from '@kit.AbilityKit';
 /* 应用自己的显示名 —— 与游戏里那个 About 卡片同一处规则。 */
 import { appLabel } from '../utils/AppLabel';
 import { newTreeStat, copyTreeInto, removeTree, TreeStat, isDir, pathExists } from '../utils/FsTree';
-import { externalRootPath } from '../settings/StorageRoot';
+import { externalRootPath, SANDBOX_ROOT, STORAGE_MODE_SANDBOX, STORAGE_MODE_EXTERNAL,
+         readStorageMode, writeStorageMode, gameDataRoot,
+         usedUserHome, usedUserHomeReason, dumpStorageState } from '../settings/StorageRoot';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { picker } from '@kit.CoreFileKit';
 import { fileUri } from '@kit.CoreFileKit';
@@ -274,15 +276,23 @@ const NOTICE_MS: number = 4000;
 
 const CARD_RADIUS_VP = 14;
 
-/* 确认窗里「取消」的宽度（%）。**五个确认窗共用这一个值**，⛔ 别各自写一个数。
+/* ⭐⭐ **弹窗里那些「独占一行的按钮」不写宽度** —— 让它按**标签自身**的宽度排，
+ *    只加一条 `constraintSize({ maxWidth: '100%' })` 兜住「标签比弹窗还宽」的极端情况。
+ *    ⛔ 别给它们写 `.width('72%')` 之类的百分比。
  *
- * ⛔⛔ 原来是 25%。弹窗内容宽 280vp（`max(320, winW × 0.5)` 减左右各 20vp 内边距），
- *    25% = **70vp**；而「取消」两字 14fp ≈ 28vp，加 `Button` 默认左右内边距 ≈ 32vp = **60vp**
- *    ⇒ 只剩 10vp 余量。而 `fontSize(14)` 的单位是 **fp**、**跟着系统字体缩放**
- *    ⇒ 字体一调大，那两个字就装不下、变成 **「...」**（用户 2026-10-04 报的正是它）。
- * ⭐ 34% = 95vp，留足缩放余量。判据是**按最大字号算，而不是按默认字号算** ——
- *    一个「今天刚好放得下」的宽度，就是明天会坏掉的宽度。 */
-const CANCEL_BTN_WIDTH: string = '34%';
+ * ⛔⛔ 这里原来是一个 `const CANCEL_BTN_WIDTH = '34%'`，五个确认窗共用。
+ *    它治好过一次病（2026-10-04：原本 25%，「取消」两字装不下、显示成 **「...」**），
+ *    **但药方是错的** —— 这些按钮**每一个都独占一行**（不是并排挤在 `Row` 里），
+ *    对独占一行的东西写百分比，等于同时制造两个毛病：
+ *      · **长的被压**：`放进垃圾站（保留到 2026-10-09）` 约 232vp，塞进 72% × 280 = 202vp
+ *        ⇒ 折成两行、按钮变高（用户 2026-10-04 说的「按钮比文字提示还大」就是它）
+ *      · **短的被拉**：「取消」两个字占 95vp 宽，看着比它旁边的正文还重
+ *    ⇒ 改成**按内容**。⭐ 关键是它把问题**从结构上消掉**了：不再是「宽度写得够不够」，
+ *    而是**根本没有宽度可以写错** —— 当初那句「一个『今天刚好放得下』的宽度，就是明天
+ *    会坏掉的宽度」在这里终于有了正确答案。
+ *
+ * ⚠️ **并排的按钮不适用**：`TransferDialog` 底下那两个（确定 / 取消）是真的挤在一个 `Row` 里，
+ *    那里继续用 `layoutWeight(1)` —— 那是对的，⛔ 别一起改。 */
 
 /** 按钮字号。**显式给**，因为不给会按各自标签长度自适应，两个按钮的字不一样大。 */
 const BUTTON_FONT_VP = 16;
@@ -408,6 +418,15 @@ export struct LauncherHome {
    *    关掉它之后 `darkOn` 才说话。两个开关而不是一个三档选择器 —— 用户要的就是这个形状。 */
   @State darkFollow: boolean = true;
   @State darkOn: boolean = false;
+
+  /* 存储位置（2026-10-04）。⭐ 这三个是**只读展示**用的，第 1 步先不提供切换。
+   * ⚠️ `storageUsed` 是 native 记下的**实际**值（`userhome_used.txt`），`storageIntent` 是本页
+   *    读设置得出的**意图** —— 两者不一致 = 改了设置还没重启，那不是 bug（见 StorageRoot 文件头）。 */
+  @State storageIntent: string = STORAGE_MODE_SANDBOX;
+  @State storageUsed: string = '';
+  @State storageUsedReason: string = '';
+  /** 上一次写给 hdc 的那个内容。⛔ 拿它避免**每次 refresh 都写一个文件**（见 `dumpStorageState`）。 */
+  private storageDumped: string = '';
 
   /** 玩家点过「知道了」。只活这一次会话 —— 不再是失败状态就不会再显示。 */
   @State faultAck: boolean = false;
@@ -1257,6 +1276,30 @@ export struct LauncherHome {
     }
   }
 
+  /* 「游戏上次启动实际用了哪个」那一行。
+   * ⛔ 读不到就说**读不到**，⛔ 不要拿意图冒充它 —— 那正是这个功能最容易骗人的地方
+   *    （「设置里写着外置」和「游戏真的用了外置」是两件事，只报前者等于报了一个未验证的值）。 */
+  private storageUsedLine(): string {
+    if (this.storageUsed === '') {
+      return '游戏还没启动过 —— 实际用哪个还不知道';
+    }
+    const where: string = this.storageUsed.startsWith(SANDBOX_ROOT) ? '沙箱' : '外置';
+    const why: string = (this.storageUsedReason === 'on' || this.storageUsedReason === 'off')
+      ? '' : ('（回退了，原因：' + this.storageUsedReason + '）');
+    const tail: string = this.storageUsedMismatch() ? '　← 需要重启游戏才会生效' : '';
+    return '游戏上次启动用的是：' + where + why + tail;
+  }
+
+  /** 意图与实际对不上吗。⭐ 对不上不是 bug，是**「改了设置但还没重启」** —— native 在启动那一刻读。
+   * ⚠️ 记录里没有（游戏没启动过）不算不一致：那是「还不知道」。 */
+  private storageUsedMismatch(): boolean {
+    if (this.storageUsed === '') {
+      return false;
+    }
+    const usedIsSandbox: boolean = this.storageUsed.startsWith(SANDBOX_ROOT);
+    return usedIsSandbox !== (this.storageIntent === STORAGE_MODE_SANDBOX);
+  }
+
   private refresh(): void {
     ensureGameJarDir(this.filesDir);
     this.games = listGameJars(this.filesDir);
@@ -1275,6 +1318,20 @@ export struct LauncherHome {
     if (ap.follow !== this.darkFollow) { this.darkFollow = ap.follow; }
     if (ap.dark !== this.darkOn) { this.darkOn = ap.dark; }
     this.applyColorMode();
+
+    /* ⭐ 存储位置：读**意图**（本页的设置）+ 读**实际**（native 上次启动记下的那份）。
+     * ⚠️ 那个 `dumpStorageState` 是**这个功能唯一能被 hdc 读到的地方** —— 本应用的 hilog 读不到
+     *    （既有笔记），所以这三行必须落成文件，否则「数据到底落在哪」只能靠眼睛看界面。
+     * ⛔ 只在内容变了时写：它在 `refresh()` 里，而每渲染周期写一次文件本身就是卡顿源。 */
+    this.storageIntent = readStorageMode(this.filesDir);
+    this.storageUsed = usedUserHome();
+    this.storageUsedReason = usedUserHomeReason();
+    const dump: string = this.storageIntent + '|' + this.storageUsed + '|' + this.storageUsedReason;
+    if (dump !== this.storageDumped) {
+      if (dumpStorageState(this.storageIntent, this.storageUsed, this.storageUsedReason)) {
+        this.storageDumped = dump;
+      }
+    }
 
     /* 存档。⚠️ 目录**取决于隔离状态** —— 用与 native 算 `user.home` 同一套输入，否则这里会列出
      * 另一份存档，那是最坏的一类不一致：界面上看起来完全正常。⚠️ 两者仍可能分叉：玩家改了粒度
@@ -3762,14 +3819,14 @@ export struct LauncherHome {
         /* 与单删那个窗**同一套措辞**（`放进垃圾站（保留到 X）`）—— 否则玩家会以为是两种不同的去向。 */
         Button('放进垃圾站（保留到 ' + this.deleteExpiryDate() + '）')
           .fontSize(15)
-          .width('72%').alignSelf(ItemAlign.Center)
+          .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
           .margin({ top: 16 })
           .onClick(() => { this.deleteMultiToVault(); })
 
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
         Button('取消')
           .fontSize(14)
-          .width(CANCEL_BTN_WIDTH).alignSelf(ItemAlign.Center)
+          .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
           .margin({ top: 12 })
           .onClick(() => { this.showMultiAsk = false; })
       }
@@ -3827,14 +3884,14 @@ export struct LauncherHome {
         /* 按钮标签上再把「永久」和数量说一遍 —— 它在视觉上就是那个动作本身。 */
         Button('永久删除这 ' + String(this.vaultEntries.length) + ' 个')
           .fontSize(15)
-          .width('72%').alignSelf(ItemAlign.Center)
+          .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
           .margin({ top: 16 })
           .onClick(() => { this.clearVaultAll(); })
 
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
         Button('取消')
           .fontSize(14)
-          .width(CANCEL_BTN_WIDTH).alignSelf(ItemAlign.Center)
+          .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
           .margin({ top: 12 })
           .onClick(() => { this.showVaultClearAsk = false; })
       }
@@ -3925,7 +3982,7 @@ export struct LauncherHome {
 
         Button('只删除游戏（保留数据）')
           .fontSize(15)
-          .width('80%').alignSelf(ItemAlign.Center)
+          .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
           .margin({ top: 16 })
           .onClick(() => { this.deleteGame(false); })
 
@@ -3936,7 +3993,7 @@ export struct LauncherHome {
             .fontSize(15)
             .fontColor($r('sys.color.warning'))
             .backgroundColor($r('app.color.launcher_bg'))
-            .width('80%').alignSelf(ItemAlign.Center)
+            .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
             .margin({ top: 10 })
             .onClick(() => { this.deleteGame(true); })
         }
@@ -3944,7 +4001,7 @@ export struct LauncherHome {
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
         Button('取消')
           .fontSize(14)
-          .width(CANCEL_BTN_WIDTH).alignSelf(ItemAlign.Center)
+          .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
           .margin({ top: 12 })
           .onClick(() => { this.showGameDeleteAsk = false; })
       }
@@ -3983,20 +4040,20 @@ export struct LauncherHome {
 
         Button('放进垃圾站（保留到 ' + this.deleteExpiryDate() + '）')
           .fontSize(15)
-          .width('72%').alignSelf(ItemAlign.Center)
+          .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
           .margin({ top: 16 })
           .onClick(() => { this.doVaultDelete(false); })
 
         Button('归档（不自动清理）')
           .fontSize(15)
-          .width('72%').alignSelf(ItemAlign.Center)
+          .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
           .margin({ top: 10 })
           .onClick(() => { this.doVaultDelete(true); })
 
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
         Button('取消')
           .fontSize(14)
-          .width(CANCEL_BTN_WIDTH).alignSelf(ItemAlign.Center)
+          .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
           .margin({ top: 12 })
           .onClick(() => { this.showDeleteAsk = false; })
       }
@@ -5129,6 +5186,39 @@ export struct LauncherHome {
         .borderRadius(CARD_RADIUS_VP)
         .margin({ top: 8 })
 
+        /* ================= 存储位置 ================= */
+        /* ⚠️ **第 1 步只展示，不提供切换**（2026-10-04）。先证明「意图」与「实际」能对上，
+         *    再让玩家能改它 —— 顺序反过来的话，一旦哪里对不上，你会同时面对
+         *    「开关是新的」和「数据落到别处」两个未知数。
+         * ⭐ 两行分开报，因为它们是**两件事**：意图是「你选的」，实际是「游戏上次真的用了哪个」。
+         *    只报一个数的时候，改完设置还没重启会看起来像「没生效」。 */
+        Column() {
+          Row() {
+            Column() {
+              Text('存储位置')
+                .fontSize(14).fontColor($r('sys.color.font_primary'))
+              Text(this.storageIntent === STORAGE_MODE_EXTERNAL
+                   ? '外置存储（下载目录里的应用文件夹）'
+                   : '沙箱（应用内部）')
+                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                .margin({ top: 4 })
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+          }
+          .width('100%')
+
+          Text(this.storageUsedLine())
+            .fontSize(12)
+            .fontColor(this.storageUsedMismatch()
+                       ? $r('sys.color.warning') : $r('sys.color.font_tertiary'))
+            .width('100%').margin({ top: 10 })
+        }
+        .width('100%').padding(16)
+        .backgroundColor($r('app.color.launcher_card'))
+        .borderRadius(CARD_RADIUS_VP)
+        .margin({ top: 8 })
+
         /* ================= 异形屏避让 ================= */
         /* ⛔ 卡片容器是必须的 —— 第一版我漏了它，于是这一段和上面那张卡片贴在一起、
          *    在界面上根本看不出是两块（用户 2026-10-03 当场指出）。
@@ -5490,7 +5580,7 @@ export struct LauncherHome {
           Button('复制过去')
             .fontSize(13)
             .height(34)
-            .width('56%').alignSelf(ItemAlign.Center)
+            .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
             .margin({ top: 12 })
             /* ⭐ 两步：先记下意图，由下面那个二次确认来真正执行。⛔ 这里**不**直接调
              * applyIsolationCopy() —— 那会让二次确认变成摆设。 */
@@ -5502,14 +5592,14 @@ export struct LauncherHome {
           Button('不复制')
             .fontSize(13)
             .height(34)
-            .width('56%').alignSelf(ItemAlign.Center)
+            .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
             .margin({ top: 8 })
             .onClick(() => { this.isolationConfirm = 'empty'; })
 
           Button('取消')
             .fontSize(13)
             .height(34)
-            .width(CANCEL_BTN_WIDTH).alignSelf(ItemAlign.Center)
+            .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
             .margin({ top: 8 })
             .onClick(() => {
               this.showIsolationAsk = false;
