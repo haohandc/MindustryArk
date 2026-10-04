@@ -333,7 +333,15 @@ export function writeGameDisplay(filesDir: string, p: GameDisplayPref): void {
     const f: fs.File = fs.openSync(path,
       fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
     try {
-      fs.writeSync(f.fd, 'edge=' + String(p.edge) + ' scale=' + String(p.scale) + '\n');
+      /* ⛔⛔ **`auto` 必须写出来 —— 漏了它会让「自动适配」整个失效，而症状是静默的。**
+       *    2026-10-04 真的漏了（那次改动经由脚本替换，替换没匹配上而 `str.replace` 不报错），
+       *    后果连锁：`readGameDisplay` 读不到 `auto` ⇒ 回退 `false` ⇒ 下一次 `refresh()`
+       *    把 `gameAuto` 复位成 false ⇒ **开关自己弹回去**，而 `applyGameDisplayNow`
+       *    于是用**手动值**（0）去比 ⇒ 永远不写。玩家看到的是「拨上去、它自己回去了、游戏没变」。
+       * ⭐ 判据：**读的那一侧加了字段，写的那一侧必须同时加** —— 两者不同步时，
+       *    失败方向是「读到默认值」，而那与「玩家没设过」长得一模一样。 */
+      fs.writeSync(f.fd, 'auto=' + (p.auto ? '1' : '0')
+                       + ' edge=' + String(p.edge) + ' scale=' + String(p.scale) + '\n');
     } finally {
       fs.closeSync(f);
     }

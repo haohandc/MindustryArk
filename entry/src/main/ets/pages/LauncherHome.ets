@@ -457,8 +457,6 @@ export struct LauncherHome {
   @State gameScale: number = GAME_SCALE_FACTORY;
   /** ⭐ 实验性：避让由系统参数自动算（出厂关，见 LauncherPrefs）。 */
   @State gameAuto: boolean = false;
-  /** 自动算出来的那个值（给界面显示用；自动关着时也留着，便于对照）。 */
-  @State gameAutoEdge: number = GAME_EDGE_FACTORY;
   /* ⛔⛔ **探测完成之前不许用自动值** —— 这个标志是承重的，别删。
    *    `initSafeArea()` 是 **async**，而 `refresh()` 是同步的：刷新先跑，那时
    *    `detectedSafeVp` 还是 0 ⇒ 自动值算出来是 0 ⇒ 而 0 会被当成「我们要写 0」
@@ -827,7 +825,7 @@ export struct LauncherHome {
                         * 那几个数只在探测完成后才算得出来（`safeDetected`），
                         * 加进键里正是为了让**那一次**触发重写。 */
                        + '|' + String(this.safeDetected) + '|' + String(this.gameAuto)
-                       + '|' + String(this.gameAutoEdge) + '|' + String(this.detectedSafeVp);
+                       + '|' + String(this.gameEdge) + '|' + String(this.detectedSafeVp);
     if (dump === this.storageDumped) {
       return;
     }
@@ -842,27 +840,37 @@ export struct LauncherHome {
                         + ' detected:' + String(this.safeDetected)
                         + ' insetVp:' + String(this.detectedSafeVp)
                         + ' density:' + String(displayDensity())
-                        + ' derived:' + String(this.gameAutoEdge) + NL;
+                        + ' edge:' + String(this.gameEdge) + NL;
     if (dumpStorageState(this.filesDir, this.storageIntent, this.storageUsed,
                                   this.storageUsedReason, this.isolationStale, extra, dirs)) {
       this.storageDumped = dump;
     }
   }
 
-  /* 算自动避让值。输入是**探测到的 vp 内缩 × 密度**（游戏用的是像素）。
-   * ⛔ 只用探测结果，**不读游戏文件** —— 它要能在 `refresh()` 里便宜地跑。
-   * ⚠️ 缩放那一项用滑条里的值：同一份公式里避让与缩放是**相乘**的（见 `GameAutoFit.gameScl`），
-   *    而自动模式**只接管避让**、缩放始终由玩家管，所以取哪个都说得通；取滑条值省一次读文件。 */
-  private computeGameAutoEdge(): void {
+  /* 按本机参数算一个避让值，并**直接采用它**（写进 `gameEdge`）。
+   *
+   * ⛔⛔ **为什么是「采用」而不是「并存两个值」**（2026-10-04 改的）：原来自动值与手动值分成
+   *    `gameAutoEdge` / `gameEdge` 两份，而滑条动的是**手动**那份 ⇒ **自动开着时拖滑条完全无效**
+   *    （滑条显示自动值、拖了却改不动生效的那个数）—— 那是「控件看起来能用、实际不起作用」，
+   *    与本项目反复记下的那类缺陷同族。
+   * ⭐ 现在的模型**只有一个值**：`gameEdge`，它就是会被写进游戏的那个数。
+   *    「自动适配」退化成一个**动作**：按本机挖孔算一个值并填进 `gameEdge`；
+   *    之后滑条就是唯一的编辑器，两者永远一致。
+   * ⚠️ 代价：自动值**不会**每次启动重算（那会抹掉玩家的微调）。要重算就再拨一次开关。
+   *
+   * @returns 有没有真的算出一个可用的值（探测没回来 / 本机没挖孔 ⇒ false，**不动**现有值）。 */
+  private seedGameEdgeFromDevice(): boolean {
     if (!this.safeDetected) {
-      return;                      /* 探测还没回来 ⇒ 不动（见 safeDetected 那段） */
+      return false;                /* 探测没回来 ⇒ 算出来会是 0，而 0 是合法值 ⇒ 不能填 */
     }
     const density: number = displayDensity();
     const insetPx: number = Math.round(this.detectedSafeVp * density);
     const v: number = autoEdgePadding(insetPx, density, this.gameScale);
-    if (v !== this.gameAutoEdge) {
-      this.gameAutoEdge = v;
+    if (v <= 0) {
+      return false;                /* 本机没有挖孔要让（或推不出来）⇒ 保持玩家现有的值 */
     }
+    this.gameEdge = v;
+    return true;
   }
 
   private async initSafeArea(): Promise<void> {
@@ -901,7 +909,9 @@ export struct LauncherHome {
      *    （被 `safeDetected` 挡在计算之外，所以**没写进去**）。不复算的话，自动模式要等到
      *    下一次 `refresh()`（切页签之类）才会生效 —— 也就是「拨了开关没反应，过一会儿又好了」。 */
     this.safeDetected = true;
-    this.computeGameAutoEdge();
+    if (this.gameAuto) {
+      this.seedGameEdgeFromDevice();
+    }
     this.applyGameDisplayNow();
     /* ⛔ 再把诊断文件写一次 —— 上面那几个数刚变，而这次不再有 `refresh()` 了。
      *    少了这一句，文件里会永久留着探测之前的 `derived:0`（2026-10-04 踩过）。 */
@@ -1521,9 +1531,9 @@ export struct LauncherHome {
   private applyGameDisplayNow(): void {
     const dataDir: string = resolveGameDataDir(this.granularity, this.resolution.source,
                                               this.resolution.path, this.bundledJar());
-    /* ⭐ 自动模式下**用算出来的避让值**，缩放仍走滑条（我们不自动设缩放，理由见 GameAutoFit）。 */
-    const useEdge: number = this.gameAuto ? this.gameAutoEdge : this.gameEdge;
-    const pref: GameDisplayPref = { edge: useEdge, scale: this.gameScale, auto: this.gameAuto };
+    /* ⭐ **只有一个避让值**（`gameEdge`）—— 自动适配算出来的也是写进它，见 `seedGameEdgeFromDevice`。
+     *    ⇒ 滑条无论自动开着还是关着都**真的生效**。 */
+    const pref: GameDisplayPref = { edge: this.gameEdge, scale: this.gameScale, auto: this.gameAuto };
     /* ⭐ 缓存键里**带上 dataDir**：换版本 / 换粒度 / 换存储根都会指到另一个 settings.bin，
      *    而那一次必须重新尝试写入。 */
     const key: string = dataDir + '|' + String(pref.edge) + '|' + String(pref.scale);
@@ -1617,7 +1627,11 @@ export struct LauncherHome {
       if (gd.edge !== this.gameEdge) { this.gameEdge = gd.edge; }
       if (gd.scale !== this.gameScale) { this.gameScale = gd.scale; }
       if (gd.auto !== this.gameAuto) { this.gameAuto = gd.auto; }
-      this.computeGameAutoEdge();
+      /* ⭐ 自动开着时**补种一次**：覆盖「开关是在探测完成之前拨的」那种情况
+       *    （那时 `safeDetected` 还是 false、算不出来）。已经算过就不动，所以不会抹掉微调。 */
+      if (this.gameAuto) {
+        this.seedGameEdgeFromDevice();
+      }
       this.applyGameDisplayNow();
     }
 
@@ -5738,66 +5752,71 @@ export struct LauncherHome {
             Toggle({ type: ToggleType.Switch, isOn: this.gameAuto })
               .onChange((on: boolean) => {
                 this.gameAuto = on;
-                /* ⛔ 先把值算好再落盘：`computeGameAutoEdge` 在探测没回来时不动，
-                 *    而 `saveGameDisplay` 会立刻把当前的值写进游戏 ⇒ 顺序反了会写一个 0。 */
-                this.computeGameAutoEdge();
+                /* ⛔ 顺序是承重的：**先按本机算值，再落盘**。
+                 *    `seedGameEdgeFromDevice` 在探测没回来时**不动**任何值（返回 false），
+                 *    所以反过来的话不会写出 0 —— 但会让「拨上去」在探测未完成时看不出效果。 */
+                if (on) {
+                  this.seedGameEdgeFromDevice();
+                }
                 this.saveGameDisplay();
               })
           }
           .width('100%')
 
-          Text('异形屏避让（单位：px）')
-            .fontSize(14).fontColor($r('sys.color.font_primary'))
-            .width('100%')
-            .margin({ top: 18 })
-          Slider({
-            /* ⚠️ 自动开着时滑条显示**算出来的值**并禁用 —— 让它显示旧的手动值会与自动值不符，
-             *    而屏幕上没有数字能说明哪个在生效。 */
-            value: this.gameAuto ? this.gameAutoEdge : this.gameEdge,
-            min: GAME_EDGE_MIN,
-            max: GAME_EDGE_MAX,
-            step: 1,
-            style: SliderStyle.OutSet
-          })
-            .width('100%')
-            /* ⚠️ `enabled` 是**链式**通用属性，⛔ 不能写进 `Slider({...})` 的选项里
-             *    （那样是编译错误：`SliderOptions` 没有这个字段）。 */
-            .enabled(!this.gameAuto)
-            .margin({ top: 6 })
-            .onChange((v: number, mode: SliderChangeMode) => {
-              const nv: number = Math.round(v);
-              if (nv === this.gameEdge || (mode !== SliderChangeMode.End && mode !== SliderChangeMode.Click)) {
-                this.gameEdge = nv;      /* 拖动中只改界面上的数，不写盘 */
-                return;
-              }
-              this.gameEdge = nv;
-              this.saveGameDisplay();
+          /* ⛔ 用户 2026-10-04：**自动适配关着时这两个滑条不显示** —— 原话「游戏内能调的
+           *    不给别人看；开了适配再把两个滑条放出来」。理由很正：游戏自己的设置里就有这两项，
+           *    启动器复制一份出来只会让人分不清哪个在生效。
+           * ⭐ 所以滑条的定位是「**给自动算出来的值做微调**」，而不是「另一个调这两项的地方」。
+           * ⚠️ 关着时这一整段不渲染 ⇒ 卡片高度会变，这是**接受**的代价（同深色模式那张卡的做法）。 */
+          if (this.gameAuto) {
+            Text('异形屏避让 (单位:px)')
+              .fontSize(14).fontColor($r('sys.color.font_primary'))
+              .width('100%')
+              .margin({ top: 18 })
+            Slider({
+              /* ⭐ 只有一个值，所以显示它、并且**两个模式下都能拖**（自动开着时拖的就是刚算出来的那个数）。 */
+              value: this.gameEdge,
+              min: GAME_EDGE_MIN,
+              max: GAME_EDGE_MAX,
+              step: 1,
+              style: SliderStyle.OutSet
             })
+              .width('100%')
+              /* ⚠️ `enabled` 是**链式**通用属性，⛔ 不能写进 `Slider({...})` 的选项里。 */
+              .margin({ top: 6 })
+              .onChange((v: number, mode: SliderChangeMode) => {
+                const nv: number = Math.round(v);
+                if (nv === this.gameEdge || (mode !== SliderChangeMode.End && mode !== SliderChangeMode.Click)) {
+                  this.gameEdge = nv;      /* 拖动中只改界面上的数，不写盘 */
+                  return;
+                }
+                this.gameEdge = nv;
+                this.saveGameDisplay();
+              })
 
-          /* ⛔ 用户只要了两处文字，所以这里**连单位都不加**（他没提 UI 缩放的单位）。
-           *    要加的话由他开口 —— 规矩见上面那段。 */
-          Text('UI 缩放')
-            .fontSize(14).fontColor($r('sys.color.font_primary'))
-            .width('100%')
-            .margin({ top: 18 })
-          Slider({
-            value: this.gameScale,
-            min: GAME_SCALE_MIN,
-            max: GAME_SCALE_MAX,
-            step: GAME_SCALE_STEP,
-            style: SliderStyle.OutSet
-          })
-            .width('100%')
-            .margin({ top: 6 })
-            .onChange((v: number, mode: SliderChangeMode) => {
-              const nv: number = Math.round(v);
-              if (nv === this.gameScale || (mode !== SliderChangeMode.End && mode !== SliderChangeMode.Click)) {
-                this.gameScale = nv;
-                return;
-              }
-              this.gameScale = nv;
-              this.saveGameDisplay();
+            Text('UI缩放 (百分比)')
+              .fontSize(14).fontColor($r('sys.color.font_primary'))
+              .width('100%')
+              .margin({ top: 18 })
+            Slider({
+              value: this.gameScale,
+              min: GAME_SCALE_MIN,
+              max: GAME_SCALE_MAX,
+              step: GAME_SCALE_STEP,
+              style: SliderStyle.OutSet
             })
+              .width('100%')
+              .margin({ top: 6 })
+              .onChange((v: number, mode: SliderChangeMode) => {
+                const nv: number = Math.round(v);
+                if (nv === this.gameScale || (mode !== SliderChangeMode.End && mode !== SliderChangeMode.Click)) {
+                  this.gameScale = nv;
+                  return;
+                }
+                this.gameScale = nv;
+                this.saveGameDisplay();
+              })
+          }
 
           /* ⭐ 这张卡的**第二处、也是最后一处文字**（用户 2026-10-04 指定的）。
            * ⛔ 它把「不覆盖玩家已经调过的值」这条规则一句话说完 —— 所以**它同时取代了**
