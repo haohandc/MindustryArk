@@ -189,7 +189,7 @@ APP_NAME = "MindustryArk"
 # 所以开头的 "v" 属于发布 tag 和 artifact 名，从不属于
 # version name，两者安全的字符集是数字、字母、点、
 # 下划线和连字符。
-APP_VERSION = "1.3.2.1"
+APP_VERSION = "1.3.3.1"
 
 # versionCode 是平台实际据以排序安装的整数。
 #
@@ -271,7 +271,7 @@ APP_VERSION = "1.3.2.1"
 # 而不是降级，所以已装 `0.3.0.1` 的人会原地装它。反过
 # 来不成立：一旦 1.0.0 的构建发布，退回任何 0.x 都是
 # 降级，平台会拒绝。
-VERSION_CODE = 1030201
+VERSION_CODE = 1030301
 
 
 def version_code_for(version):
