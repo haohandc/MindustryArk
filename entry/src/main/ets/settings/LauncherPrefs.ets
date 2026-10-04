@@ -243,19 +243,37 @@ export interface GameDisplayPref {
    * ⛔ **出厂关闭**（用户 2026-10-04：「标注为实验性功能，这个不默认开启」）。
    * ⚠️ 自动模式**只接管避让**，不碰缩放 —— 依据见 `GameAutoFit.ets` 的文件头。 */
   auto: boolean;
+  /* ⛔⛔ **这两个标志是「启动器能改自己默认值」的前提，别删。**
+   *    没有它们时，**写进文件的默认值会被当成玩家的选择**：启动器把当前值存一遍
+   *    （哪怕它只是初值），下次读回来就成了「他设过 100」⇒ 启动器**再也改不动自己的默认值**。
+   *    2026-10-04 实测踩到：把 `GAME_DISPLAY_DEFAULT.scale` 从 100 改成 200 **对他完全无效**，
+   *    因为他那份 `game_display.txt` 里正存着 100（那是我写的初值，不是他选的）。
+   * ⭐ 判据：**持久化只该记「玩家显式做过的选择」**；默认值永远由代码给出。
+   *    ⇒ 读的时候 `*Set === false` 就回退到 `GAME_DISPLAY_DEFAULT`，⛔ **不是**回退文件里那个数。 */
+  edgeSet: boolean;
+  scaleSet: boolean;
 }
 
-/** 出厂值 = **游戏自己的默认值**（= 什么都不改变）。
+/** 启动器的出厂值 —— ⛔ **这是「我们想要游戏是什么样」，不是「游戏自己是什么样」。**
  *
- * ⚠️⚠️ 这是刻意的、也是一个待办：用户要的是「启动器默认帮用户调好」，而**合适的数值我定不出来**
- *    —— 那取决于真机上游戏 HUD 与挖孔的位置关系，而我看不到屏幕。
- *    ⛔ 编一个数写进去，症状会是「游戏界面看起来坏了」，而玩家不知道是谁弄的。
- *    ⭐ 所以：量程与出厂值都照游戏默认，界面给他两个滑条去拖；他试出合适的数之后，
- *      **把那两个数改成这里的出厂值**，后面的用户就自动调好了。 */
+ * ⚠️ 上面那对 `*_FACTORY` 只用来判断「玩家碰过没有」；这里是**要写进游戏的数**。
+ *    两者**今天不相等**（`scale` 100 vs 200），而它们**必须继续分开**：
+ *    把 `untouched` 判据也改成 200 的话，一份全新的游戏（`uiscale = 100`）会被判成
+ *    「玩家改过」⇒ 永远不写 ⇒ 症状只是「这个功能忽然不生效」。
+ *
+ * `scale = 200`：用户 2026-10-04「我说的 UI 是指 UI 比例，默认是 100%，这个要根据我们的调一下。
+ * 默认的实在太小了。」⇒ 100（游戏的默认）在手机上太小。
+ * ⭐ **200 不是编的**：他自己那份 `settings.bin` 里就是 `uiscale = 200`（外置那份实测
+ *    `edge=70 scale=200`）—— 那是他调出来的值。⚠️ 若他觉得该更大/更小，改这一个数即可。
+ *
+ * `edge = GAME_EDGE_FACTORY`：**避让的默认仍是「不改变」** —— 它由「自动适配」按本机算
+ *    （见 `GameAutoFit.autoEdgePadding`），而自动适配是**实验性、默认关闭**的。 */
 export const GAME_DISPLAY_DEFAULT: GameDisplayPref = {
   edge: GAME_EDGE_FACTORY,
-  scale: GAME_SCALE_FACTORY,
+  scale: 200,
   auto: false,
+  edgeSet: false,
+  scaleSet: false,
 };
 
 /** 把数值夹进量程。⛔ 读文件与滑条两处都要走它 —— 文件是可以被改坏的。
@@ -288,6 +306,8 @@ export function readGameDisplay(filesDir: string): GameDisplayPref {
     let edge: number = GAME_DISPLAY_DEFAULT.edge;
     let scale: number = GAME_DISPLAY_DEFAULT.scale;
     let auto: boolean = GAME_DISPLAY_DEFAULT.auto;
+    let edgeSet: boolean = false;
+    let scaleSet: boolean = false;
     let sawOne: boolean = false;
     for (const part of fs.readTextSync(path).trim().split(/\s+/)) {
       const eq: number = part.indexOf('=');
@@ -299,6 +319,14 @@ export function readGameDisplay(filesDir: string): GameDisplayPref {
       if (k === 'auto') {
         auto = (raw === '1');
         sawOne = true;
+        continue;
+      }
+      if (k === 'edgeSet') {
+        edgeSet = (raw === '1');
+        continue;
+      }
+      if (k === 'scaleSet') {
+        scaleSet = (raw === '1');
         continue;
       }
       const n: number = Number.parseInt(raw, 10);
@@ -318,7 +346,15 @@ export function readGameDisplay(filesDir: string): GameDisplayPref {
       hilog.warn(DOMAIN, TAG, 'prefs: game display file has nothing usable -- using defaults');
       return GAME_DISPLAY_DEFAULT;
     }
-    return { edge: clampEdge(edge), scale: clampScale(scale), auto: auto };
+    /* ⭐⭐ **没被玩家设过的那一项回退出厂值**（⛔ 不是回退文件里那个数）。
+     *    这一步就是「启动器能改自己的默认值」的唯一原因 —— 见接口里那段。 */
+    return {
+      edge: edgeSet ? clampEdge(edge) : GAME_DISPLAY_DEFAULT.edge,
+      scale: scaleSet ? clampScale(scale) : GAME_DISPLAY_DEFAULT.scale,
+      auto: auto,
+      edgeSet: edgeSet,
+      scaleSet: scaleSet,
+    };
   } catch (e) {
     const err = e as BusinessError;
     hilog.warn(DOMAIN, TAG, 'prefs: reading the game display failed (%{public}s)', err.message);
@@ -340,7 +376,11 @@ export function writeGameDisplay(filesDir: string, p: GameDisplayPref): void {
        *    于是用**手动值**（0）去比 ⇒ 永远不写。玩家看到的是「拨上去、它自己回去了、游戏没变」。
        * ⭐ 判据：**读的那一侧加了字段，写的那一侧必须同时加** —— 两者不同步时，
        *    失败方向是「读到默认值」，而那与「玩家没设过」长得一模一样。 */
+      /* ⭐ 两个 `*Set` 标志**必须一起写**（见接口里那段）：它们是「这一项玩家设过没有」的唯一记录。
+       * ⛔ 漏掉它们 ⇒ 写进去的默认值下次被当成「玩家的选择」⇒ 启动器**再也改不动自己的默认值**。 */
       fs.writeSync(f.fd, 'auto=' + (p.auto ? '1' : '0')
+                       + ' edgeSet=' + (p.edgeSet ? '1' : '0')
+                       + ' scaleSet=' + (p.scaleSet ? '1' : '0')
                        + ' edge=' + String(p.edge) + ' scale=' + String(p.scale) + '\n');
     } finally {
       fs.closeSync(f);
@@ -395,7 +435,7 @@ export function readAppliedGameDisplay(filesDir: string): GameDisplayPref | null
     }
     /* ⚠️ `applied` 里**不**记 auto：它记的是「我们往游戏里写了什么数」，而 auto 只是
      * 「这个数是谁算出来的」。判据（不覆盖玩家设置）只用得上那两个数。 */
-    return { edge: edge, scale: scale, auto: false };
+    return { edge: edge, scale: scale, auto: false, edgeSet: false, scaleSet: false };
   } catch (e) {
     return null;
   }

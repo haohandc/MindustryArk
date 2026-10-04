@@ -464,6 +464,11 @@ export struct LauncherHome {
    *    ⚠️ 这个 bug 的症状是「刚拨上自动适配，避让就归零了」，而且只在启动的头一瞬间发生 ——
    *    正是那种「手动复现要碰运气」的形态，所以用标志挡死而不是指望时序。 */
   private safeDetected: boolean = false;
+  /* ⭐ 「玩家**显式**动过这两个滑条没有」。⛔ 承重 —— 见 `LauncherPrefs` 接口里那段：
+   *    只有显式动过的值才写进文件；没动过的回退到启动器的出厂值。
+   *    ⇒ 这两个标志是「启动器能改自己默认值」与「自动适配不被它自己写过的值卡住」的前提。 */
+  private gameEdgeSet: boolean = false;
+  private gameScaleSet: boolean = false;
   /** 写失败时给玩家看的一句话（成功时为空）。 */
   @State gameDisplayNote: string = '';
   /** 上一次尝试过的那组「数据目录 + 两个值」。
@@ -1517,9 +1522,18 @@ export struct LauncherHome {
   /* 滑条松手：存偏好，并**立刻**把值写进游戏那份 settings.bin。
    * ⚠️ 只有松手才写（`End` / `Click`）—— 拖动中每次变化都写盘会写上百次，而这是块闪存。
    *    同 `writeSafePref` 那条既有规矩。 */
-  private saveGameDisplay(): void {
+  private saveGameDisplay(which: string): void {
+    /* ⭐ `which` = 玩家刚动过的那一项（`'edge'` / `'scale'` / `''` = 只拨了开关）。
+     * ⛔ 只有**真正动过**的那一项才置 `*Set` —— 否则「把初值写一遍」就等于「他选了这个数」，
+     *    而那正是让默认值改不动的那个坑（2026-10-04 实测踩到）。 */
+    if (which === 'edge') {
+      this.gameEdgeSet = true;
+    } else if (which === 'scale') {
+      this.gameScaleSet = true;
+    }
     const p: GameDisplayPref = { edge: this.gameEdge, scale: this.gameScale,
-                            auto: this.gameAuto };
+                            auto: this.gameAuto,
+                            edgeSet: this.gameEdgeSet, scaleSet: this.gameScaleSet };
     writeGameDisplay(this.filesDir, p);
     this.gameDisplayTried = '';        /* 值变了 ⇒ 让下面那个缓存失效，立刻重算一次 */
     this.applyGameDisplayNow();
@@ -1533,7 +1547,9 @@ export struct LauncherHome {
                                               this.resolution.path, this.bundledJar());
     /* ⭐ **只有一个避让值**（`gameEdge`）—— 自动适配算出来的也是写进它，见 `seedGameEdgeFromDevice`。
      *    ⇒ 滑条无论自动开着还是关着都**真的生效**。 */
-    const pref: GameDisplayPref = { edge: this.gameEdge, scale: this.gameScale, auto: this.gameAuto };
+    const pref: GameDisplayPref = { edge: this.gameEdge, scale: this.gameScale,
+                                   auto: this.gameAuto,
+                                   edgeSet: this.gameEdgeSet, scaleSet: this.gameScaleSet };
     /* ⭐ 缓存键里**带上 dataDir**：换版本 / 换粒度 / 换存储根都会指到另一个 settings.bin，
      *    而那一次必须重新尝试写入。 */
     const key: string = dataDir + '|' + String(pref.edge) + '|' + String(pref.scale);
@@ -1627,9 +1643,13 @@ export struct LauncherHome {
       if (gd.edge !== this.gameEdge) { this.gameEdge = gd.edge; }
       if (gd.scale !== this.gameScale) { this.gameScale = gd.scale; }
       if (gd.auto !== this.gameAuto) { this.gameAuto = gd.auto; }
-      /* ⭐ 自动开着时**补种一次**：覆盖「开关是在探测完成之前拨的」那种情况
-       *    （那时 `safeDetected` 还是 false、算不出来）。已经算过就不动，所以不会抹掉微调。 */
-      if (this.gameAuto) {
+      this.gameEdgeSet = gd.edgeSet;
+      this.gameScaleSet = gd.scaleSet;
+      /* ⭐ 自动开着**且玩家没自己设过避让**时，才按本机算一次。
+       * ⛔ `!this.gameEdgeSet` 那一半是承重的：**少了它，每跑一次 refresh 都会把避让重算一遍**
+       *    ⇒ 玩家拖滑条的微调**当场被抹掉**（而 refresh 在切页签、切版本时都会跑）。
+       * ⭐ 语义因此是「自动 = 你没自己调过的时候替你算」—— 调过就以你的为准。 */
+      if (this.gameAuto && !this.gameEdgeSet) {
         this.seedGameEdgeFromDevice();
       }
       this.applyGameDisplayNow();
@@ -5758,7 +5778,7 @@ export struct LauncherHome {
                 if (on) {
                   this.seedGameEdgeFromDevice();
                 }
-                this.saveGameDisplay();
+                this.saveGameDisplay('');      /* 只是拨开关 => 两项都不算「他设过」 */
               })
           }
           .width('100%')
@@ -5791,7 +5811,7 @@ export struct LauncherHome {
                   return;
                 }
                 this.gameEdge = nv;
-                this.saveGameDisplay();
+                this.saveGameDisplay('edge');
               })
 
             Text('UI缩放 (百分比)')
@@ -5814,7 +5834,7 @@ export struct LauncherHome {
                   return;
                 }
                 this.gameScale = nv;
-                this.saveGameDisplay();
+                this.saveGameDisplay('scale');
               })
           }
 

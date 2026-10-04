@@ -451,7 +451,10 @@ export function applyGameDisplay(dataDir: string, filesDir: string,
   }
 
   let changed: boolean = false;
-  const next: GameDisplayPref = { edge: pref.edge, scale: pref.scale, auto: pref.auto };
+  /* ⚠️ `next` 只是「记下我们往游戏里写了什么」的载体 ⇒ 两个 `*Set` 标志对它**无意义**
+   *    （它们答的是「玩家动过启动器的滑条没有」）。补 `false` 免得类型不过。 */
+  const next: GameDisplayPref = { edge: pref.edge, scale: pref.scale, auto: pref.auto,
+                                 edgeSet: false, scaleSet: false };
 
   /* 边距。 */
   {
