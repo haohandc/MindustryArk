@@ -226,6 +226,16 @@ const GAME_DISPLAY_FILE_NAME = 'game_display.txt';
 export const GAME_EDGE_FACTORY: number = 0;
 export const GAME_SCALE_FACTORY: number = 100;
 
+/* 启动器的**基准**界面缩放（百分数）。
+ *
+ * ⭐ 用户 2026-10-04：「在我的观感下，150% 是比较合理的初始数值。」
+ * ⛔ **它不是公式推出来的，也推不出来** —— 理由写在 `GameAutoFit.ets` 那段
+ *    （游戏已经用系统密度算过一次缩放了，我们再乘一次就是叠加；而实测本机那个密度项恰好 = 1，
+ *     说明「100% 太小」不是密度问题，是观感问题）。
+ * ⭐ 它是**实测值**：游戏默认的 100 在手机上偏小。
+ * ⚠️ 它还是**基准**：用户在系统里调过「字体大小」时按那个倍率放大（见 `systemGameScale`）。 */
+export const GAME_SCALE_BASE: number = 150;
+
 /* 量程照抄游戏自己的滑条（见上），⛔ 别自己放宽 —— 那会让启动器设出游戏 UI 都设不出的值。 */
 export const GAME_EDGE_MIN: number = 0;
 export const GAME_EDGE_MAX: number = 100;
@@ -261,16 +271,13 @@ export interface GameDisplayPref {
  *    把 `untouched` 判据也改成 200 的话，一份全新的游戏（`uiscale = 100`）会被判成
  *    「玩家改过」⇒ 永远不写 ⇒ 症状只是「这个功能忽然不生效」。
  *
- * `scale = 200`：用户 2026-10-04「我说的 UI 是指 UI 比例，默认是 100%，这个要根据我们的调一下。
- * 默认的实在太小了。」⇒ 100（游戏的默认）在手机上太小。
- * ⭐ **200 不是编的**：他自己那份 `settings.bin` 里就是 `uiscale = 200`（外置那份实测
- *    `edge=70 scale=200`）—— 那是他调出来的值。⚠️ 若他觉得该更大/更小，改这一个数即可。
+ * `scale`：见 `GAME_SCALE_BASE`（150，实测值；系统调过字体大小则按倍率放大）。
  *
  * `edge = GAME_EDGE_FACTORY`：**避让的默认仍是「不改变」** —— 它由「自动适配」按本机算
  *    （见 `GameAutoFit.autoEdgePadding`），而自动适配是**实验性、默认关闭**的。 */
 export const GAME_DISPLAY_DEFAULT: GameDisplayPref = {
   edge: GAME_EDGE_FACTORY,
-  scale: 100,
+  scale: GAME_SCALE_BASE,
   auto: false,
   edgeSet: false,
   scaleSet: false,

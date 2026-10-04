@@ -40,7 +40,7 @@ import { readLaunchMode, writeLaunchMode,
          GAME_EDGE_MIN, GAME_EDGE_MAX, GAME_SCALE_MIN, GAME_SCALE_MAX, GAME_SCALE_STEP,
          GAME_EDGE_FACTORY, GAME_SCALE_FACTORY } from '../settings/LauncherPrefs';
 /* ⭐ 实验性：由系统参数（挖孔 + 密度）算游戏该用的避让值。 */
-import { displayDensity, autoEdgePadding } from '../games/GameAutoFit';
+import { displayDensity, autoEdgePadding, systemGameScale } from '../games/GameAutoFit';
 /* ⭐ 写游戏自己的 settings.bin（异形屏避让 / UI 缩放）。格式与判据见那个文件。 */
 import { applyGameDisplay } from '../games/GameSettings';
 /* ⭐ 「设备语言 → 游戏认得的那个值」的翻译（值必须是游戏认的，见那个文件）。 */
@@ -852,6 +852,28 @@ export struct LauncherHome {
     }
   }
 
+  /* 系统设置里的**字体缩放**（`Configuration.fontSizeScale`，默认 1 = 没放大）。
+   *
+   * ⭐ 这是唯一一个「和界面缩放同类」的系统设置 —— 用户在系统里调大字体，就表示他偏好更大的字，
+   *    而那正是界面缩放要表达的事。⚠️ **别拿显示密度来推**：游戏已经用密度算过一次缩放了，
+   *    再乘一次就是叠加（理由与实测见 `GameAutoFit.ets` 文件头）。
+   * ⛔ 拿不到就返回 **1**（= 不放大），而不是 0 —— 0 会让缩放落到量程下限 25。 */
+  private systemFontScale(): number {
+    try {
+      const ctx = getContext(this) as common.UIAbilityContext;
+      /* ⚠️ `fontSizeScale` 在类型上是**可选**的（`number | undefined`）⇒ 必须判 `undefined`，
+       *    否则编译不过（`number | undefined` 不能当 `number` 用）。 */
+      const v: number | undefined = ctx.config.fontSizeScale;
+      if (v !== undefined && v > 0 && v <= 10 && Number.isFinite(v)) {
+        return v;
+      }
+      return 1;
+    } catch (e) {
+      /* 拿不到上下文或该字段（它是可选的）都是**正常情况**，不是错误 ⇒ 不记日志。 */
+      return 1;
+    }
+  }
+
   /* 按本机参数算一个避让值，并**直接采用它**（写进 `gameEdge`）。
    *
    * ⛔⛔ **为什么是「采用」而不是「并存两个值」**（2026-10-04 改的）：原来自动值与手动值分成
@@ -1641,7 +1663,10 @@ export struct LauncherHome {
     {
       const gd: GameDisplayPref = readGameDisplay(this.filesDir);
       if (gd.edge !== this.gameEdge) { this.gameEdge = gd.edge; }
-      if (gd.scale !== this.gameScale) { this.gameScale = gd.scale; }
+      /* ⭐ 缩放：玩家**设过**就用他的；**没设过** ⇒ 按系统字体缩放推出一个初始值。
+       * ⛔ 这里**不置** `gameScaleSet` —— 它必须保持 false，才会继续跟着系统走。 */
+      const wantScale: number = gd.scaleSet ? gd.scale : systemGameScale(this.systemFontScale());
+      if (wantScale !== this.gameScale) { this.gameScale = wantScale; }
       if (gd.auto !== this.gameAuto) { this.gameAuto = gd.auto; }
       this.gameEdgeSet = gd.edgeSet;
       this.gameScaleSet = gd.scaleSet;
