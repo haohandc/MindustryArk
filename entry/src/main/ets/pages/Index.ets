@@ -1020,9 +1020,22 @@ struct Index {
   onBackPress(): boolean {
     /* ⛔ 先问启动器界面：原来这里无条件把返回转成 ESC 发给游戏，而启动器界面（首页/存档/设置）
      * 底下根本没有游戏 ⇒ 那条 ESC 发进虚空，玩家看到「滑了没反应」。手势本身是好的（系统的手势
-     * 侧滑与返回键是同一个事件）；缺的是「谁在启动器界面里消费它」。 */
-    if (this.showLauncher && this.launcherBack()) {
-      hilog.info(DOMAIN, TAG, 'back: consumed by the launcher screen (one level up)');
+     * 侧滑与返回键是同一个事件）；缺的是「谁在启动器界面里消费它」。
+     *
+     * ⛔⛔ **但只要还在启动器界面上，就【绝不】往桥里写东西**（2026-10-05 修的，代码审查发现）。
+     *    原来这一句是 `if (this.showLauncher && this.launcherBack())`，而 `launcherBack()` 在
+     *    **根层**返回 false（`LauncherHome.handleBack()` 最外层就是 `return false`）
+     *    ⇒ 条件不成立 ⇒ **落到下面那条 `appendCmd('E\n')`** ⇒ 往「给游戏发命令」的桥文件里
+     *    写了一个 ESC。可此刻界面上**根本没有游戏**（没有 XComponent ⇒ 没有 native 消费者）
+     *    ⇒ 这条 `E\n` 就**留在文件里**，一直等到玩家点「启动游戏」：XComponent 一挂载，
+     *    native 从 offset 0 读起，把这**一次 ESC 当成按键喂给刚起来的游戏**（ESC 会开关游戏菜单）。
+     * ⭐ 触发链很普通：在启动器首页按一下返回（界面上没反应，这是设计），过一会儿点启动游戏。
+     * ⛔ 判据：**「谁在消费这条命令」比「命令该不该发」更根本** —— 没有消费者时写进去的命令
+     *    不会消失，只会**延后生效**，而延后生效在玩家眼里就是「游戏自己动了」。 */
+    if (this.showLauncher) {
+      const handled: boolean = this.launcherBack();
+      hilog.info(DOMAIN, TAG, 'back: the launcher screen had it, handled=%{public}s',
+                 String(handled));
       return true;
     }
     /* 'E' 就是整个 ESC 命令；原生侧按整行消费，所以那个换行是命令的一部分。 */
@@ -1301,7 +1314,7 @@ struct Index {
         /* 「仍然尝试启动」：绕开判定直接进游戏树。它是逃生门 —— 判定没有游戏有三个来源，其中两个
          * 是我们的问题。没有它，一次判断失误就把应用变成永远打不开游戏的启动器。 */
         onForceLaunch: () => { this.startGame(''); },
-        /* ⭐ 启动器把「返回一层」注册上来：垃圾站、手机子页和那几个弹窗都要靠它。 */
+        /* ⭐ 启动器把「返回一层」注册上来：回收站、手机子页和那几个弹窗都要靠它。 */
         registerBack: (fn: () => boolean): void => { this.launcherBack = fn; },
       })
     } else {

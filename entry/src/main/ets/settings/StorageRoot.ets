@@ -11,7 +11,7 @@
  *   | 用途                              | 跟？ | 为什么 |
  *   |-----------------------------------|------|--------|
  *   | 游戏数据（`Isolation` 的根）        | ✅ 跟 | 就是这件事本身 |
- *   | 存档垃圾站（`SaveVault`）           | ⛔ 不跟 | 它是**兜底恢复副本**：外置一旦不可用，连恢复副本也够不着就糟了 |
+ *   | 存档回收站（`SaveVault`）           | ⛔ 不跟 | 它是**兜底恢复副本**：外置一旦不可用，连恢复副本也够不着就糟了 |
  *   | `ExportDiagnostics`（`crash.txt`/`stderr.log`）| ⛔ 不跟 | **诊断通道**，hdc 要按固定路径读走 |
  *   | `SafeArea`（`safearea.txt`）        | ⛔ 不跟 | 同上，异形屏数据的唯一可读通道 |
  *
@@ -136,7 +136,7 @@ export function probeWithinExternal(filesDir: string): string {
  *    `copyTree` 上方那段 —— 同一个文件、同一个外部目标，ArkTS 报 EPERM 而 native 成功，
  *    而把 `copyFileSync` 放进探针里单独跑**又成功**。那个差异我没解释出来（三种假设全被
  *    自己的测量推翻）⇒ **走被证明可行的那条**（native），别在解释上继续烧时间。
- * ⚠️ 它**只**用于跨根迁移；沙箱内部的复制（隔离、垃圾站）继续用 `FsTree.copyTreeInto`
+ * ⚠️ 它**只**用于跨根迁移；沙箱内部的复制（隔离、回收站）继续用 `FsTree.copyTreeInto`
  *    —— 那条路实测没问题，⛔ 不要顺手也换成 native（换没收益、还多一次跨语言调用）。 */
 export function nativeCopyTree(src: string, dst: string): string {
   try {

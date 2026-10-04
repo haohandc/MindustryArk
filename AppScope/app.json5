@@ -1,7 +1,7 @@
 {
   "app": {
     "bundleName": "com.haohandc.mindustryark",
-    "vendor": "example",
+    "vendor": "haohandc",
     "versionCode": 1030301,
     // Digits and dots only, and that is a constraint rather than a preference:
     // AppGallery's admission check rejects anything else, and it is not

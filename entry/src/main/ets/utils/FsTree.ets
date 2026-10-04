@@ -1,4 +1,4 @@
-/* 目录树的复制与删除 —— 只有这一份实现（版本隔离与存档垃圾站共用）。
+/* 目录树的复制与删除 —— 只有这一份实现（版本隔离与存档回收站共用）。
  *
  * ⛔ 不用 `fs.copyDirSync`：2026-10-02 四用例二分（同一台平板）——
  *    `copyDirSync(空目录, 新路径)` 报 Invalid argument 13900020，而 `copyFileSync` 成功。
@@ -126,7 +126,7 @@ export function removeTree(path: string, depth: number, acc: TreeStat): void {
   /* ⛔ 先判是不是目录 —— 它在**普通文件**上也必须能直接删。
    * 原来是缺这一段的，而对文件调 `listFileSync` 只报 `Not a directory`：
    * 隔离那边一直拿目录调它，所以「它删不了文件」从没暴露过，
-   * 是垃圾站的端到端探针（合成数据）才抓到的。
+   * 是回收站的端到端探针（合成数据）才抓到的。
    * ⇒ 它自己处理两种情况，⛔ 不靠调用方「记得只能传目录」。 */
   if (!isDir(path)) {
     try {

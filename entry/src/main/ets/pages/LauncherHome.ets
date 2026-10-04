@@ -42,7 +42,7 @@ import { readLaunchMode, writeLaunchMode,
 /* ⭐ 实验性：由系统参数（挖孔 + 密度）算游戏该用的避让值。 */
 import { displayDensity, autoEdgePadding, systemGameScale } from '../games/GameAutoFit';
 /* ⭐ 写游戏自己的 settings.bin（异形屏避让 / UI 缩放）。格式与判据见那个文件。 */
-import { applyGameDisplay } from '../games/GameSettings';
+import { applyGameDisplay, readGameDisplayValues, GameDisplayValues } from '../games/GameSettings';
 /* ⭐ 「设备语言 → 游戏认得的那个值」的翻译（值必须是游戏认的，见那个文件）。 */
 /* 异形屏探测（挖孔 / 刘海）。⛔ 游戏画面不归它管，只用于启动器自己的界面。 */
 import { SafeInsets, detectInsets, uniformOf, edgesOf, dumpSafeArea } from '../utils/SafeArea';
@@ -54,8 +54,8 @@ import { enterFade, enterPop } from '../utils/Motion';
 /* 存档：一个存档 = 一个星球的一组 msav（或一个手动存档）。 */
 import { SaveEntry, listSaves, formatSaveSize, formatSaveDate,
          SaveMeta, readSaveMeta, newestFileOf } from '../games/SaveLibrary';
-/* 存档垃圾站：删除不是抹掉，是搬到游戏看不见的地方。 */
-import { VaultEntry, vaultDelete, listVault, vaultRestore, vaultPurge,
+/* 存档回收站：删除不是抹掉，是搬到游戏看不见的地方。 */
+import { VaultEntry, vaultDelete, vaultPermanentDelete, listVault, vaultRestore, vaultPurge,
          vaultSetArchived, purgeExpired, describeExpiry, formatMs,
          readVaultDays, writeVaultDays, VAULT_DAYS_CHOICES } from '../games/SaveVault';
 /* 复制 / 移动。⚠️ 同版本复制只对手动存档开放。 */
@@ -66,7 +66,7 @@ import { GRANULARITY_OFF, GRANULARITY_NUMBER, GRANULARITY_BUILD, GRANULARITY_PAT
          GameDataCounts, countsOf, describeCounts,
          resolveGameDataDir, resolveGameDirAndKey, GameDirForKey,
          listInstanceKeys, granularityKey, KEY_UNKNOWN,
-         setGameDataRoot, migrateGameData, dumpDataDirs,
+         setGameDataRoot, migrateGameData, MigrateOutcome, dumpDataDirs,
          hasUserMadeFiles, settingsLocaleIn,
          writeIsolationBridge } from '../settings/Isolation';
 
@@ -289,6 +289,28 @@ const NOTICE_MS: number = 4000;
 
 const CARD_RADIUS_VP = 14;
 
+/* ---- 「长按永久删除」那一个按钮的三个数 --------------------------------------
+ * ⭐ 用户 2026-10-05 定：`永久删除` **不用二次确认窗**，改成**长按**（按住不放才生效）。
+ *    理由是这个动作**不可撤销**，而「再弹一个窗点一下」只是多一道手续、手感上却和别的删除没区别；
+ *    长按则把「我确实要删、而且我愿意为它多花一秒钟」变成**手上真的做到的动作**。 */
+/** 要按住多久才算数（毫秒）。⚠️ 太短会误触 —— 这个动作没有第二次机会。 */
+const PERM_HOLD_MS: number = 900;
+/** 进度条多久走一格。⚠️ 太小=每帧都重渲染整个弹窗；太大=进度条一跳一跳看不出是连续的。 */
+const PERM_TICK_MS: number = 30;
+/** 按钮高度。⚠️ 进度条浮层与底色层**必须同高**，否则会露出一条缝。 */
+const PERM_BTN_H: number = 46;
+/** `回收 / 归档` 那一行的**总宽**（两个按钮平分它）。
+ * ⚠️ 用百分比而不写死的 vp：弹窗宽度本身是跟着屏幕算的，写死会在窄屏上溢出、宽屏上过小。
+ * ⛔ 也别改成「不写宽度、按标签自适应」—— 长按那个按钮里面那层进度是 `width('100%')`，
+ *    若外层宽度由标签撑出来，就成了「占一个由自己撑出来的宽度的 100%」，是个循环依赖。 */
+const ASK_BTN_W: string = '64%';
+/** `长按永久删除` 那一个按钮的宽度 —— ⛔⛔ **必须比 `ASK_BTN_W` 窄**（用户 2026-10-05 明确要的层次）：
+ *    越不可撤销的动作，占的地方越小、越得**刻意去够** ——
+ *    而「回收 / 归档」那两个都进回收站、都找得回来，理当更好按。
+ * ⚠️ 但也不能窄到装不下那六个字 —— 它曾经在 1/3 宽度下显示不全（用户实测过）。
+ * ⚠️ 两个数是**一对**，改一个要回头看另一个是否还满足「这个更窄」。 */
+const PERM_BTN_W: string = '50%';
+
 /* ⭐⭐ **弹窗里那些「独占一行的按钮」不写宽度** —— 让它按**标签自身**的宽度排，
  *    只加一条 `constraintSize({ maxWidth: '100%' })` 兜住「标签比弹窗还宽」的极端情况。
  *    ⛔ 别给它们写 `.width('72%')` 之类的百分比。
@@ -297,7 +319,7 @@ const CARD_RADIUS_VP = 14;
  *    它治好过一次病（2026-10-04：原本 25%，「取消」两字装不下、显示成 **「...」**），
  *    **但药方是错的** —— 这些按钮**每一个都独占一行**（不是并排挤在 `Row` 里），
  *    对独占一行的东西写百分比，等于同时制造两个毛病：
- *      · **长的被压**：`放进垃圾站（保留到 2026-10-09）` 约 232vp，塞进 72% × 280 = 202vp
+ *      · **长的被压**：`放进回收站（保留到 2026-10-09）` 约 232vp，塞进 72% × 280 = 202vp
  *        ⇒ 折成两行、按钮变高（用户 2026-10-04 说的「按钮比文字提示还大」就是它）
  *      · **短的被拉**：「取消」两个字占 95vp 宽，看着比它旁边的正文还重
  *    ⇒ 改成**按内容**。⭐ 关键是它把问题**从结构上消掉**了：不再是「宽度写得够不够」，
@@ -506,13 +528,13 @@ export struct LauncherHome {
    * ⛔ 返回 `false` 表示「我这里没东西可关了」，交给宿主页（在游戏里那会转成 ESC）。 */
   handleBack(): boolean {
     /* 确认框比多选态**更靠外**一层（它盖在多选列表上）⇒ 先关它。⛔ 反过来会把窗留在屏幕上、
-     * 而它下面那张列表已经没了 —— 那时按「放进垃圾站」删的是一批已不属于任何东西的键。 */
-    if (this.showMultiAsk) { this.showMultiAsk = false; return true; }
+     * 而它下面那张列表已经没了 —— 那时按「放进回收站」删的是一批已不属于任何东西的键。 */
+    if (this.showMultiAsk) { this.stopPermHold(); this.showMultiAsk = false; return true; }
     /* 多选态排其后：它是一个**模式**，而模式必须能一键退出。⛔ 排后面的话返回键会先关别的东西，
      * 而玩家看到的还是那张多选列表。 */
     if (this.multiMode) { this.exitMulti(); return true; }
-    if (this.showDeleteAsk) { this.showDeleteAsk = false; return true; }
-    /* 清空垃圾站的确认框。⚠️ 与上面那些同理 —— 一个能永久删东西的窗必须能被返回键关掉。 */
+    if (this.showDeleteAsk) { this.stopPermHold(); this.showDeleteAsk = false; return true; }
+    /* 清空回收站的确认框。⚠️ 与上面那些同理 —— 一个能永久删东西的窗必须能被返回键关掉。 */
     if (this.showVaultClearAsk) { this.showVaultClearAsk = false; return true; }
     /* 删除版本的确认窗。⚠️ 与上面同理：一个会真删东西的窗必须能被返回键关掉。 */
     if (this.showGameDeleteAsk) { this.showGameDeleteAsk = false; return true; }
@@ -556,17 +578,17 @@ export struct LauncherHome {
   /** 选中的那个版本的数据目录里有哪些存档。切版本时读一次。 */
   @State versionSaves: SaveEntry[] = [];
 
-  /* ============ 垃圾站 ============ */
+  /* ============ 回收站 ============ */
 
-  /** 垃圾站视图开着吗。⛔ 它不是第三种「视图」—— 它是**另一个地方**，进出靠一个返回。 */
+  /** 回收站视图开着吗。⛔ 它不是第三种「视图」—— 它是**另一个地方**，进出靠一个返回。 */
   @State showVault: boolean = false;
-  /* 「清空垃圾站」的二次确认框开着没有。
+  /* 「清空回收站」的二次确认框开着没有。
    * ⛔⛔ 这个动作**不可逆**（`vaultPurge` 是真删，不是搬去别处）⇒ 必须过确认，
    *     和单个存档的删除走同一条规矩（那边的理由见 `showDeleteAsk`）。 */
   @State showVaultClearAsk: boolean = false;
 
   /* 「删除这个版本」的确认窗开着没有。
-   * ⛔ 它与存档那个删除**不是一回事**：存档是搬进垃圾站（能找回），这里两个选项都是**真删**，
+   * ⛔ 它与存档那个删除**不是一回事**：存档是搬进回收站（能找回），这里两个选项都是**真删**，
    *     而「连数据一起删」还可能连带别的版本（见 `otherVersionsOnSelectedDir`）⇒ 必须过确认。 */
   @State showGameDeleteAsk: boolean = false;
   /* 「按『xxx』进行数据隔离」那个窗里，详情展开了没有。
@@ -589,14 +611,21 @@ export struct LauncherHome {
   /* 版本页上一次删除的结果 / 失败原因。
    * ⛔ 必须说出来：删除失败却让界面看着正常，是这个项目最不该有的那类缺陷。 */
   @State gamesNote: string = '';
-  /** 垃圾站里现在有什么。`refresh()` 里读一次，渲染只用它。 */
+  /** 回收站里现在有什么。`refresh()` 里读一次，渲染只用它。 */
   @State vaultEntries: VaultEntry[] = [];
   /** 保留期（天）。⭐ 全局设置。 */
   @State vaultDays: number = 7;
-  /** 垃圾站里上一次操作的结果（''=没有）。⛔ 只是一句话，不是门。 */
+  /** 回收站里上一次操作的结果（''=没有）。⛔ 只是一句话，不是门。 */
   @State vaultNote: string = '';
-  /** 「删除」的确认框开着吗 —— 玩家要在这里选**放垃圾站**还是**归档**。 */
+  /** 「删除」的确认框开着吗 —— 玩家要在这里选**永久删除**、**回收**还是**归档**。 */
   @State showDeleteAsk: boolean = false;
+  /* 「长按永久删除」按住到哪儿了（0..100）。⭐ 驱动那个按钮底下的进度条。
+   * ⛔ 它**只由计时器写**（`startPermHold`），⛔ 渲染里绝不改它。 */
+  @State permHold: number = 0;
+  /** 上面那个进度的计时器句柄。`-1` = 没在跑。
+   * ⛔⛔ **它必须在每一条关闭路径上停掉** —— 这是这个弹窗里唯一一个「不在渲染里、却会自己动」的东西，
+   *    漏停的后果是：玩家松手关掉窗之后，计时器继续走完，然后**删掉一个他已经不再看着的存档**。 */
+  private permTimer: number = -1;
   /** 上一次清掉几个到期条目。0 表示没有。 */
   @State vaultPurgedLast: number = 0;
 
@@ -650,8 +679,8 @@ export struct LauncherHome {
   /* **长按进入多选，一次删多个**（2026-10-02）。
    * ⚠️ 选中的键与单选**同一套**（`<目录>|<id>`）⇒ 两个视图、两张列表指的是同一样东西，
    * ⛔ 不需要第二套身份；而 `multiMode` **一个开关管两处**，进去后两张列表都按多选解释点击。
-   * ⭐ 删除走**同一条路**（搬进垃圾站，不是抹掉），保留方式用**全局那个保留期** ——
-   * 逐条问就把「一键」毁掉了；归档仍然可以事后在垃圾站里点。 */
+   * ⭐ 删除走**同一条路**（搬进回收站，不是抹掉），保留方式用**全局那个保留期** ——
+   * 逐条问就把「一键」毁掉了；归档仍然可以事后在回收站里点。 */
   @State multiMode: boolean = false;
   @State multiPicked: string[] = [];
   /* 多选删除的**确认框**（2026-10-02：「我最后点删除的时候没有提示框」）。
@@ -661,7 +690,7 @@ export struct LauncherHome {
   /** 确认框里那张名单展开了吗。⚠️ 默认收起 —— 一次选二十个会把窗撑爆。 */
   @State multiListOpen: boolean = false;
   /** 多选删除之后的一句话（成功/失败都写这儿）。⚠️ 与 `vaultNote` 分开：
-   * 那个渲染在**垃圾站**里，而这里是**存档页**。 */
+   * 那个渲染在**回收站**里，而这里是**存档页**。 */
   @State savesNote: string = '';
   @State copyTargets: CopyTarget[] = [];
   @State copyPicked: string[] = [];
@@ -936,7 +965,11 @@ export struct LauncherHome {
      *    （被 `safeDetected` 挡在计算之外，所以**没写进去**）。不复算的话，自动模式要等到
      *    下一次 `refresh()`（切页签之类）才会生效 —— 也就是「拨了开关没反应，过一会儿又好了」。 */
     this.safeDetected = true;
-    if (this.gameAuto) {
+    /* ⛔⛔ `!this.gameEdgeSet` 这一半是承重的，**必须与 `refresh()` 里那一份逐字一致**：
+     *    少了它，**每次启动**都会用当次算出来的自动值盖掉玩家在滑条上的微调。
+     * ⭐ 而那两个滑条**只在自动开着时才渲染**（`if (this.gameAuto)`）⇒「自动开着 + 微调过」
+     *    是**正常用法**，不是边角情况 —— 所以这个漏判不是「理论上的一行」。 */
+    if (this.gameAuto && !this.gameEdgeSet) {
       this.seedGameEdgeFromDevice();
     }
     this.applyGameDisplayNow();
@@ -1497,7 +1530,7 @@ export struct LauncherHome {
      *
      * ⚠️⚠️ **这里有一个已知的、用户接受的取舍**：不再有确认，而搬会**删掉旧位置那份**。
      *    可恢复性靠三样：① 复制**全部成功才删源**（中途失败源完好，重试即可）；
-     *    ② 搬反方向就是搬回来；③ 垃圾站留在沙箱、永远不跟着走。
+     *    ② 搬反方向就是搬回来；③ 回收站留在沙箱、永远不跟着走。
      *    ⛔ 别因为「太危险」就自己把确认窗加回来 —— 那是用户明确要去掉的东西。
      * ⭐ **失败**仍然要说（用户 2026-10-04：「除非失败了才弹提示」）—— 见下面 `storageNote`。 */
     this.storageNote = '';
@@ -1519,17 +1552,27 @@ export struct LauncherHome {
      *    worker，那是另一件事，别顺手做。 */
     this.storageBusy = true;
     setTimeout(() => {
-      const err: string = migrateGameData(from, to);
+      const out: MigrateOutcome = migrateGameData(from, to);
       this.storageBusy = false;
-      if (err !== '') {
+      /* ⛔⛔ **判「成没成」只看 `error`，⛔ 不看 `warning`。**
+       *    两者都非空是一种可能的误读，而代价是「存档全没了」：`warning` 的含义是
+       *    **已经搬好了、只是旧位置有残留**，那时源里的 `saves/` 可能已经删掉了
+       *    —— 这时候把开关弹回去 = native 下次启动仍指旧根 = 玩家看到空存档列表。
+       *    详见 `Isolation.ets` 的 `MigrateOutcome`。 */
+      if (out.error !== '') {
         /* ⛔ 没提交 ⇒ 控件必须弹回去（同探针不过那条）。 */
-        this.storageNote = err;
+        this.storageNote = out.error;
         this.syncStorageToggle();
         return;
       }
       writeStorageMode(this.filesDir, on ? STORAGE_MODE_EXTERNAL : STORAGE_MODE_SANDBOX);
-      /* ⭐ `refresh()` 会把控件同步到新的意图，并把状态文件重写一遍。 */
+      /* ⭐ `refresh()` 会把控件同步到新的意图，并把状态文件重写一遍。
+       * ⚠️ 顺序：先提交与刷新，**再把残留那句话说给玩家** —— `refresh()` 不碰 `storageNote`，
+       *    但排在它后面最不容易被将来的改动破坏。 */
       this.refresh();
+      if (out.warning !== '') {
+        this.storageNote = out.warning;
+      }
     }, 50);
   }
 
@@ -1670,6 +1713,33 @@ export struct LauncherHome {
       if (gd.auto !== this.gameAuto) { this.gameAuto = gd.auto; }
       this.gameEdgeSet = gd.edgeSet;
       this.gameScaleSet = gd.scaleSet;
+
+      /* ⭐⭐ **显示以游戏里【实际】的值为准**（用户 2026-10-05：「外部看到（启动器）内的数值
+       *    没有对应改变」）。原来这里只读了启动器自己那份偏好文件 ⇒ 玩家在游戏里改完，
+       *    启动器显示的仍是旧数，而**界面上看不出哪个才是游戏在用的**。
+       * ⚠️ 读不到（没有 settings.bin / 解析不了）⇒ `null` ⇒ **原值不动**。
+       *    ⛔ 别把「读不到」当成 0 —— 那会把玩家原有的值在界面上抹成出厂值。
+       * ⚠️ 代价：每次 `refresh()` 多读一次 game 的 settings.bin（切页签也会跑到）。
+       *    它是个小文件，而这个代价换来的是「两块屏幕说的是同一个数」。 */
+      const actual: GameDisplayValues | null = readGameDisplayValues(dataDir);
+      const applied: GameDisplayPref | null = readAppliedGameDisplay(this.filesDir);
+      if (actual !== null) {
+        if (actual.edge !== this.gameEdge) { this.gameEdge = actual.edge; }
+        if (actual.scale !== this.gameScale) { this.gameScale = actual.scale; }
+        /* ⭐ 判「这是玩家在游戏里自己设的」用的是与 `applyGameDisplay` **同一套三态判据**：
+         *   既不是出厂值、也不是我们上次写进去的那个 ⇒ 那就是他改的。
+         * ⛔ **必须置 `*Set`**：否则下面那句自动适配会把刚显示出来的那个值又算掉 ——
+         *   那就成了「界面明明显示着他的值，一转身被自动值盖了」。
+         * ⭐ 它是**每次 refresh 现推的**，所以不依赖 `edgeSet` 有没有被持久化过 —— 更不容易错。 */
+        if (actual.edge !== GAME_EDGE_FACTORY
+            && (applied === null || actual.edge !== applied.edge)) {
+          this.gameEdgeSet = true;
+        }
+        if (actual.scale !== GAME_SCALE_FACTORY
+            && (applied === null || actual.scale !== applied.scale)) {
+          this.gameScaleSet = true;
+        }
+      }
       /* ⭐ 自动开着**且玩家没自己设过避让**时，才按本机算一次。
        * ⛔ `!this.gameEdgeSet` 那一半是承重的：**少了它，每跑一次 refresh 都会把避让重算一遍**
        *    ⇒ 玩家拖滑条的微调**当场被抹掉**（而 refresh 在切页签、切版本时都会跑）。
@@ -1677,7 +1747,16 @@ export struct LauncherHome {
       if (this.gameAuto && !this.gameEdgeSet) {
         this.seedGameEdgeFromDevice();
       }
-      this.applyGameDisplayNow();
+      /* ⛔⛔ **挖孔探测还没回来时，自动模式下这一句不许跑。**
+       *    `refresh()` 是**同步**的、探测是**异步**的，所以 `refresh()` 常常跑在探测之前；
+       *    那一刻 `readGameDisplay()` 在「玩家没设过避让」时回退的是**出厂值 0**
+       *    ⇒ 写下去就是把游戏里的避让**擦成 0**（写 0 能过 `applyGameDisplay` 的判据：
+       *    它那时正好等于我们上次写的那份记录，于是被判成「这是我们的值」）。
+       * ⭐ 探测完成时 `initSafeArea()` 末尾会自己再调一次 `applyGameDisplayNow()`
+       *    ⇒ 跳过这一次**不会漏写**，只是往后挪几毫秒。 */
+      if (!(this.gameAuto && !this.gameEdgeSet && !this.safeDetected)) {
+        this.applyGameDisplayNow();
+      }
     }
 
     /* 「开关拨过去了、数据没过去」。判据是两条**都**成立：① 隔离开着；② **蓝图 / 自制地图
@@ -1730,7 +1809,7 @@ export struct LauncherHome {
       this.selectedVersion = cur === undefined ? '' : cur.path;
     }
     this.loadVersionSaves();
-    /* 垃圾站：**清掉到期的**，再读一遍名单。
+    /* 回收站：**清掉到期的**，再读一遍名单。
      * ⚠️ 放在 `refresh()` 里而非渲染里 —— 它要扫目录、还要真删文件，⛔ 每帧跑一次不可接受。 */
     this.reloadVault();
     this.vaultDays = readVaultDays(this.filesDir);
@@ -2036,7 +2115,7 @@ export struct LauncherHome {
    *   **删掉一个存档并不会改目录名** ⇒ 那一组被当成「保留」⇒ 删掉的那一行**留在屏幕上**，
    *   切一下页面（子树整体重建）才消失。
    * ⚠️ 2026-10-03 用户报的正是它：「按存档」下长按进多选、只勾一条，**删掉了但列表不刷新**。
-   * ⭐ 这是本项目**第二次**踩同一个坑 —— 第一次是垃圾站那张列表（见它 `ForEach` 上方那段注释）。
+   * ⭐ 这是本项目**第二次**踩同一个坑 —— 第一次是回收站那张列表（见它 `ForEach` 上方那段注释）。
    *
    * ⭐ 写法：**键 = 这一组渲染出来的那两行字 + 这一组每一行的 `saveRowKey()`**。
    * ⚠️⚠️ **这里必须是每一行的 `saveRowKey()`，不能只放 `s.id`** —— 这是我 2026-10-03 那一版
@@ -2292,15 +2371,15 @@ export struct LauncherHome {
   }
 
   /* ==================================================================
-   * 垃圾站
+   * 回收站
    * ================================================================== */
 
-  /* ⭐ 垃圾站**只碰自己那点数据**的重新读盘，单独一条路。
+  /* ⭐ 回收站**只碰自己那点数据**的重新读盘，单独一条路。
    * ⚠️ 为什么不靠 `refresh()`：那是**整页**重算（读每个 jar、扫三个目录），其中任何一步抛了，
-   * 后面那些 `@State` 就一个都不会被赋值 —— 而玩家看到的正是「点了没反应」⇒ 垃圾站的动作先走
+   * 后面那些 `@State` 就一个都不会被赋值 —— 而玩家看到的正是「点了没反应」⇒ 回收站的动作先走
    * 这条**短**路，界面立刻是对的，`refresh()` 再去做剩下的（「取消归档和放回点了 UI 不刷新」有一半
    * 是这个形状：磁盘上确实发生了，而界面没跟上）。 */
-  /** 垃圾站里**归档**的条数。清空之前要说出来 —— 那几条本来是不会自动消失的
+  /** 回收站里**归档**的条数。清空之前要说出来 —— 那几条本来是不会自动消失的
    * （归档的定义就是「不参与自动清理，只能手动删或放回」），所以「清空」对它们是一次明确的推翻。 */
   private vaultArchivedCount(): number {
     let n: number = 0;
@@ -2315,7 +2394,7 @@ export struct LauncherHome {
   /** 一键清空：逐个走 `vaultPurge`。
    *
    * ⛔ **不要**自己拼一个 `removeTree(VAULT_ROOT)` 一把删掉：那样绕过了这个模块自己的日志，
-   *    而且**失败时说不清是哪一个条目出的问题** —— 而「少了几个、不知道为什么」正是垃圾站最不该有的状态。
+   *    而且**失败时说不清是哪一个条目出的问题** —— 而「少了几个、不知道为什么」正是回收站最不该有的状态。
    * ⭐ 即便有失败也重新读一遍列表：成功的那些确实已经没了，界面必须跟上，
    *    否则玩家会看着一堆已经不存在的东西。失败的那几个则**具名**写在 `vaultNote` 里。 */
   private clearVaultAll(): void {
@@ -2334,7 +2413,7 @@ export struct LauncherHome {
     /* ⛔ **只在失败时写 `vaultNote`**，两重理由：
      * ① 那个字段在界面里是 `$r('sys.color.warning')` —— 它是**错误通道**（别的调用点写进去的都是错），
      *    把「已清空 N 个」放进去会用警示色报一件成功的事。
-     * ② 全部成功时**列表变空本身就是反馈**（那一屏会显示「垃圾站是空的」），
+     * ② 全部成功时**列表变空本身就是反馈**（那一屏会显示「回收站是空的」），
      *    再补一句话是冗余。而失败必须说，否则玩家只看到少了几个、不知道剩下的为什么还在。 */
     this.vaultNote = fails.length === 0
       ? ''
@@ -2382,8 +2461,8 @@ export struct LauncherHome {
     this.refresh();
   }
 
-  /* 玩家点了「删除」。⛔ **不直接删** —— 先弹一个确认框，让他在「放进垃圾站（到期清理）」与
-   * 「归档（不自动清理）」之间选一个：那两个就是垃圾站里条目的两种状态，所以这个确认框同时承担了
+  /* 玩家点了「删除」。⛔ **不直接删** —— 先弹一个确认框，让他在「放进回收站（到期清理）」与
+   * 「归档（不自动清理）」之间选一个：那两个就是回收站里条目的两种状态，所以这个确认框同时承担了
    * 「确认」与「选保留方式」，不需要第二个窗。⚠️ 要写出**具体保留到哪一天**（「7 天」太抽象）。 */
   /* 列出「这一档下的每一个分类」，以及谁落进它、它有没有数据。
    * ⚠️ 会读每个 jar（`gameVersionParts` 没有缓存）⇒ 只在**点开这个选择**时算一次，⛔ 不在渲染里算。 */
@@ -2488,6 +2567,9 @@ export struct LauncherHome {
   /* 退出多选。⚠️ 顺带把那两个只属于多选的开关也清掉 —— 不清的话下次进来会**直接弹着上一次的
    * 确认框**，而玩家根本没按删除。 */
   private exitMulti(): void {
+    /* ⛔ 退出多选 = 那个确认窗也关了 ⇒ **长按的计时器必须一起停**。
+     *    返回键退出多选态走的也是这里（`handleBack`），所以这一句同时管住了那条路。 */
+    this.stopPermHold();
     this.multiMode = false;
     this.multiPicked = [];
     this.showMultiAsk = false;
@@ -2525,15 +2607,30 @@ export struct LauncherHome {
     return this.pickedRows().length;
   }
 
-  /* 一次删掉所有勾上的。⚠️ 一个个走**同一条**搬进垃圾站的路，不是批量直接删 —— 批量删要额外的
-   * 回滚逻辑，而这条路已经带回了回滚（见 SaveVault.vaultDelete）。⚠️ 部分失败要**说出来**。 */
-  private deleteMultiToVault(): void {
+  /* 一次处理所有勾上的。`archived` 决定去向：
+   *   · `false` ⇒ **回收**（搬进回收站，到期自动清理）
+   *   · `true`  ⇒ **归档**（搬进回收站，且不自动清理）
+   * ⚠️ 一条条走**同一条**搬进回收站的路，⛔ 不是批量直接删 —— 批量删要额外的回滚逻辑，
+   *    而这条路已经带回了回滚（见 `SaveVault.vaultDelete`）。⚠️ 部分失败要**说出来**。
+   * ⭐ 为什么用一个参数而不是两个函数：与单删那条 `doVaultDelete(archived)` **形状一致**，
+   *    免得两条路的措辞与判据慢慢分叉。（`永久删除` 是另一条路，见 `deleteMultiPermanent`。） */
+  private deleteMultiToVault(archived: boolean): void {
+    this.stopPermHold();
     const rows: SaveRow[] = this.pickedRows();
     if (rows.length === 0) {
       /* 一个都没勾 ⇒ 什么都不做。⛔ 也不退出 —— 与 toggleMultiPick 同一条规则：退出只归「取消」管。 */
       return;
     }
     const now: number = Date.now();
+    /* ⭐ 归档那一条要认出**刚搬进去的**那几个。⛔ 不靠「新的在前、数前 N 个」——
+     *    那样在「有失败」时会把**原本就在回收站里**的条目误归档。用前后 id 集合求差即可，
+     *    与实际搬成功几个无关。 */
+    const before: Set<string> = new Set<string>();
+    if (archived) {
+      for (const e of listVault()) {
+        before.add(e.id);
+      }
+    }
     const fails: string[] = [];
     let done: number = 0;
     for (const r of rows) {
@@ -2545,9 +2642,26 @@ export struct LauncherHome {
         fails.push(r.entry.label + '：' + e);
       }
     }
+    if (archived) {
+      let archFail: number = 0;
+      for (const e of listVault()) {
+        if (before.has(e.id)) {
+          continue;
+        }
+        if (vaultSetArchived(e.id, true, this.vaultDays, now) !== '') {
+          archFail += 1;
+        }
+      }
+      if (archFail > 0) {
+        /* ⚠️ 搬成功了、归档没设上 ⇒ 必须说出来：它们现在是**普通回收站条目**，到期会被清掉 ——
+         *    而那正是玩家选「归档」想避免的事。 */
+        fails.push('有 ' + String(archFail) + ' 个归档没设上（它们到期仍会被清理）');
+      }
+    }
+    const what: string = archived ? '归档了' : '放进了回收站';
     this.savesNote = fails.length === 0
-      ? ('把 ' + String(done) + ' 个存档放进了垃圾站，可以在那儿找回。')
-      : ('放进了垃圾站 ' + String(done) + ' 个；有 ' + String(fails.length) + ' 个没成功：'
+      ? (what + ' ' + String(done) + ' 个，可以在回收站里找回。')
+      : (what + ' ' + String(done) + ' 个；有 ' + String(fails.length) + ' 个没成功：'
          + NL + fails.join(NL));
     /* 先关窗再退出 —— `exitMulti()` 自己也会清 `showMultiAsk`，这里显式写一次是为了让「删完窗
      * 一定没了」读得出来（顺序不依赖另一个函数）。 */
@@ -2564,8 +2678,9 @@ export struct LauncherHome {
     this.showDeleteAsk = true;
   }
 
-  /* 真删。`archived = true` ⇒ 归档（不自动清理）。⚠️ 走的是**搬进垃圾站**，不是抹掉。 */
+  /* 真删。`archived = true` ⇒ 归档（不自动清理）。⚠️ 走的是**搬进回收站**，不是抹掉。 */
   private doVaultDelete(archived: boolean): void {
+    this.stopPermHold();
     const sv: SaveEntry | undefined = this.selectedSaveEntry();
     this.showDeleteAsk = false;
     if (sv === undefined) {
@@ -2573,8 +2688,8 @@ export struct LauncherHome {
     }
     const dir: string = this.selectedSaveDir();
     const now: number = Date.now();
-    /* ⭐ 把**来源**一起记下来（垃圾站里区分不出原来是哪个版本的）。
-     * ⚠️ 在这里取值而不是在垃圾站里现算：删除之后那个 jar 可能就没了。 */
+    /* ⭐ 把**来源**一起记下来（回收站里区分不出原来是哪个版本的）。
+     * ⚠️ 在这里取值而不是在回收站里现算：删除之后那个 jar 可能就没了。 */
     const err: string = vaultDelete(sv, dir, this.vaultDays, now,
                                     this.ownerOfDir(dir), this.keyOfDir(dir));
     if (err !== '') {
@@ -2589,9 +2704,9 @@ export struct LauncherHome {
       if (fresh.length > 0) {
         const e2: string = vaultSetArchived(fresh[0].id, true, this.vaultDays, now);
         if (e2 !== '') {
-          /* ⚠️ 搬成功了、归档没设上 ⇒ 说出来：它现在是**普通垃圾站条目**，到期会被清掉 ——
+          /* ⚠️ 搬成功了、归档没设上 ⇒ 说出来：它现在是**普通回收站条目**，到期会被清掉 ——
            * 而那正是玩家选了归档想避免的事。 */
-          this.vaultNote = '已经搬进垃圾站了，但归档没设上（它到期仍会被清理）：' + e2;
+          this.vaultNote = '已经搬进回收站了，但归档没设上（它到期仍会被清理）：' + e2;
         }
       }
     }
@@ -2599,8 +2714,145 @@ export struct LauncherHome {
     this.refresh();
   }
 
+  /* 永久删除（**真的抹掉**，不进回收站）。⭐ 2026-10-05 用户新增的第三个去向。
+   * ⛔ 它**不可撤销** —— 界面把「永久删除 / 回收 / 归档」三个并列在同一行，就是为了让玩家能比较着选。
+   * ⚠️ 走 `vaultPermanentDelete`（直接删源），⛔ 与 `doVaultDelete` 那条「搬走」不是同一条路。
+   * ⚠️ 成功时**不说话** —— 那一行从列表里消失本身就是反馈（与 `doVaultDelete` 一致）；
+   *    只有失败才必须说，而且要说在**玩家正看着的这一屏**（`savesNote`，⛔ 不是回收站那屏的 `vaultNote`）。 */
+  private doPermanentDelete(): void {
+    this.stopPermHold();
+    const sv: SaveEntry | undefined = this.selectedSaveEntry();
+    this.showDeleteAsk = false;
+    if (sv === undefined) {
+      return;
+    }
+    const err: string = vaultPermanentDelete(sv, this.selectedSaveDir());
+    this.selectedSave = '';
+    if (err !== '') {
+      this.savesNote = err;
+    }
+    this.refresh();
+  }
+
+  /* 批量永久删除（**真的抹掉**）。⚠️ 逐个删、逐个报失败 —— 这条路上没有回滚可退。 */
+  private deleteMultiPermanent(): void {
+    this.stopPermHold();
+    const rows: SaveRow[] = this.pickedRows();
+    if (rows.length === 0) {
+      /* 一个都没勾 ⇒ 什么都不做。⛔ 也不退出 —— 与 `toggleMultiPick` 同一条规则。 */
+      return;
+    }
+    const fails: string[] = [];
+    let done: number = 0;
+    for (const r of rows) {
+      const e: string = vaultPermanentDelete(r.entry, r.dir);
+      if (e === '') {
+        done += 1;
+      } else {
+        fails.push(r.entry.label + '：' + e);
+      }
+    }
+    this.savesNote = fails.length === 0
+      ? ('已永久删除 ' + String(done) + ' 个存档。')
+      : ('永久删除了 ' + String(done) + ' 个；有 ' + String(fails.length) + ' 个没成功：'
+         + NL + fails.join(NL));
+    this.showMultiAsk = false;
+    this.exitMulti();
+    this.selectedSave = '';
+    this.refresh();
+  }
+
+  /* ---- 「长按永久删除」的计时器 -----------------------------------------------
+   * ⭐ 为什么不用 `LongPressGesture` 而是自己数：那个手势只给「按够了」这一次回调，
+   *    **没有中间过程** ⇒ 进度条无从画起。而进度条是这个设计里承重的一半 ——
+   *    它让「还要按多久」看得见，玩家才不会以为按钮坏了。
+   * ⛔ 也不要改用 `animateTo` 去动一个浮层宽度：这个值要**读出来**（到 100 才动手），
+   *    而动画的中间值读不到。 */
+
+  /** 停表 + 归零。⛔ **每一条关闭路径都要调它**（见 `permTimer` 那句注释）。 */
+  private stopPermHold(): void {
+    if (this.permTimer !== -1) {
+      clearInterval(this.permTimer);
+      this.permTimer = -1;
+    }
+    if (this.permHold !== 0) {
+      this.permHold = 0;
+    }
+  }
+
+  /** 按住不放：进度往上走，走到 100 才真的动手。⚠️ 松手由 `stopPermHold` 取消。 */
+  private startPermHold(): void {
+    this.stopPermHold();
+    const step: number = 100 / (PERM_HOLD_MS / PERM_TICK_MS);
+    this.permTimer = setInterval(() => {
+      /* ⛔⛔ **窗已经关了就必须停手。** 少了这一句，玩家按到一半松手/点了取消、
+       *    窗关掉之后计时器仍会走完，然后**删掉一个他早就不在看的存档** ——
+       *    而这个动作没有撤销。 */
+      if (!this.showDeleteAsk && !this.showMultiAsk) {
+        this.stopPermHold();
+        return;
+      }
+      this.permHold = Math.min(100, this.permHold + step);
+      if (this.permHold >= 100) {
+        this.stopPermHold();
+        /* 两个窗互斥，所以靠「哪个开着」决定去向 —— ⛔ 不给计时器穿一个参数，
+         *   那样会多出一份「参数与实际开着的窗不一致」的可能。 */
+        if (this.showMultiAsk) {
+          this.deleteMultiPermanent();
+        } else {
+          this.doPermanentDelete();
+        }
+      }
+    }, PERM_TICK_MS);
+  }
+
+  /* 「长按永久删除」那一个按钮 —— 单删与多选两个确认窗**共用这同一份**。
+   * ⛔ 别在两个窗里各写一遍：它的三个数（时长/节拍/高度）与那个红色的语义必须一字不差地一致，
+   *    两份实现迟早分叉。
+   * ⭐ 视觉：**红底**（`danger`，用户 2026-10-05 要求「底色改成红色警告用户」）
+   *    ＋ 一层**从左往右长出来的半透明白**当进度。⚠️ 用半透明白而不是「更亮的红」：
+   *    这样浅色与深色两套主题下都读得出来，⛔ 不必为 `danger` 再定义第二个色。 */
+  @Builder
+  PermanentDeleteButton() {
+    /* ⚠️ 红色底与圆角放在**外层这个 `Stack` 上**，进度是它里面的一层矩形，靠 `.clip(true)` 被裁成胶囊形。
+     * ⛔⛔ **进度那层自己【不带】圆角** —— 带过，代价是它在窄的时候会变成一个**小胶囊**
+     *    （用户 2026-10-05 原话：「像是一个按钮从压缩状态展开」），而不是「管子里的液体在涨」。
+     *    ⇒ 形状只由**容器**决定，里面那层只负责「铺到哪儿」。 */
+    Stack({ alignContent: Alignment.Start }) {
+      /* ① 进度（底层）。⚠️ 宽度直接用百分比 —— `permHold` 是 0..100 的数，正好当百分比用。 */
+      Row()
+        .width(String(this.permHold) + '%').height(PERM_BTN_H)
+        .backgroundColor('#66FFFFFF')
+      /* ② 文字（顶层）。⭐ 它必须画在进度**之上**，否则按下时字会被那层白盖住 —— 越按越看不见在删什么。 */
+      Text('长按永久删除')
+        .fontSize(15).fontColor(Color.White)
+        .width('100%').height(PERM_BTN_H)
+        .textAlign(TextAlign.Center)
+    }
+    .width(PERM_BTN_W)
+    .height(PERM_BTN_H)
+    /* ⚠️ 居中：卡片是 `alignItems(HorizontalAlign.Start)`，不写这一句它会贴在左边、右边空一截。 */
+    .alignSelf(ItemAlign.Center)
+    /* ⚠️ 上面那根 `Divider` 的 `margin({top:14})` 是它**自己上方**的间距，⛔ 不管它下面 ——
+     *    少了这一句按钮就**贴着分割条**（用户 2026-10-05 指出过）。 */
+    .margin({ top: 16 })
+    .backgroundColor($r('app.color.danger'))
+    .borderRadius(PERM_BTN_H / 2)
+    /* ⛔ 裁到容器自己的形状（含圆角）—— 这一句就是「进度看着是在按钮【里面】涨」的全部原因。 */
+    .clip(true)
+    /* ⛔ 用 `onTouch` 而不是 `onClick`：这个按钮**没有「点一下」这个动作**，
+     *    `onClick` 会带来一条「点一下也删了」的路径 —— 那正是长按要防的事。 */
+    .onTouch((e: TouchEvent) => {
+      if (e.type === TouchType.Down) {
+        this.startPermHold();
+      } else if (e.type === TouchType.Up || e.type === TouchType.Cancel) {
+        this.stopPermHold();
+      }
+    })
+  }
+
   /* ⭐ 一个**存档目录**属于哪些版本 —— 直接复用「按存档」那一屏的分组结论。
-   * ⭐ 用 `groupTitle` 而不是自己拼：两处必须**说同一件事** —— 垃圾站里写「内置游戏」、
+   * ⭐ 用 `groupTitle` 而不是自己拼：两处必须**说同一件事** —— 回收站里写「内置游戏」、
    * 存档页写「内置游戏（v8 Build 160.5）」，玩家会以为是两个东西。 */
   private ownerOfDir(dir: string): string {
     const g: SaveGroup | undefined = this.saveGroups.find((x: SaveGroup) => x.dir === dir);
@@ -2613,7 +2865,7 @@ export struct LauncherHome {
     return g === undefined || g.versions.length === 0 ? '' : g.versions[0].key;
   }
 
-  /* 垃圾站一行里「原来属于谁」。⛔ 三级回退，**顺序是用户定的**（2026-10-02）：
+  /* 回收站一行里「原来属于谁」。⛔ 三级回退，**顺序是用户定的**（2026-10-02）：
    * 版本 → 文件夹路径 → 不知道是谁的。
    * ① 版本（`内置游戏（v8 Build 160.5）`）就是他选的那一项；② 目录 —— 老条目、以及
    * 「留了很久没人读的孤立档」（`b160.5` 这种）只有这个，而它恰好**指得准**：那个键就是他当时那一档的名字；
@@ -2634,7 +2886,7 @@ export struct LauncherHome {
   private doVaultRestore(e: VaultEntry): void {
     /* 第二个参数只是**兜底**（原来那个目录没了时用它）—— 用当前版本的目录合适。 */
     this.vaultNote = vaultRestore(e, this.savesDirShown);
-    /* ⚠️ 先短后长：垃圾站自己的名单立刻更新，`refresh()` 再去更新存档列表。 */
+    /* ⚠️ 先短后长：回收站自己的名单立刻更新，`refresh()` 再去更新存档列表。 */
     this.reloadVault();
     this.refresh();
   }
@@ -2663,11 +2915,6 @@ export struct LauncherHome {
   /** 「保留到 YYYY-MM-DD HH:MM」。⚠️ 现在只在按钮上用到「日期」那一半。 */
   private deleteExpiryText(): string {
     return formatMs(Date.now() + this.vaultDays * 24 * 60 * 60 * 1000);
-  }
-
-  /* 只要日期那一段（`YYYY-MM-DD`）。⚠️ 按钮标签上写时分是噪音 —— 保留期是 3/7/30 天那个尺度。 */
-  private deleteExpiryDate(): string {
-    return this.deleteExpiryText().substring(0, 10);
   }
 
   /** 保留期那一档的按钮文案。 */
@@ -3513,7 +3760,7 @@ export struct LauncherHome {
    * 成立：选中项自带目录（见 `selectedSave`），所以「操作的是哪一份数据」有唯一答案 —— ⛔ 在它只存
    * `id` 的那些日子里，两边各放一份会让它们对「操作谁」的理解分叉。 */
   /* 多选态的那一条。⭐ 零参 `@Builder`：两张列表共用同一份。
-   * ⚠️ 两句话必须都在：「已选几项」是状态，「删除 = 放进垃圾站」是**后果** —— 少了后者玩家会以为
+   * ⚠️ 两句话必须都在：「已选几项」是状态，「删除 = 放进回收站」是**后果** —— 少了后者玩家会以为
    * 「删除」是抹掉，于是不敢按。 */
   @Builder
   MultiBar() {
@@ -3523,7 +3770,7 @@ export struct LauncherHome {
      * ⚠️ 两个分支共用同一个 `MultiBarButtons()` —— ⛔ 别把四个按钮抄两遍。 */
     if (this.isNarrow()) {
       Column() {
-        Text('已选 ' + String(this.multiPickCount()) + ' 项 · 删除只是放进垃圾站，可以找回')
+        Text('已选 ' + String(this.multiPickCount()) + ' 项 · 删除只是放进回收站，可以找回')
           .fontSize(12).fontColor($r('sys.color.font_secondary'))
           .width('100%')
           /* 独占一行了，所以放宽到 2 行 —— 还按 1 行截断就白拆这一行了。 */
@@ -3543,7 +3790,7 @@ export struct LauncherHome {
       .alignItems(HorizontalAlign.Start)
     } else {
       Row() {
-        Text('已选 ' + String(this.multiPickCount()) + ' 项 · 删除只是放进垃圾站，可以找回')
+        Text('已选 ' + String(this.multiPickCount()) + ' 项 · 删除只是放进回收站，可以找回')
           .fontSize(12).fontColor($r('sys.color.font_secondary'))
           .layoutWeight(1)
           .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -3781,9 +4028,9 @@ export struct LauncherHome {
    * 换内容，出口是左上角的返回箭头。
    * ⚠️ 两栏按 **3 : 7** 分（`layoutWeight`）：左边只是存档名与一行摘要，右边要放下整张元数据表；
    * 用 layoutWeight 而非写死 vp 是为了在任何窗口宽度下都自成比例（手机走子页，这条不参与）。 */
-  /* 垃圾站。⭐ 它**不是第三种「视图」**（那种要挤进「按存档 / 按版本」那一排），而是**另一个地方** ——
+  /* 回收站。⭐ 它**不是第三种「视图」**（那种要挤进「按存档 / 按版本」那一排），而是**另一个地方** ——
    * 进出靠一个返回，与手机的详情子页同一套做法。理由：分段控件那两档回答「我怎么看这批存档」，
-   * 垃圾站回答「我删掉的东西去哪了」，不是同一个问题。
+   * 回收站回答「我删掉的东西去哪了」，不是同一个问题。
    * ⚠️ 每一行自带三个动作（放回 / 归档 / 彻底删），**没有右侧详情栏**。 */
   /* 复制 / 移动的目标选择。⭐ 硬要求（2026-10-02）：「需要在移动前告诉用户移动后的效果是什么」
    * ⇒ 每一行都是**「动作 + 后果」**的形状，而不是一排光秃秃的版本名。
@@ -3957,7 +4204,7 @@ export struct LauncherHome {
           .fontSize(26).fontColor([$r('sys.color.brand')])
           .padding({ left: 10, right: 14, top: 10, bottom: 10 })
           .onClick(() => { this.closeVault(); })
-        Text('垃圾站')
+        Text('回收站')
           .fontSize(18).fontColor($r('sys.color.font_primary'))
           .layoutWeight(1)
         Text(this.vaultEntries.length === 0 ? '空' : (String(this.vaultEntries.length) + ' 项'))
@@ -3977,7 +4224,7 @@ export struct LauncherHome {
       .alignItems(VerticalAlign.Center)
 
       /* 保留期。⭐ 2026-10-02 定的是**全局**（「一次性设成全局」）—— 每次删都问一遍会把同一个问题的
-       * 答案反复要一遍。⚠️ 放在这一屏而不是设置页：玩家是在**看垃圾站**的时候才会想「留多久」，
+       * 答案反复要一遍。⚠️ 放在这一屏而不是设置页：玩家是在**看回收站**的时候才会想「留多久」，
        * 一旦离开这一屏那个念头就没了。 */
       Row() {
         Text('保留')
@@ -4016,7 +4263,7 @@ export struct LauncherHome {
         Row() {
           Column() {
             if (this.vaultEntries.length === 0) {
-              Text('垃圾站是空的')
+              Text('回收站是空的')
                 .fontSize(15).fontColor($r('sys.color.font_secondary'))
                 .margin({ top: 20 })
               Text('删掉的存档会先放到这里，到期才真正清理')
@@ -4105,7 +4352,7 @@ export struct LauncherHome {
   }
 
   /* 删除的确认框。⭐ **它同时承担两件事**：「确认删除」与「选保留方式」（那两个选项就是
-   * 垃圾站里条目的两种状态：到期清理 / 归档不清理）⇒ 不需要第二个窗。
+   * 回收站里条目的两种状态：到期清理 / 归档不清理）⇒ 不需要第二个窗。
    * ⚠️ 结构照抄「打开数据隔离」那个窗（同屏遮罩 + 卡片 + 点卡片不冒泡 + **点空白不关**）——
    * 手滑点空白就消失的确认框比没有更糟。⛔ 别照「关于 / 查看数据」那两个窗加「点外面也关」，它们只读。 */
   /* ⭐⭐ 多选删除的确认框（2026-10-02）。形状是他指定的：「标题显示多个，超长改成 ...，**用户可以点击**，
@@ -4151,7 +4398,7 @@ export struct LauncherHome {
                     .fontSize(13).fontColor($r('sys.color.font_primary'))
                     .width('100%')
                     .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-                  /* 来源 —— 与垃圾站那行用**同一个** `ownerOfDir`，两处说法不会分叉。 */
+                  /* 来源 —— 与回收站那行用**同一个** `ownerOfDir`，两处说法不会分叉。 */
                   Text('原来属于 ' + this.ownerOfDir(r.dir))
                     .fontSize(11).fontColor($r('sys.color.font_tertiary'))
                     .width('100%').margin({ top: 2 })
@@ -4174,19 +4421,42 @@ export struct LauncherHome {
 
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
 
-        /* 与单删那个窗**同一套措辞**（`放进垃圾站（保留到 X）`）—— 否则玩家会以为是两种不同的去向。 */
-        Button('放进垃圾站（保留到 ' + this.deleteExpiryDate() + '）')
-          .fontSize(15)
-          .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
-          .margin({ top: 16 })
-          .onClick(() => { this.deleteMultiToVault(); })
+        /* ⭐ 与单删那个窗**逐字同一套排布与措辞**（永久删除独占一行 + 回收/归档并排 + 一行到期小字）——
+         *   否则玩家会以为是两种不同的去向。⛔ 两处改一处就会分叉，改的时候一起改。
+         *   ⚠️ 那个按钮本体也是**共用同一个 `@Builder`**，不是各写一份。 */
+        this.PermanentDeleteButton()
+
+        /* ⚠️ 两个按钮**必须真的等宽**。⚠️ 空隙用 `Row({ space: 8 })`，⛔ **不要**改成
+         *    「给第二个按钮加 `margin.left`」—— 边距挂在其中一个孩子身上时，两个 `layoutWeight(1)`
+         *    分到的宽度就**不再必然相等**（取决于框架把那段 margin 算进哪一边）。
+         *    ⭐ 那正是用户 2026-10-05 看到「回收好像比归档宽一点」的来源 —— **不是视错觉，是源码里真有的不对称**。
+         *    现在两个按钮结构上一模一样，只有 handler 不同。⛔ 别再改回去。 */
+        Row({ space: 8 }) {
+          Button('回收')
+            .fontSize(15)
+            .layoutWeight(1)
+            .constraintSize({ maxWidth: '100%' })
+            .onClick(() => { this.deleteMultiToVault(false); })
+          Button('归档')
+            .fontSize(15)
+            .layoutWeight(1)
+            .constraintSize({ maxWidth: '100%' })
+            .onClick(() => { this.deleteMultiToVault(true); })
+        }
+        .width(ASK_BTN_W)
+        .alignSelf(ItemAlign.Center)
+        .margin({ top: 10 })
+
+        Text('回收：将在 ' + this.deleteExpiryText() + ' 后删除')
+          .fontSize(11).fontColor($r('sys.color.font_tertiary'))
+          .width('100%').margin({ top: 8 })
 
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
         Button('取消')
           .fontSize(14)
           .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
           .margin({ top: 12 })
-          .onClick(() => { this.showMultiAsk = false; })
+          .onClick(() => { this.stopPermHold(); this.showMultiAsk = false; })
       }
       .width('100%')
       .constraintSize({ maxWidth: this.dialogWidthVp() })
@@ -4210,23 +4480,23 @@ export struct LauncherHome {
     .transition(enterFade())
   }
 
-  /** 清空垃圾站的二次确认。
+  /** 清空回收站的二次确认。
    *
    * ⭐ 与 `DeleteAskDialog` 的写法**不同**，而且这里是有意的：那个窗把区别写在**按钮标签**上就够
-   * （「放进垃圾站」vs「归档」是两种去向）；而这里**没有第二种去向可选** ——
+   * （「放进回收站」vs「归档」是两种去向）；而这里**没有第二种去向可选** ——
    * 玩家唯一需要知道的是**它不可撤销**，那只能写成一句话。
-   * ⚠️ 那句话不能省：「删到垃圾站」这一整套设计一直在告诉玩家「删了还能找回」，
+   * ⚠️ 那句话不能省：「删到回收站」这一整套设计一直在告诉玩家「删了还能找回」，
    * 所以「这一次找不回」必须由界面主动说，⛔ 不能指望他自己推断出来。 */
   @Builder
   VaultClearAskDialog() {
     Column() {
       Column() {
-        Text('清空垃圾站？')
+        Text('清空回收站？')
           .fontSize(17).fontColor($r('sys.color.font_primary'))
           .width('100%').textAlign(TextAlign.Center)
 
         Text('这 ' + String(this.vaultEntries.length) + ' 个存档会被永久删除，不能撤销。'
-             + '\n垃圾站之外没有第二份。')
+             + '\n回收站之外没有第二份。')
           .fontSize(13).fontColor($r('sys.color.font_secondary'))
           .width('100%').margin({ top: 12 })
 
@@ -4400,31 +4670,50 @@ export struct LauncherHome {
           .fontSize(17).fontColor($r('sys.color.font_primary'))
           .width('100%').textAlign(TextAlign.Center)
 
-        /* ⛔ **这个框里【没有任何说明文字】**（2026-10-02：「下面按钮都说了放到垃圾站，
-         * 那上面的文字说明根本没用」）。理由不只是「嫌啰嗦」：原来把**区别**放在**按钮上面的文字**
-         * 里，而按钮本身只说「放进垃圾站」「归档」⇒ 玩家要**先读上面、再看下面**才知道自己在选什么。
-         * ⇒ 把区别**直接写进按钮标签**，一处说清。
-         * ⚠️ 日期仍保留（它有信息量、且只有这里有），但压到「保留到 2026-10-09」—— 时分对 3/7/30 天是噪音。 */
+        /* ⛔ 说明文字**只在按钮下面那一行小字里**（用户 2026-10-05 定的位置与措辞）。
+         *    ⛔ 不在按钮**上面**写一段解释（2026-10-02 的判据：区别写进按钮标签，
+         *    玩家不用「先读上面、再看下面」才知道自己在选什么）—— 这条仍然成立。
+         * ⭐ 三个去向**并排在同一行**：它们要能被**比较着**选 ——
+         *    `永久删除`（不可撤销）／`回收`（进回收站，到期自动清理）／`归档`（进回收站，不自动清理）。
+         * ⛔ **别把「永久删除」藏进二级菜单**：它是三个里唯一找不回来的，必须与另两个同时可见。 */
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
 
-        Button('放进垃圾站（保留到 ' + this.deleteExpiryDate() + '）')
-          .fontSize(15)
-          .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
-          .margin({ top: 16 })
-          .onClick(() => { this.doVaultDelete(false); })
+        /* ① 永久删除 —— **独占一行**。⛔ 不能与另两个挤在同一行：三个平分的宽度装不下
+         *    「长按永久删除」五个字（用户 2026-10-05 实测文字显示不全），而它是**最不能认错**的那个。 */
+        this.PermanentDeleteButton()
 
-        Button('归档（不自动清理）')
-          .fontSize(15)
-          .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
-          .margin({ top: 10 })
-          .onClick(() => { this.doVaultDelete(true); })
+        /* ② 回收 / 归档 —— 这两个都进了回收站、都找得回来，所以并列一行。
+         * ⚠️ 整行取 `ASK_BTN_W` 并居中 ⇒ 与上面那个按钮**同宽同轴**（三个按钮成一组）。 */
+        /* ⚠️ 同多选那个窗：**两个按钮必须真的等宽** —— 空隙走 `Row({ space })`，
+         *    ⛔ 不给其中一个挂 `margin.left`（理由与踩坑经过见多选窗那一份注释，两处必须一致）。 */
+        Row({ space: 8 }) {
+          Button('回收')
+            .fontSize(15)
+            .layoutWeight(1)
+            .constraintSize({ maxWidth: '100%' })
+            .onClick(() => { this.doVaultDelete(false); })
+          Button('归档')
+            .fontSize(15)
+            .layoutWeight(1)
+            .constraintSize({ maxWidth: '100%' })
+            .onClick(() => { this.doVaultDelete(true); })
+        }
+        .width(ASK_BTN_W)
+        .alignSelf(ItemAlign.Center)
+        .margin({ top: 10 })
+
+        /* ⭐ 「回收」到底是什么意思 —— 一行小字，位置与措辞都是用户 2026-10-05 指定的。
+         * ⚠️ 时分**是他点名要的**（原来按钮标签上只有日期）—— 所以这里用 `deleteExpiryText()`，⛔ 不是 `deleteExpiryDate()`。 */
+        Text('回收：将在 ' + this.deleteExpiryText() + ' 后删除')
+          .fontSize(11).fontColor($r('sys.color.font_tertiary'))
+          .width('100%').margin({ top: 8 })
 
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
         Button('取消')
           .fontSize(14)
           .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
           .margin({ top: 12 })
-          .onClick(() => { this.showDeleteAsk = false; })
+          .onClick(() => { this.stopPermHold(); this.showDeleteAsk = false; })
       }
       .width('100%')
       .constraintSize({ maxWidth: this.dialogWidthVp() })
@@ -4576,7 +4865,7 @@ export struct LauncherHome {
 
   /** 把若干**已校验**的数据根落到一个目标。
    * ⭐ 语义（用户 2026-10-03 定）：**每次导入都问目标**，而「覆盖 / 新建」由**目标有没有数据**决定：
-   *    有 ⇒ 先整包备到垃圾站再覆盖（不可逆的事必须先留退路）；没有 ⇒ 直接写。 */
+   *    有 ⇒ 先整包备到回收站再覆盖（不可逆的事必须先留退路）；没有 ⇒ 直接写。 */
   private async importIntoOne(t: VersionEntry, index: number,
                               out: ImportOutcome): Promise<void> {
     const label: string = t.version === '' ? t.label : ('v' + t.version);
@@ -5002,7 +5291,7 @@ export struct LauncherHome {
 
   SavesTab() {
     Column() {
-      /* ⭐ 垃圾站是**另一个地方**，所以在最外层就分开了 —— 进去之后看不到分段控件、也看不到
+      /* ⭐ 回收站是**另一个地方**，所以在最外层就分开了 —— 进去之后看不到分段控件、也看不到
        * 存档列表，只有一个返回。⚠️ 与「手机详情子页」同一个形状（那个也在最外层分）：
        * 它们是「去了别处」，不是「换了个视图」。 */
       if (this.showVault) {
@@ -5010,7 +5299,7 @@ export struct LauncherHome {
       } else if (this.isNarrow() && this.panelOpen) {
         /* ===================== 窄屏：子页 ===================== */
         Row() {
-          /* 与垃圾站那个返回同尺寸、同热区 —— 两处是同一个动作，别长得不一样。 */
+          /* 与回收站那个返回同尺寸、同热区 —— 两处是同一个动作，别长得不一样。 */
           SymbolGlyph($r('sys.symbol.chevron_left'))
             .fontSize(26).fontColor([$r('sys.color.brand')])
             .padding({ left: 10, right: 14, top: 10, bottom: 10 })
@@ -5072,10 +5361,10 @@ export struct LauncherHome {
                 this.savesView = SAVES_VIEW_VERSION;
                 this.panelOpen = false;
               })
-            /* ⭐ 垃圾站入口。⚠️ 用一个 `Blank()` 把它推到**最右**，而不是给它 `layoutWeight` ——
+            /* ⭐ 回收站入口。⚠️ 用一个 `Blank()` 把它推到**最右**，而不是给它 `layoutWeight` ——
              * 那会让它按剩余宽度撑开，点到的区域比看起来大得多。
-             * ⚠️ 空的时候也显示（写「垃圾站」而不写「(0)」）—— 一个数字 0 只会让人以为坏了；
-             * 而**空垃圾站本身有说明作用**（删掉的东西会去哪）。 */
+             * ⚠️ 空的时候也显示（写「回收站」而不写「(0)」）—— 一个数字 0 只会让人以为坏了；
+             * 而**空回收站本身有说明作用**（删掉的东西会去哪）。 */
             Blank()
             /* ⭐ 导出。**只在「按版本」视图、且选中了某个版本时出现** ——
              * 导出必须有明确的对象；放在这里而不是列表行里，是为了不和「点行=选中」抢手势
@@ -5096,8 +5385,8 @@ export struct LauncherHome {
               .padding({ left: 12, right: 12, top: 7, bottom: 7 })
               .onClick(() => { this.startImport(); })
             Text(this.vaultEntries.length === 0
-                 ? '垃圾站'
-                 : ('垃圾站 ' + String(this.vaultEntries.length)))
+                 ? '回收站'
+                 : ('回收站 ' + String(this.vaultEntries.length)))
               .fontSize(13).fontColor($r('sys.color.brand'))
               .padding({ left: 12, right: 4, top: 7, bottom: 7 })
               .onClick(() => { this.openVault(); })
@@ -5785,10 +6074,19 @@ export struct LauncherHome {
            * 算法与依据全在 `GameAutoFit.ets` 的文件头 —— 那里也记着**它算出来的值（84）
            * 比你在真机上实测最好的值（100）小**，而那是**有意的**：它给的是「刚好让开挖孔」的下限。
            *
-           * ⛔⛔ **这一张卡上【只有两处文字】：`异形屏避让（单位：px）` 与底下的
-           *    `只覆盖默认设置`。** 用户 2026-10-04 明确要求删掉我加的全部说明行，并立了一条规矩：
-           *    **默认不加提示，他同意了才加。** ⇒ 别在这里写「关闭时用滑条自己定」之类的小字；
-           *    也⛔ 不要在标题里带上当前数值（那也是一种提示，是他要删的那一类）。 */
+           * ⛔⛔ **这一张卡上的文字是【逐条经过用户同意】的，共三处**：
+           *    ① 两个滑条的名字（游戏自己的原话）
+           *    ② 底下的 `只覆盖默认设置`
+           *    ③ 开关下面那行说明 —— 用户 2026-10-05 点名要的，**原文照抄**（`【】` 也是他指定的）
+           * 用户 2026-10-04 立过一条规矩：**默认不加提示，他同意了才加。** ⇒
+           *    ⛔ 别在这里写「关闭时用滑条自己定」之类的小字；
+           *    ⛔ 也**不要在标题里带上当前数值**（那也是一种提示，是他要删的那一类）。
+           * ⚠️ 第 ③ 处的**理由**要留着，免得下一个人把它当成"多余的提示"删掉：
+           *    避让的算式 `ceil(挖孔px / scl) + 余量` 里 **`scl` 含了 `uiscale/100`**
+           *    ⇒ **改缩放会改避让**；而自动值**只在拨开关那一刻算一次**
+           *    （`seedGameEdgeFromDevice` 那段注释：不重算是有意的，否则会抹掉微调）
+           *    ⇒ 改了缩放又不重拨一次，内边距就停在上一次算的值上。
+           *    用户实测到过（「跳到 125%，自动算出来是 90 多」）—— 所以这条不是理论。 */
           Row() {
             Text('自动适配（实验性）')
               .fontSize(14).fontColor($r('sys.color.font_primary'))
@@ -5807,6 +6105,12 @@ export struct LauncherHome {
               })
           }
           .width('100%')
+
+          /* ⭐ 用户 2026-10-05 点名要的说明 —— **措辞是他给的，一个字没改**（`【】` 也是他指定的记号）。
+           * ⛔ 别顺手润色，也别把 `【】` 换成引号。 */
+          Text('调整缩放比例后重新打开【自动适配】，UI 内边距会被重新更改')
+            .fontSize(11).fontColor($r('sys.color.font_tertiary'))
+            .width('100%').margin({ top: 8 })
 
           /* ⛔ 用户 2026-10-04：**自动适配关着时这两个滑条不显示** —— 原话「游戏内能调的
            *    不给别人看；开了适配再把两个滑条放出来」。理由很正：游戏自己的设置里就有这两项，
@@ -5843,11 +6147,22 @@ export struct LauncherHome {
               .margin({ top: 6 })
               .onChange((v: number, mode: SliderChangeMode) => {
                 const nv: number = Math.round(v);
-                if (nv === this.gameEdge || (mode !== SliderChangeMode.End && mode !== SliderChangeMode.Click)) {
-                  this.gameEdge = nv;      /* 拖动中只改界面上的数，不写盘 */
+                /* ⚠️ 只在**手指离开**时写盘（`End` / `Click`）—— 拖动中每次变化都写会写上百次，
+                 * 而这是一块闪存。`Moving` 时只改内存里的值，界面照常实时预览。 */
+                const end: boolean = (mode === SliderChangeMode.End
+                                      || mode === SliderChangeMode.Click);
+                /* ⛔⛔ 这个守卫【不能】把 `end` 那次也挡掉 —— 它挡掉过一次，代价是**值永远存不下来**：
+                 *      拖动时 `Moving` 已经把 `gameEdge` 跟到了终点，于是 `End` 那一刻
+                 *      `nv === gameEdge` 成立 ⇒ 直接 return ⇒ `saveGameDisplay` **一次都没执行**。
+                 *      内存里是对的（界面看着正常），文件里还是旧值 ⇒ 下次 `refresh()` 又把它改回去
+                 *      = 「滑条白拖」。⚠️ 那两个滑条**只在自动开着时才显示**，所以这不是边角路径。
+                 * ⭐ 同文件里 `safeVp` 那条滑条踩过**同一个坑**（见它上面那段注释）——
+                 *    「跳过没变化的更新」与「只在结束时写盘」是两条各自合理的规则，
+                 *    叠在一起时**后者成了前者的受害者** ⇒ 写盘那一路必须从守卫里豁免。 */
+                this.gameEdge = nv;
+                if (!end) {
                   return;
                 }
-                this.gameEdge = nv;
                 this.saveGameDisplay('edge');
               })
 
@@ -5873,11 +6188,17 @@ export struct LauncherHome {
               .margin({ top: 6 })
               .onChange((v: number, mode: SliderChangeMode) => {
                 const nv: number = Math.round(v);
-                if (nv === this.gameScale || (mode !== SliderChangeMode.End && mode !== SliderChangeMode.Click)) {
-                  this.gameScale = nv;
+                /* ⚠️ 同上：只有手指离开才写盘；`Moving` 只改内存。 */
+                const end: boolean = (mode === SliderChangeMode.End
+                                      || mode === SliderChangeMode.Click);
+                /* ⛔⛔ 同避让那条：守卫不能把 `end` 也挡掉，否则**拖完不落盘**，
+                 *    而 `scaleSet` 保持 false ⇒ 连「玩家设过」这件事都没记下来
+                 *    ⇒ 下次 `refresh()` 立刻用系统字体推算值把它覆盖掉。
+                 *    理由与踩坑经过见上面避让滑条那段注释（同一个缺陷的两处）。 */
+                this.gameScale = nv;
+                if (!end) {
                   return;
                 }
-                this.gameScale = nv;
                 this.saveGameDisplay('scale');
               })
           }
@@ -6441,13 +6762,13 @@ export struct LauncherHome {
       this.MultiDeleteAskDialog()
     }
 
-    /* 清空垃圾站的确认。⚠️ 它只在垃圾站那一屏出现，与别的确认框不可能同时开着 ——
+    /* 清空回收站的确认。⚠️ 它只在回收站那一屏出现，与别的确认框不可能同时开着 ——
      * 排在这里只是防御性顺序（Stack 里后声明的在上）。 */
     if (this.showVaultClearAsk) {
       this.VaultClearAskDialog()
     }
 
-    /* 删除版本的确认。⚠️ 它在**首页**，与垃圾站那个窗不可能同时开着 ——
+    /* 删除版本的确认。⚠️ 它在**首页**，与回收站那个窗不可能同时开着 ——
      * 排在这里只是防御性顺序（Stack 里后声明的在上）。 */
     if (this.showGameDeleteAsk) {
       this.GameDeleteAskDialog()

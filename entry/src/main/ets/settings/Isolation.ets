@@ -289,7 +289,7 @@ export function setGameDataRoot(root: string): void {
 }
 
 /** **当前**的游戏数据根。⭐ 给「判断某个记下来的绝对路径还算不算数」用 ——
- * 见 `SaveVault.vaultRestore()`：垃圾站记的是**删除时**的绝对路径，而根是可以换的。 */
+ * 见 `SaveVault.vaultRestore()`：回收站记的是**删除时**的绝对路径，而根是可以换的。 */
 export function currentGameDataRoot(): string {
   return GAME_DATA_ROOT;
 }
@@ -420,7 +420,7 @@ function gameDisplayLine(dir: string): string {
  *   `cloud media`）。于是「搬过去之后到底少了什么」只能靠玩家照屏幕念，而「126 个文件里少了
  *   哪几个」是念不出来的。2026-10-04 追一个「复制少了东西」的报障，就卡在这里。
  * ⭐ **文件大小是关键**：拿外置那份的字节数跟沙箱那份一比，「复制把文件截短了」就从一句推测
- *   变成一个数 —— 垃圾站里正存着几个已知大小的存档，可以直接当参照物。
+ *   变成一个数 —— 回收站里正存着几个已知大小的存档，可以直接当参照物。
  * ⚠️ 用 native 列（见 `StorageRoot.nativeListTree`）—— 同一条路上 ArkTS 报 EPERM 而 native 成功。 */
 export function dumpDataDirs(filesDir: string): string {
   /* ArkTS 侧列一个目录能拿到几条 —— 只给上面那行对照用。
@@ -621,7 +621,7 @@ export function describeCounts(c: GameDataCounts): string {
   return parts.length === 0 ? '空的' : parts.join(' · ');
 }
 
-/* 递归复制**不再在这里实现** —— 已抽到 `utils/FsTree.ets`（存档垃圾站也要用：搬家/放回/彻底删除）。
+/* 递归复制**不再在这里实现** —— 已抽到 `utils/FsTree.ets`（存档回收站也要用：搬家/放回/彻底删除）。
  * ⛔⛔ 那份实现里记着**为什么不能用 `fs.copyDirSync`** —— 2026-10-02 的四用例实测证明它在我们的
  * 沙箱里**连一个空目录都复制不了**（`Invalid argument`）。⛔ 别在这里重抄一遍（会分叉）。 */
 
@@ -630,7 +630,7 @@ export function describeCounts(c: GameDataCounts): string {
  *
  * ⛔⛔ **2026-10-04：第一版搬的是【整个根】，结果 jdk/、那些 .so、stderr.log、save-vault/
  *    全被复制到了外置目录**（用户当场看到）。根因是我把两个概念混了 ——
- *    `gameDataRoot()` 返回的「根」在沙箱里**同时**是 JDK、日志、垃圾站住的地方；
+ *    `gameDataRoot()` 返回的「根」在沙箱里**同时**是 JDK、日志、回收站住的地方；
  *    它只是「游戏数据树恰好长在这底下」，**不等于**「这底下的东西都是游戏数据」。
  *    ⭐ 判据：**搬的是一个【概念】，不是一个【目录】** —— 所以才要显式列出这几棵。
  *    ⛔ 以后要加游戏数据的新子树，**加到这里**，别把整个根塞进去。
@@ -640,7 +640,7 @@ export function describeCounts(c: GameDataCounts): string {
  *    搬整层不会多带什么，少搬一层却会漏掉 ARC 可能放在同级的东西。
  * ⚠️ `instances/` **必须**在列：隔离开着时玩家的存档在 `instances/<键>/…` 里，
  *    只搬不隔离那一份会**静默丢掉那几棵树** —— 「界面上看起来完全正常」正是本项目反复吃亏的地方。
- * ⛔ 垃圾站（`save-vault/`）**不在列**：用户 2026-10-04 定的「垃圾站留在沙箱」（它是兜底恢复副本）。 */
+ * ⛔ 回收站（`save-vault/`）**不在列**：用户 2026-10-04 定的「回收站留在沙箱」（它是兜底恢复副本）。 */
 const MIGRATED_SUBTREES: string[] = ['/.local/share', '/instances'];
 
 /* 把一次迁移失败的详情落成一个**沙箱里的小文件**，供 hdc 读走。
@@ -662,6 +662,24 @@ function writeStorageDiag(body: string): void {
   }
 }
 
+/* 搬移的结果。⛔⛔ **两个通道必须分开，不能挤进一个字符串。**
+ *
+ * ⭐ 2026-10-05 修的缺陷（代码审查发现）：这个函数原来只返回一个字符串，
+ *   而它有两种**后果完全相反**的非空返回：
+ *     · 复制阶段失败 ⇒ **没有提交**，调用方必须把开关弹回去、不写 `storage_mode`；
+ *     · 复制成功、只是旧位置有残留 ⇒ **已经提交了**，配置必须写下去。
+ *   两种都非空 ⇒ 调用方一律当成「没提交」⇒ 开关弹回、`storage_mode` 仍是旧值
+ *   ⇒ native 下次启动仍指旧根，**而旧根的 `saves/` 已经被删掉了**（`/.local/share`
+ *   排在 `MIGRATED_SUBTREES` 第一位，先被删干净）⇒ 玩家看到的是「存档全没了」——
+ *   而新副本好好地躺在新位置，只是没有任何东西指向它。
+ * ⭐ 判据：**「未提交」和「已提交但有尾巴」不是同一种失败**，别用同一个返回值通道表达。 */
+export interface MigrateOutcome {
+  /** 非空 ⇒ **没有提交**（复制阶段就失败了，源分毫未动）。调用方必须回退开关。 */
+  error: string;
+  /** 非空 ⇒ **已经搬成功了**，只是旧位置没删干净。⛔ **不影响提交**，只提示。 */
+  warning: string;
+}
+
 /* 把游戏数据在**两个根之间搬过去**：复制成功之后把源删掉。
  * ⛔ **没有「只复制不搬」这个选项**（2026-10-04 用户定：「外置就纯外置，内置就纯内置，
  *   不给复制的选项，只有移动」）。
@@ -669,15 +687,15 @@ function writeStorageDiag(body: string): void {
  *   『两处各一份』那个必须靠判断才能回答『哪一份是活的』的状态」的路。
  *   判据同 `launcher.c` 拆掉 `ISOLATION_ROOT` 宏那次：**让错的写法写不出来。**
  *
- * @returns '' 成功；否则一句给玩家看的话。
+ * @returns 见 `MigrateOutcome`。⚠️ 判「成没成」**只看 `error`**，⛔ 不看 `warning`。
  *
  * ⚠️ 它显式吃两个根（迁移天然同时需要「从哪」和「到哪」），⛔ **不读** `GAME_DATA_ROOT`。
  * ⚠️ 顺序是承重的：**先全部复制成功，再删源**。反过来（先删）一旦中途失败就是真的丢数据；
  *    而「复制成功才落盘/才删」这条本项目已经付过一次代价（隔离那次的「存档全没了」）。
  *⚠️ 「没有数据可搬」**不算失败**（全新安装第一次就切，走的就是这条）。 */
-export function migrateGameData(fromRoot: string, toRoot: string): string {
+export function migrateGameData(fromRoot: string, toRoot: string): MigrateOutcome {
   if (fromRoot === '' || toRoot === '' || fromRoot === toRoot) {
-    return '';
+    return { error: '', warning: '' };
   }
   /* ① 复制。逐个记成功的那几棵，**没复制成功的绝不删**。 */
   const copied: string[] = [];
@@ -694,7 +712,7 @@ export function migrateGameData(fromRoot: string, toRoot: string): string {
      * ArkTS 的 `copyFileSync` 报 EPERM（126 个全废），而 native 的裸 POSIX 拷贝成功。
      * 而把 `copyFileSync` 单独放进探针里跑**又成功了** —— 那个差异我解释不了
      * （三种假设全被自己的测量推翻）⇒ **走被证明可行的那条**，别在解释上继续烧时间。
-     * ⚠️ 沙箱内部的复制（隔离、垃圾站）**继续用 `copyTreeInto`**：那条路实测没问题，
+     * ⚠️ 沙箱内部的复制（隔离、回收站）**继续用 `copyTreeInto`**：那条路实测没问题，
      *    换过来没有收益、还多一次跨语言调用。 */
     const err: string = nativeCopyTree(src, dst);
     if (err !== '') {
@@ -702,22 +720,25 @@ export function migrateGameData(fromRoot: string, toRoot: string): string {
       /* ⭐ 落一个文件给 hdc 读 —— 本应用的 hilog 读不到，没有它这类失败只能靠玩家照着屏幕念。 */
       writeStorageDiag(rel + '：' + err);
       /* ⛔ 直接返回 ⇒ **连前面已经复制成功的那几棵也不删**（`move` 时更该如此）。 */
-      return err;
+      return { error: err, warning: '' };
     }
     copied.push(rel);
   }
 
   /* ② 删源。⛔ **只删真的复制成功的那几棵** —— 失败的那几棵留在原地。 */
+  let cleanupFailed: number = 0;
   {
     for (const rel of copied) {
       const acc: TreeStat = newTreeStat();
       removeTree(fromRoot + rel, 0, acc);
       if (acc.failed > 0) {
-        /* ⚠️ 删不干净**不是**失败：新位置那份是好的，玩家的数据没丢。说清楚即可。 */
+        /* ⚠️ 删不干净**不是**失败：新位置那份是好的，玩家的数据没丢。说清楚即可。
+         * ⛔⛔ 但它【不能】走 `error` 那条通道 —— 一走，调用方就以为没搬成功、把开关弹回去，
+         *    而这时源里的 `saves/` 可能已经被删掉了（见 `MigrateOutcome` 那段）。
+         * ⭐ 所以这里**只是记一笔、继续删下一棵**，最后从 `warning` 出去。 */
         hilog.warn(DOMAIN, TAG, 'storage: could not remove %{public}s (%{public}d failure(s))',
                    fromRoot + rel, acc.failed);
-        return '已经搬到新位置了，但旧的那份没删干净（' + String(acc.failed)
-             + ' 个文件）。可以在文件管理里手动删掉 ' + fromRoot + '，或者先不管它。';
+        cleanupFailed += acc.failed;
       }
     }
   }
@@ -726,7 +747,12 @@ export function migrateGameData(fromRoot: string, toRoot: string): string {
              'storage: moved %{public}s -> %{public}s (%{public}s)',
              fromRoot, toRoot,
              copied.length === 0 ? 'nothing to move' : copied.join('+'));
-  return '';
+  if (cleanupFailed > 0) {
+    /* ⭐ `error` 空、`warning` 非空 = **已经搬好了**，调用方照常提交存储位置。 */
+    return { error: '', warning: '已经搬到新位置了，但旧的那份没删干净（' + String(cleanupFailed)
+             + ' 个文件）。可以在文件管理里手动删掉 ' + fromRoot + '，或者先不管它。' };
+  }
+  return { error: '', warning: '' };
 }
 
 export function copyLiveDataInto(key: string): string {
@@ -745,7 +771,7 @@ export function copyLiveDataInto(key: string): string {
    *    （存储根切过去之后就是这样）⇒ 用 ArkTS 那条路，这个「复制过去」按钮会**当场失败**，
    *    而那正是玩家唯一能自救的那个按钮。
    * ⚠️ 这条与 `migrateGameData` 一致：**跨根或可能跨根的一切复制都走 native。**
-   *    `FsTree.copyTreeInto` 保留给**确定在同一棵树内**的用途（垃圾站的取放等）。
+   *    `FsTree.copyTreeInto` 保留给**确定在同一棵树内**的用途（回收站的取放等）。
    * ⛔ 订正记录（2026-10-02，别重犯）：我曾认定「失败是因为 dst 的父目录没建」并照改了一版，
    *    那是错的 —— 探针显示父目录建好了、依然同一 EINVAL。⇒ **报错文案列了多个成因时，
    *    先设计一个能区分它们的实验**（那次做了四用例二分）。 */

@@ -428,6 +428,33 @@ export function loadGameSettings(path: string): GameSetting[] | null {
 export const KEY_EDGE_PADDING: string = 'uiEdgePadding';
 export const KEY_UI_SCALE: string = 'uiscale';
 
+/** 游戏那份 `settings.bin` 里**实际**存着的两个值。 */
+export interface GameDisplayValues {
+  edge: number;
+  scale: number;
+}
+
+/** 读游戏里**实际**的避让与缩放。
+ *
+ * ⭐⭐ 用途：**启动器界面显示的口径以它为准**（用户 2026-10-05：
+ *    「外部看到（启动器）内的数值没有对应改变」）—— 原来滑块只读启动器自己那份偏好文件，
+ *    于是玩家在游戏里改完之后，两边显示的数是**不一样的**，而界面上看不出哪个是真的。
+ *
+ * @returns 读不到（文件不存在 / 解析不了 / 被压过）⇒ `null`。
+ *    ⛔ **`null` 与「读到 0」必须分开**：前者表示「不知道游戏里是什么」，
+ *    调用方应当**保持原值不动**；后者是一个合法的真实取值。
+ */
+export function readGameDisplayValues(dataDir: string): GameDisplayValues | null {
+  const rows: GameSetting[] | null = loadGameSettings(dataDir + '/settings.bin');
+  if (rows === null) {
+    return null;
+  }
+  return {
+    edge: intSetting(rows, KEY_EDGE_PADDING, GAME_EDGE_FACTORY),
+    scale: intSetting(rows, KEY_UI_SCALE, GAME_SCALE_FACTORY)
+  };
+}
+
 /* ⛔⛔ **不覆盖玩家在游戏里改过的值**（用户 2026-10-04 定的规则）。
  *
  * 判据靠三个数相比 —— 「游戏里现在的值」对「出厂默认」与「我们上次写的」：
@@ -481,10 +508,20 @@ export function applyGameDisplay(dataDir: string, filesDir: string,
   }
 
   let changed: boolean = false;
-  /* ⚠️ `next` 只是「记下我们往游戏里写了什么」的载体 ⇒ 两个 `*Set` 标志对它**无意义**
-   *    （它们答的是「玩家动过启动器的滑条没有」）。补 `false` 免得类型不过。 */
-  const next: GameDisplayPref = { edge: pref.edge, scale: pref.scale, auto: pref.auto,
-                                 edgeSet: false, scaleSet: false };
+  /* ⛔⛔ `next` **只承载「我们真的写进游戏的值」**。初始化时先沿用上一次的记录（没有记录就用本次偏好），
+   *    然后**只在真的写成功的那一支里**更新对应字段。
+   *
+   * ⭐ 2026-10-05 修的缺陷（代码审查发现）：原来在「玩家在游戏里改过」那一支里写了 `next.edge = cur`
+   *    —— 于是**玩家自己的值被记成了「我们上次写的」**。下一次启动时 `ours = (cur === applied.edge)`
+   *    成立 ⇒ 判成「这是我们的值，归我们管」⇒ 走 `(ours || untouched) && cur !== pref.edge`
+   *    ⇒ **把玩家调的值改回去**。那正是用户 2026-10-04 定的「不覆盖玩家在游戏里改过的值」被破的路径。
+   * ⚠️ 原注释说那么写只为「少打日志」—— 代价是开了一条静默的覆盖路径，不值。
+   * ⚠️ 两个 `*Set` 标志对这个载体**无意义**（它们答的是「玩家动过启动器的滑条没有」），补 `false`。 */
+  const next: GameDisplayPref = {
+    edge: (applied !== null) ? applied.edge : pref.edge,
+    scale: (applied !== null) ? applied.scale : pref.scale,
+    auto: pref.auto, edgeSet: false, scaleSet: false
+  };
 
   /* 边距。 */
   {
@@ -494,13 +531,13 @@ export function applyGameDisplay(dataDir: string, filesDir: string,
     if ((ours || untouched) && cur !== pref.edge) {
       if (setIntSetting(rows, KEY_EDGE_PADDING, pref.edge)) {
         changed = true;
+        next.edge = pref.edge;   /* ⭐ 只有**真的写成功**才记 —— 这是第 2 条修复的另一半。 */
         hilog.info(DOMAIN, TAG, 'gamesettings: %{public}s %{public}d -> %{public}d',
                    KEY_EDGE_PADDING, cur, pref.edge);
       }
     } else if (!ours && !untouched) {
-      /* 玩家在游戏里调过 ⇒ 不仅不写，还要**记住他那个值**，否则下次启动我们会以为自己没写过、
-       * 又拿「默认」去比 —— 而它已经不等于默认，于是每次都白算一遍（结果一样，但日志会吵）。 */
-      next.edge = cur;
+      /* 玩家在游戏里调过 ⇒ **不碰它**，而且 `next.edge` 保持上一次的记录。
+       * ⛔ **绝不写 `next.edge = cur`** —— 那会把玩家的值冒充成「我们写的」，下次启动就覆盖回去了。 */
       hilog.info(DOMAIN, TAG, 'gamesettings: %{public}s is %{public}d (the player set it in game) '
                  + '-- leaving it alone', KEY_EDGE_PADDING, cur);
     }
@@ -514,22 +551,24 @@ export function applyGameDisplay(dataDir: string, filesDir: string,
     if ((ours || untouched) && cur !== pref.scale) {
       if (setIntSetting(rows, KEY_UI_SCALE, pref.scale)) {
         changed = true;
+        next.scale = pref.scale;   /* ⭐ 同上：只有真的写成功才记。 */
         hilog.info(DOMAIN, TAG, 'gamesettings: %{public}s %{public}d -> %{public}d',
                    KEY_UI_SCALE, cur, pref.scale);
       }
     } else if (!ours && !untouched) {
-      next.scale = cur;
+      /* ⛔ 同避让那一条：**不写 `next.scale = cur`**（理由见上面 `next` 的定义处）。 */
       hilog.info(DOMAIN, TAG, 'gamesettings: %{public}s is %{public}d (the player set it in game) '
                  + '-- leaving it alone', KEY_UI_SCALE, cur);
     }
   }
 
   if (!changed) {
-    /* 没改动也要把 `next` 记回去（它可能把「玩家自己设的值」记了下来）—— 但只在真的不同时才写文件。 */
-    if (applied === null || applied.edge !== next.edge || applied.scale !== next.scale) {
-      writeAppliedGameDisplay(filesDir, next);
-    }
-    /* ⛔ **几种「没写」的原因一律【不】在这里报文字。** 用户 2026-10-04 定了规矩：
+    /* ⛔⛔ 一个都没写 ⇒ **`applied` 保持原样，连文件都不必重写**。
+     *    ⭐ 2026-10-05 之前这里是「把 `next` 记回去」—— 而 `next` 那时会把玩家自己设的值
+     *      收进来（第 2 条缺陷的另一半）⇒ 正是那次写入把玩家的值冒充成了「我们写的」。
+     *    ⛔ 现在 `next` 只含「我们真的写过的值」，所以没写就没得记。
+     *
+     * ⛔ **几种「没写」的原因一律【不】在这里报文字。** 用户 2026-10-04 定了规矩：
      *    **默认不加提示，他同意了才加** —— 而这一张卡上只留了两处文字，
      *    其中 `只覆盖默认设置` 已经把「为什么没写」说完了。
      * ⚠️ 我原来在这里为「自动开着但游戏里是玩家自己的值」单加过一句更啰嗦的提示，已删。
