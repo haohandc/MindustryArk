@@ -11,7 +11,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { SymbolGlyphModifier } from '@kit.ArkUI';
 /* 底部页签换成设计系统组件 HdsTabs（2026-10-03，用户指定）。与裸 Tabs 的关键差别见 build() 里那段。 */
 import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
-import { bundleManager, common } from '@kit.AbilityKit';
+import { bundleManager, common, ConfigurationConstant } from '@kit.AbilityKit';
 /* 应用自己的显示名 —— 与游戏里那个 About 卡片同一处规则。 */
 import { appLabel } from '../utils/AppLabel';
 import { newTreeStat, copyTreeInto, removeTree, TreeStat, isDir, pathExists } from '../utils/FsTree';
@@ -30,6 +30,7 @@ import { GameJar, GameResolution, listGameJars, readSelection, writeSelection,
 /* 界面偏好（启动后进哪里）。⛔ 内容宽度**不再**在这里 —— 见 gamesWidthVp。 */
 import { readLaunchMode, writeLaunchMode,
          LAUNCH_MODE_HOME, LAUNCH_MODE_GAME,
+         AppearancePref, readAppearance, writeAppearance,
          SafePref, readSafePref, writeSafePref, SAFE_VP_MAX, SAFE_VP_STEP } from '../settings/LauncherPrefs';
 /* 异形屏探测（挖孔 / 刘海）。⛔ 游戏画面不归它管，只用于启动器自己的界面。 */
 import { SafeInsets, detectInsets, uniformOf, edgesOf, dumpSafeArea } from '../utils/SafeArea';
@@ -401,6 +402,12 @@ export struct LauncherHome {
   /** 自动避让开着没有。⭐ 开着时每次启动**都重新采用探测结果**；关着时用玩家拖出来的值。
    *  ⚠️ 玩家一动滑条就自动关掉 —— 那是最自然的「我要自己定」的表达方式。 */
   @State safeAuto: boolean = true;
+
+  /* 深色模式的两个开关（2026-10-04 用户要求）。
+   * ⭐ `darkFollow` = **跟随系统**（默认，就是本项目一直以来的行为）；
+   *    关掉它之后 `darkOn` 才说话。两个开关而不是一个三档选择器 —— 用户要的就是这个形状。 */
+  @State darkFollow: boolean = true;
+  @State darkOn: boolean = false;
 
   /** 玩家点过「知道了」。只活这一次会话 —— 不再是失败状态就不会再显示。 */
   @State faultAck: boolean = false;
@@ -1215,6 +1222,41 @@ export struct LauncherHome {
   }
 
   /** 重新读一遍磁盘。文件夹在这里【再确认一次】存在，因为玩家可能刚把它删掉。 */
+  /* 把外观偏好应用到系统。⭐ 两个开关合成**三个**状态，正好对上 `ConfigurationConstant.ColorMode`
+   * 的三个常量（本地 SDK `@ohos.app.ability.ConfigurationConstant.d.ts:48/57/66`）。
+   *
+   * ⚠️⚠️ **必须在页面加载完之后调**：`ApplicationContext.setColorMode()` 的文档写明
+   *    「ensure that the window has been created and the page corresponding to the UIAbility has
+   *    been loaded」（`ApplicationContext.d.ts:305-312`）⇒ ⛔ 不能放进 `EntryAbility.onCreate`。
+   *    从本文件（页面）里调它是安全的，这正是 `refresh()` 所在的位置。
+   *
+   * ⚠️⚠️ **它不跨进程保留** —— 文档没说它会，而实测行为也是回到系统默认 ⇒ 所以每次启动都要
+   *    重新应用一次（这就是它被 `refresh()` 调用的原因），而不是只在玩家拨开关时调。
+   * ⛔ 少这一次重放，「强制深色」就只在本次会话有效、下次打开变回系统色，而界面上开关还开着。
+   *
+   * ⚠️ 取 context 走 `getUIContext().getHostContext()`（本工程既有的那条没废弃的路，
+   *    见 `Index.ets:940-944` 的说明）；它可能返回 undefined ⇒ 检查它，别强转后直接用。 */
+  private applyColorMode(): void {
+    const mode: ConfigurationConstant.ColorMode = this.darkFollow
+      ? ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET      // -1：跟随系统
+      : (this.darkOn ? ConfigurationConstant.ColorMode.COLOR_MODE_DARK
+                     : ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT);
+    const ctx: common.UIAbilityContext | undefined =
+      this.getUIContext().getHostContext() as common.UIAbilityContext | undefined;
+    if (ctx === undefined) {
+      /* 还没挂到 ability 上。不是错误 —— 但要说出来，否则「开关没反应」会看起来像逻辑写错了。 */
+      hilog.warn(DOMAIN, TAG, 'appearance: no ability context yet -- color mode not applied');
+      return;
+    }
+    try {
+      ctx.getApplicationContext().setColorMode(mode);
+    } catch (e) {
+      const err = e as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'appearance: setColorMode(%{public}d) failed (%{public}s)',
+                 mode, err.message);
+    }
+  }
+
   private refresh(): void {
     ensureGameJarDir(this.filesDir);
     this.games = listGameJars(this.filesDir);
@@ -1225,6 +1267,14 @@ export struct LauncherHome {
     /* ⭐ 设置页那一行的说明：与版本列表同一批算好。⚠️ 它按 `this.granularity`（当前档），
      * 而弹窗那份按 `pendingGranularity`（待确认档）—— 两者在玩家正切换时不同，不能共用。 */
     this.granularityHintText = this.granularityHint(readGranularity(this.filesDir));
+
+    /* ⭐ 外观：先读偏好、再应用。**每次 refresh 都要重放一次** —— `setColorMode` 不跨进程保留
+     * （理由见 `applyColorMode`）。⚠️ 只在「读到的值与当前 State 不同」时才写 State，
+     * 否则每次 refresh 都会改 State、多触发一轮重渲染。 */
+    const ap: AppearancePref = readAppearance(this.filesDir);
+    if (ap.follow !== this.darkFollow) { this.darkFollow = ap.follow; }
+    if (ap.dark !== this.darkOn) { this.darkOn = ap.dark; }
+    this.applyColorMode();
 
     /* 存档。⚠️ 目录**取决于隔离状态** —— 用与 native 算 `user.home` 同一套输入，否则这里会列出
      * 另一份存档，那是最坏的一类不一致：界面上看起来完全正常。⚠️ 两者仍可能分叉：玩家改了粒度
@@ -3109,13 +3159,15 @@ export struct LauncherHome {
         .onClick(() => { this.showMultiAsk = true; this.multiListOpen = false; })
       Button('复制')
         .fontSize(BUTTON_FONT_VP)
-        .backgroundColor($r('app.color.btn_neutral'))
+        .fontColor(Color.White)
+        .backgroundColor($r('sys.color.brand'))
         .margin({ left: 8 })
         .enabled(this.multiPickCount() > 0)
         .onClick(() => { this.askTransfer('copy'); })
       Button('移动')
         .fontSize(BUTTON_FONT_VP)
-        .backgroundColor($r('app.color.btn_neutral'))
+        .fontColor(Color.White)
+        .backgroundColor($r('sys.color.brand'))
         .margin({ left: 8 })
         .enabled(this.multiPickCount() > 0)
         .onClick(() => { this.askTransfer('move'); })
@@ -3132,21 +3184,29 @@ export struct LauncherHome {
   SaveActionRow() {
     Row() {
       /* ⭐ 顺序是**删除 / 复制 / 移动**（2026-10-03 用户：「看着更顺眼」）。
-       * ⚠️ 删除排第一、且是这一排里唯一的**破坏性**动作 ⇒ 它自己带底色与警示色，
-       * 与另外两个拉开；靠右那一端留给「移动」这种收尾动作。
+       *
+       * ⚠️⚠️ **配色在 2026-10-04 反了过来**（用户定的）：复制/移动是**主操作**（品牌蓝实底 + 白字），
+       *    删除是**灰底 + 警示色字**。这一段原来写的是「删除自己带底色与警示色，与另外两个拉开」——
+       *    ⛔ 那句话现在**不成立**了，删除反而是这三者里最不显眼的那个。别照着旧理由去「修」它。
+       *    ⭐ 判据：靠颜色轻重说话，而不是靠位置。主操作给满色，破坏性动作给底色 + 警示词
+       *    ——**不要**因为它是危险的就给它最亮的颜色（那会把鼠标往危险的那个上面引）。
        * ⛔ 三个都在同一个 `Row` 里靠右，改动顺序时**别动 `margin({ left: 8 })` 的分布** ——
        * 第一个按钮不能再有左间距，否则整排会往右缩 8vp。 */
       Button('删除')
         .fontSize(BUTTON_FONT_VP)
         .fontColor($r('sys.color.warning'))
-        .backgroundColor($r('app.color.launcher_bg'))
+        .backgroundColor($r('app.color.btn_neutral'))
         .onClick(() => { this.askDelete(); })
       Button('复制')
         .fontSize(BUTTON_FONT_VP)
+        .fontColor(Color.White)
+        .backgroundColor($r('sys.color.brand'))
         .margin({ left: 8 })
         .onClick(() => { this.askTransfer('copy'); })
       Button('移动')
         .fontSize(BUTTON_FONT_VP)
+        .fontColor(Color.White)
+        .backgroundColor($r('sys.color.brand'))
         .margin({ left: 8 })
         .onClick(() => { this.askTransfer('move'); })
     }
@@ -5014,6 +5074,55 @@ export struct LauncherHome {
               })
           }
           .width('100%')
+        }
+        .width('100%').padding(16)
+        .backgroundColor($r('app.color.launcher_card'))
+        .borderRadius(CARD_RADIUS_VP)
+        .margin({ top: 8 })
+
+        /* ================= 深色模式 ================= */
+        /* ⭐ 两个开关（2026-10-04 用户：「开关深色模式 + 是否跟随系统深色模式」）。
+         *
+         * ⚠️⚠️ 第二个开关在「跟随系统」打开时**整行不渲染**（用户 2026-10-04 定的：
+         *    「跟随系统时：下面的自定义不显示；不跟随：再显示出来」）。
+         *    ⛔ 我第一版做的是**禁用**（理由是「隐藏会让卡片忽高忽低」）—— 那是**我**的顾虑，
+         *    不是他的要求，而且它有个实际坏处：一个灰着的控件仍然在问「你要不要点我」。
+         *    ⇒ 卡片高度会随开关变一行，这是**接受**的代价。
+         * ⛔ 两条**文字提示也删了**（同一句要求：「文字提示就不要了」）—— 「跟随系统深色模式」
+         *    和「深色模式」两个标签自己说完了，底下那行只是把标签重说一遍。
+         *    ⚠️ 别再加回来「界面用深色 / 由系统决定」之类 —— 那正是被删掉的东西。 */
+        Column() {
+          Row() {
+            Text('跟随系统深色模式')
+              .fontSize(14).fontColor($r('sys.color.font_primary'))
+              .layoutWeight(1)
+            Toggle({ type: ToggleType.Switch, isOn: this.darkFollow })
+              .onChange((on: boolean) => {
+                this.darkFollow = on;
+                writeAppearance(this.filesDir, this.darkFollow, this.darkOn);
+                /* ⭐ 立刻应用 —— 拨完就该看到变化，而不是等下次启动。
+                 * ⚠️ 打开「跟随系统」时**不**去改 `darkOn`：记住玩家上次选的那一档，
+                 *    他再关掉跟随时能回到自己那个选择，而不是被重置成浅色。 */
+                this.applyColorMode();
+              })
+          }
+          .width('100%')
+
+          if (!this.darkFollow) {
+            Row() {
+              Text('深色模式')
+                .fontSize(14).fontColor($r('sys.color.font_primary'))
+                .layoutWeight(1)
+              Toggle({ type: ToggleType.Switch, isOn: this.darkOn })
+                .onChange((on: boolean) => {
+                  this.darkOn = on;
+                  writeAppearance(this.filesDir, this.darkFollow, this.darkOn);
+                  this.applyColorMode();
+                })
+            }
+            .width('100%')
+            .margin({ top: 18 })
+          }
         }
         .width('100%').padding(16)
         .backgroundColor($r('app.color.launcher_card'))
