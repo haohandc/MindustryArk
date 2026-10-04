@@ -273,6 +273,16 @@ const NOTICE_MS: number = 4000;
 
 const CARD_RADIUS_VP = 14;
 
+/* 确认窗里「取消」的宽度（%）。**五个确认窗共用这一个值**，⛔ 别各自写一个数。
+ *
+ * ⛔⛔ 原来是 25%。弹窗内容宽 280vp（`max(320, winW × 0.5)` 减左右各 20vp 内边距），
+ *    25% = **70vp**；而「取消」两字 14fp ≈ 28vp，加 `Button` 默认左右内边距 ≈ 32vp = **60vp**
+ *    ⇒ 只剩 10vp 余量。而 `fontSize(14)` 的单位是 **fp**、**跟着系统字体缩放**
+ *    ⇒ 字体一调大，那两个字就装不下、变成 **「...」**（用户 2026-10-04 报的正是它）。
+ * ⭐ 34% = 95vp，留足缩放余量。判据是**按最大字号算，而不是按默认字号算** ——
+ *    一个「今天刚好放得下」的宽度，就是明天会坏掉的宽度。 */
+const CANCEL_BTN_WIDTH: string = '34%';
+
 /** 按钮字号。**显式给**，因为不给会按各自标签长度自适应，两个按钮的字不一样大。 */
 const BUTTON_FONT_VP = 16;
 
@@ -3502,7 +3512,7 @@ export struct LauncherHome {
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
         Button('取消')
           .fontSize(14)
-          .width('25%').alignSelf(ItemAlign.Center)
+          .width(CANCEL_BTN_WIDTH).alignSelf(ItemAlign.Center)
           .margin({ top: 12 })
           .onClick(() => { this.showMultiAsk = false; })
       }
@@ -3567,7 +3577,7 @@ export struct LauncherHome {
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
         Button('取消')
           .fontSize(14)
-          .width('25%').alignSelf(ItemAlign.Center)
+          .width(CANCEL_BTN_WIDTH).alignSelf(ItemAlign.Center)
           .margin({ top: 12 })
           .onClick(() => { this.showVaultClearAsk = false; })
       }
@@ -3677,7 +3687,7 @@ export struct LauncherHome {
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
         Button('取消')
           .fontSize(14)
-          .width('25%').alignSelf(ItemAlign.Center)
+          .width(CANCEL_BTN_WIDTH).alignSelf(ItemAlign.Center)
           .margin({ top: 12 })
           .onClick(() => { this.showGameDeleteAsk = false; })
       }
@@ -3729,7 +3739,7 @@ export struct LauncherHome {
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
         Button('取消')
           .fontSize(14)
-          .width('25%').alignSelf(ItemAlign.Center)
+          .width(CANCEL_BTN_WIDTH).alignSelf(ItemAlign.Center)
           .margin({ top: 12 })
           .onClick(() => { this.showDeleteAsk = false; })
       }
@@ -5193,7 +5203,7 @@ export struct LauncherHome {
           Button('取消')
             .fontSize(13)
             .height(34)
-            .width('34%').alignSelf(ItemAlign.Center)
+            .width(CANCEL_BTN_WIDTH).alignSelf(ItemAlign.Center)
             .margin({ top: 8 })
             .onClick(() => {
               this.showIsolationAsk = false;
