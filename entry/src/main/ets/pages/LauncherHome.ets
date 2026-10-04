@@ -755,16 +755,23 @@ export struct LauncherHome {
   }
 
   private granularityHint(g: string): string {
+    /* ⭐ 2026-10-04 收紧：每条**只留判据**（哪两个共用、哪两个分开）。
+     * 删掉的三截都是「后果 / 评论」而不是规则本身：
+     *   · 「v9 出来之后才会分开」—— 推测；
+     *   · 「换版本时看到的是同一批存档」—— 由「共用一份」推得出来；
+     *   · 「改动最大的界线在这里」「切得最细，但要重建的东西也最多」—— 评语。
+     * ⚠️ 原来最长那条 37 字 ≈ 444vp，而卡片里只有约 328vp ⇒ **必然折成两行**，
+     *    四档各折一次，整块看着就是一大坨字。现在每条 ≤ 22 字，一行放得下。 */
     if (g === GRANULARITY_NUMBER) {
-      return 'v8 的所有版本共用一份；v9 出来之后才会分开';
+      return 'v8 的所有版本共用一份';
     }
     if (g === GRANULARITY_BUILD) {
-      return '160.5 与 160.1 共用一份；160 与 159 分开。改动最大的界线在这里';
+      return '160.5 与 160.1 共用一份；160 与 159 分开';
     }
     if (g === GRANULARITY_PATCH) {
-      return '每个小版本各一份（160.5 与 160.4 也分开）。切得最细，但要重建的东西也最多';
+      return '每个小版本各一份，包括 160.5 与 160.4';
     }
-    return '所有版本共用一份数据（默认）。换版本时看到的是同一批存档';
+    return '所有版本共用一份数据（默认）';
   }
 
   /* 玩家点了某一档。⭐ **关掉不问、打开才问** —— 两者后果不同：
@@ -939,25 +946,45 @@ export struct LauncherHome {
   @Builder
   StaleCopyOffer() {
     Column() {
-      Text('⚠ 隔离开着，但当前版本这一档还是空的 —— 进游戏会看到空的数据。'
-           + '你的存档一直都在（在「未隔离的那一份」里）。')
-        .fontSize(12).fontColor($r('sys.color.warning'))
+      /* ⭐ 2026-10-04 收紧。原文是**三句连成的一段**（隔离开着 / 这一档是空的 / 进游戏会看到空的）
+       * 外加一句安心话 —— 读完才知道要干什么。现在拆成**标题 + 一行说明**：
+       *   · 「隔离开着」不必说：那是他自己刚开的；
+       *   · 「进游戏会看到空数据」是推论，标题说完状态就够；
+       *   · 留下的只有「存档一直都在」—— 那才是他此刻真正想知道的。
+       * ⚠️ 颜色也从 warning 降成常规：**这是一个状态 + 一条出路，不是错误**。
+       *    整块报警色会让人以为出了事，而其实什么都没坏。 */
+      Text('这个版本还没有自己的数据')
+        .fontSize(14).fontColor($r('sys.color.font_primary'))
         .width('100%')
+      Text('存档在「未隔离的那一份」里，一直都在。')
+        .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+        .width('100%').margin({ top: 3 })
+
       /* 失败时**留在这块里**说清楚 —— 失败意味着状态没变、这块还会在。⛔ 不写成弹窗：
-       * 失败一次就弹一次的话，玩家得先关掉窗才看得见下面还有什么。 */
+       * 失败一次就弹一次的话，玩家得先关掉窗才看得见下面还有什么。
+       * ⭐ 这一条**保留**警告色：它才是真的出事了。 */
       if (this.staleCopyNote !== '') {
         Text(this.staleCopyNote)
           .fontSize(12).fontColor($r('sys.color.warning'))
           .width('100%').margin({ top: 6 })
       }
+
+      /* ⭐⭐ 按钮**必须比正文小**。原来用 `BUTTON_FONT_VP`（16）⇒ 按钮上的字**比要读的正文（12）还大**，
+       * 加上 `Button` 默认 40vp 高，整块看起来是「一句话 + 一个和它一样大的色块」。
+       * ⇒ 字号降到 14、高度压到 34（⛔ 不走 `BUTTON_FONT_VP`：那个常量同时管着 10 个**主**按钮，
+       *   这里是个次要出路，不该跟着它们一起定）。
+       * ⚠️ 34vp 低于 48vp 那个最小触控目标 —— 有意的取舍：它够宽（左右各 18vp 内边距），
+       *    而这块提示本身不该在屏幕上占掉主按钮的分量。 */
       Row() {
-        Button('把未隔离的那份复制过来')
-          .fontSize(BUTTON_FONT_VP)
+        Button('复制过来')
+          .fontSize(14)
+          .height(34)
+          .padding({ left: 18, right: 18 })
           .onClick(() => { this.copyStaleCurrent(); })
       }
       .width('100%')
       .justifyContent(FlexAlign.End)
-      .margin({ top: 8 })
+      .margin({ top: 10 })
     }
     .width('100%')
     .padding(14)
@@ -4548,11 +4575,13 @@ export struct LauncherHome {
             this.StaleCopyOffer()
           }
 
-          /* 迁移出问题时的提示。⛔ 它不是门 —— 隔离照旧打开，只是新目录可能是空的，而原数据完好。 */
+          /* 迁移出问题时的提示。⛔ 它不是门 —— 隔离照旧打开，只是新目录可能是空的，而原数据完好。
+           * ⚠️ 紧跟在 `StaleCopyOffer` 后面时两者只隔 6vp 会像同一段话的两半 ⇒ 用一条分隔线断开。 */
           if (this.isolationNote !== '') {
+            Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 10 })
             Text(this.isolationNote)
               .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-              .margin({ top: 8 })
+              .width('100%').margin({ top: 8 })
           }
         }
         .width('100%').padding(16)
