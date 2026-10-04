@@ -5789,10 +5789,22 @@ export struct LauncherHome {
            * ⭐ 所以滑条的定位是「**给自动算出来的值做微调**」，而不是「另一个调这两项的地方」。
            * ⚠️ 关着时这一整段不渲染 ⇒ 卡片高度会变，这是**接受**的代价（同深色模式那张卡的做法）。 */
           if (this.gameAuto) {
-            Text('异形屏避让 (单位:px)')
-              .fontSize(14).fontColor($r('sys.color.font_primary'))
-              .width('100%')
-              .margin({ top: 18 })
+            /* ⭐⭐ **标签一律用游戏自己的原话，数值显示在旁边**（用户 2026-10-04 定的）。
+             * 文案取自 jar 里的 `bundles/bundle_zh_CN.properties`（⭐ 权威来源，别自己编）：
+             *     `setting.uiEdgePadding.name = UI 内边距`
+             *     `setting.uiscale.name       = 界面缩放比例`
+             * ⛔ 别改写成「异形屏避让」这类**我的**说法 —— 玩家在游戏设置里看到的是上面那两个词，
+             *    两边用同一套说法他才对得上号（这正是他要求「改成游戏内的原话」的理由）。
+             * ⚠️ 数值**必须显示**：滑条没有刻度，不给数字就不知道拖到哪了。 */
+            Row() {
+              Text('UI 内边距')
+                .fontSize(14).fontColor($r('sys.color.font_primary'))
+                .layoutWeight(1)
+              Text(String(this.gameEdge))
+                .fontSize(14).fontColor($r('sys.color.font_secondary'))
+            }
+            .width('100%')
+            .margin({ top: 18 })
             Slider({
               /* ⭐ 只有一个值，所以显示它、并且**两个模式下都能拖**（自动开着时拖的就是刚算出来的那个数）。 */
               value: this.gameEdge,
@@ -5814,10 +5826,17 @@ export struct LauncherHome {
                 this.saveGameDisplay('edge');
               })
 
-            Text('UI缩放 (百分比)')
-              .fontSize(14).fontColor($r('sys.color.font_primary'))
-              .width('100%')
-              .margin({ top: 18 })
+            /* ⭐ 同上：游戏的原话 + 数值旁边。`%` 是游戏自己的显示方式
+             *    （用户在游戏里看到的就是「界面缩放比例：100%」）。 */
+            Row() {
+              Text('界面缩放比例')
+                .fontSize(14).fontColor($r('sys.color.font_primary'))
+                .layoutWeight(1)
+              Text(String(this.gameScale) + '%')
+                .fontSize(14).fontColor($r('sys.color.font_secondary'))
+            }
+            .width('100%')
+            .margin({ top: 18 })
             Slider({
               value: this.gameScale,
               min: GAME_SCALE_MIN,

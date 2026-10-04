@@ -343,6 +343,121 @@ static char opt_language[32];
  *    ⭐ 判据同 `read_kv` 那条：**缓冲区尺寸写错，症状是「设置没生效」，不是崩溃。** */
 static char opt_country[32];
 
+/* ⚠️⚠️ **诊断用，不是功能。** 在**游戏启动之前**把 `<user.home>/.local/share/Mindustry/settings.bin`
+ * 里的两个值读出来打日志 —— 「游戏到底读到了什么」否则**只有它自己的设置界面能回答**，
+ * 而那是玩家用眼睛看、我读不到的。有这一行之后，`stderr.log` 就能直接给出答案。
+ *
+ * ⛔⛔ **它故意只认 int 类型、遇到别的类型就跳过**（而不是完整实现 ARC 的格式）：
+ *    完整的解析器在 ArkTS 那边（`GameSettings.ets`），已经用真实文件逐字节验证过。
+ *    在这里再写一份完整的 = **两份会分叉的格式实现** —— 本项目为此付过代价。
+ *    ⭐ 所以这里只做「够用的那一点」：读条目数，逐条读键名+类型，是 int 就记下来，
+ *      不是 int 就按已知长度跳过。⚠️ 跳不过去（遇到字符串/字节数组）就**放弃并说出来** ——
+ *      **半个解析结果比不解析更危险**（它会让人以为读到了真值）。
+ *
+ * 输出形如：`settings-probe: uiEdgePadding=89 uiscale=100 entries=19` */
+static void log_game_settings_probe(const char *home)
+{
+    char path[768];
+    /* ⚠️ ARC 的数据目录是 `<user.home>/.local/share/Mindustry`（见 `Vars.dataDirectory`）。 */
+    SDL_snprintf(path, sizeof(path), "%s/.local/share/Mindustry/settings.bin", home);
+
+    FILE *f = fopen(path, "rb");
+    if (f == NULL) {
+        SDL_Log("settings-probe: cannot open %s", path);
+        return;
+    }
+    /* 头两字节是 zlib 魔数 ⇒ 压缩流（游戏自己从不写这种，见 GameSettings.ets）。
+     * ⛔ 这里不解压：那种情况直接报出来，别装作读到了。 */
+    int b0 = fgetc(f);
+    int b1 = fgetc(f);
+    if (b0 == 0x78 && (b1 == 1 || b1 == 94 || b1 == 0x9c || b1 == 0xda)) {
+        fclose(f);
+        SDL_Log("settings-probe: the file is zlib-compressed (the game never writes that) -- skipped");
+        return;
+    }
+    /* ⛔ 回到开头：上面那两个字节就是条目数的前两字节。 */
+    fseek(f, 0, SEEK_SET);
+
+    unsigned char hdr[4];
+    if (fread(hdr, 1, 4, f) != 4) {
+        fclose(f);
+        SDL_Log("settings-probe: the file is shorter than its own header");
+        return;
+    }
+    const int count = (hdr[0] << 24) | (hdr[1] << 16) | (hdr[2] << 8) | hdr[3];
+    if (count <= 0 || count > 4096) {
+        fclose(f);
+        SDL_Log("settings-probe: implausible entry count %d -- refused", count);
+        return;
+    }
+
+    long edge = -1;
+    long scale = -1;
+    int  read_entries = 0;
+    int  skipped_kinds = 0;
+
+    for (int i = 0; i < count; i++) {
+        int n0 = fgetc(f);
+        int n1 = fgetc(f);
+        if (n0 < 0 || n1 < 0) {
+            break;
+        }
+        const int klen = (n0 << 8) | n1;
+        if (klen <= 0 || klen > 200) {
+            SDL_Log("settings-probe: implausible key length %d at entry %d -- stopped", klen, i);
+            break;
+        }
+        char key[208];
+        if ((int) fread(key, 1, (size_t) klen, f) != klen) {
+            break;
+        }
+        key[klen] = 0;
+        const int type = fgetc(f);
+        if (type < 0) {
+            break;
+        }
+        /* 类型字节（与 ARC 的 tableswitch 一致）：0 bool / 1 int / 2 long / 3 float / 4 UTF / 5 byte[] */
+        if (type == 0) {
+            fgetc(f);
+        } else if (type == 1) {
+            unsigned char v[4];
+            if (fread(v, 1, 4, f) != 4) {
+                break;
+            }
+            const long value = (long) ((v[0] << 24) | (v[1] << 16) | (v[2] << 8) | v[3]);
+            if (strcmp(key, "uiEdgePadding") == 0) {
+                edge = value;
+            } else if (strcmp(key, "uiscale") == 0) {
+                scale = value;
+            }
+        } else if (type == 2) {
+            fseek(f, 8, SEEK_CUR);
+        } else if (type == 3) {
+            fseek(f, 4, SEEK_CUR);
+        } else if (type == 4 || type == 5) {
+            /* ⚠️ 这两种是**变长**的，跳过它们要先读长度 —— 做得到，但那就等于实现整个格式了。
+             * ⇒ 停在这里并把原因说出来（`skipped_kinds` 非 0）。 */
+            skipped_kinds++;
+            break;
+        } else {
+            SDL_Log("settings-probe: unknown type %d for '%s' -- stopped", type, key);
+            break;
+        }
+        read_entries++;
+    }
+    fclose(f);
+
+    if (skipped_kinds == 0 && read_entries == count) {
+        SDL_Log("settings-probe: what the game will read -- uiEdgePadding=%ld uiscale=%ld (%d entries)",
+                edge, scale, count);
+    } else {
+        /* ⚠️ 读到一半停下来时**照样报已知的那两个**，但**说清是残缺的** ——
+         * 「89」与「只读到第 12 条所以 89 可能是旧的」是两件不同的事。 */
+        SDL_Log("settings-probe: PARTIAL (%d of %d entries; stopped at a variable-length value) -- "
+                "uiEdgePadding=%ld uiscale=%ld", read_entries, count, edge, scale);
+    }
+}
+
 /* 算出这次启动要给 JVM 的 locale，写进 opt_language / opt_country（空串 = 不设）。
  *
  * ⭐ 值由 ArkTS 翻译好（`GameLocale.systemGameLocale()`）后写进同一个桥文件 ——
@@ -2124,6 +2239,12 @@ static int start_jvm(void)
                  read_control_mode_mobile() ? "true" : "false");
     /* 游戏语言。⚠️ 必须在 `create()` **之前**填好 —— 与 user.home 同理：JVM 在启动那一刻读。 */
     resolve_game_locale();
+    /* 诊断：把**游戏即将读到的那两个值**打进日志。 */
+    {
+        char probe_home[512];
+        resolve_user_home(probe_home, sizeof(probe_home));
+        log_game_settings_probe(probe_home);
+    }
 
     {
         /* 读平台自己的答案而不是猜路径；没有答案时【完全略去】这个选项。过去传空字面量

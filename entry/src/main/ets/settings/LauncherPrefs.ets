@@ -270,7 +270,7 @@ export interface GameDisplayPref {
  *    （见 `GameAutoFit.autoEdgePadding`），而自动适配是**实验性、默认关闭**的。 */
 export const GAME_DISPLAY_DEFAULT: GameDisplayPref = {
   edge: GAME_EDGE_FACTORY,
-  scale: 200,
+  scale: 100,
   auto: false,
   edgeSet: false,
   scaleSet: false,

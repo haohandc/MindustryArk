@@ -440,14 +440,44 @@ export const KEY_UI_SCALE: string = 'uiscale';
  *    （值既不是默认、也不被认作我们的 ⇒ 永远被当成「玩家改的」）。
  *
  * @returns `''` = 不需要动 / 动成功了；否则一句给人看的话。
- * ⚠️ **`settings.bin` 不存在时静默返回 `''`** —— 那是「游戏还没跑过」，不是错误。
- *    用户在游戏里跑一次之后，下一次启动启动器就会写进去（这正是「值仍是出厂默认就写」那条）。 */
+ *
+ * ⭐⭐ **`settings.bin` 不存在时【自己建一个】**（用户 2026-10-04 要的）。
+ *    ⛔ 旧行为是「不存在就什么都不做」，而那让这个功能的承诺落空：
+ *      全新安装没有 `settings.bin`（游戏跑一次才生成）⇒ **第一次启动必然用不上我们的设置**，
+ *      玩家得「先跑一次游戏 → 回启动器 → 再跑一次游戏」才行 —— 那不叫「启动器默认调好」。
+ *      ⚠️ 2026-10-04 实测踩到：他重装后第一次进游戏，探针报
+ *      `settings-probe: cannot open …settings.bin`（文件那时还不存在），游戏用默认值建了它。
+ *    ⭐ 建出来的文件**只含我们负责的那两个键**。其余键缺失 ⇒ 游戏的 `loadValues` 只把这 2 条放进
+ *      `values`、其它全部走 `defaults` ⇒ 效果**等同于全新安装 + 我们这两个值**，正是想要的。
+ *    ⚠️⚠️ **一个我没有验证过的风险**：`lastBuild` 会缺失，而游戏可能据此判断要不要跑迁移逻辑。
+ *      风险低但非零 —— 若将来出现「第一次启动行为怪」的现象，**先怀疑这里**。 */
 export function applyGameDisplay(dataDir: string, filesDir: string,
                                  pref: GameDisplayPref, applied: GameDisplayPref | null): string {
   const path: string = dataDir + '/settings.bin';
-  const rows: GameSetting[] | null = loadGameSettings(path);
+  let exists: boolean = false;
+  try {
+    exists = fs.accessSync(path);
+  } catch (e) {
+    exists = false;
+  }
+  let rows: GameSetting[] | null = loadGameSettings(path);
   if (rows === null) {
-    return '';                     /* 还没跑过游戏 / 读不了 —— 两种都「什么都不做」 */
+    if (exists) {
+      /* ⭐ **存在但读不了**（解析失败 / 被压过 / 权限）⇒ **什么都不做**。
+       * ⛔ 与「不存在」必须分开：那两种情况要做的处置**相反** ——
+       *    一个是「照我们的建一份」，另一个是「别碰它」。 */
+      return '';
+    }
+    /* ⭐ 不存在 ⇒ 从空表开始建。⚠️ 先把目录建出来：全新安装时
+     *    `.local/share/Mindustry` 本身可能还不存在，而 `fs.openSync` **不建父目录**。 */
+    try {
+      fs.mkdirSync(dataDir + '/.local/share/Mindustry', true);
+    } catch (e) {
+      /* 建不出来也不立刻返回 —— 下面 openSync 会给出真正的错误，而它比这里的一句更具体。 */
+    }
+    rows = [];
+    hilog.info(DOMAIN, TAG, 'gamesettings: %{public}s does not exist yet -- creating it with '
+               + 'the launcher\'s two keys', path);
   }
 
   let changed: boolean = false;
