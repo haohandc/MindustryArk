@@ -2051,6 +2051,15 @@ export struct LauncherHome {
     return out;
   }
 
+  /* 勾选里**还在列表上**的那些的个数。
+   * ⛔ 别用 `multiPicked.length` —— 那里面可能留着**已经不在的键**（移动部分成功就是这样：
+   * 搬走的那些已经从 `saveGroups` 里没了，而键还留在数组里）⇒ 提示条会报一个比屏幕上真实
+   * 存在的多的数，按钮也会在无事可做时仍可点。
+   * ⭐ 判据：**说给玩家听的那个数，必须是接下来真的会被操作的那些**。 */
+  private multiPickCount(): number {
+    return this.pickedRows().length;
+  }
+
   /* 一次删掉所有勾上的。⚠️ 一个个走**同一条**搬进垃圾站的路，不是批量直接删 —— 批量删要额外的
    * 回滚逻辑，而这条路已经带回了回滚（见 SaveVault.vaultDelete）。⚠️ 部分失败要**说出来**。 */
   private deleteMultiToVault(): void {
@@ -2203,8 +2212,58 @@ export struct LauncherHome {
 
   /* ---- 复制 / 移动 ---- */
 
+  /* ⭐⭐ **这次操作作用在哪几份存档上。**
+   *
+   * 多选态 ⇒ **勾上的那批**（2026-10-04 用户：「多选再加一个：多选后的复制与移动」）；
+   * 平时   ⇒ 选中的那一个。
+   *
+   * ⭐ 这套东西以前**只认一个源**：`confirmTransfer` 从头到尾读 `selectedSaveEntry()`，
+   *    `transferTargets` 只排除那一个目录，对话框标题直接念 `selectedSaveLabel()`
+   *    ⇒ 「对一批存档做复制/移动」在结构上做不到。这个函数就是把那个前提拆掉的地方 ——
+   *    **其余每个动作（标题、副标题、目标表、执行循环）都从这里取源**，⛔ 别再各处自己读 `selectedSave`。
+   *
+   * ⚠️ **渲染期也会调它**（对话框的标题与副标题）⇒ 它只读内存里的 `saveGroups`，
+   *    ⛔ **不读磁盘、不读 jar**（本文件那条「要读 jar 的一律在 refresh()/事件里算好」的规则）。
+   * ⭐ 复用 `pickedRows()`（多选删除走的就是它）—— 映射逻辑只有一份。 */
+  private transferSourceRows(): SaveRow[] {
+    if (this.multiMode) {
+      return this.pickedRows();
+    }
+    const r: SaveRow | undefined = this.selectedSaveRow();
+    return r === undefined ? [] : [r];
+  }
+
+  /** 源所在的**目录**（去重）。⭐ 只有它的是「目标不能选哪几个」—— 见 `transferTargets`。 */
+  private transferSourceDirs(): string[] {
+    const out: string[] = [];
+    for (const r of this.transferSourceRows()) {
+      if (out.indexOf(r.dir) < 0) {
+        out.push(r.dir);
+      }
+    }
+    return out;
+  }
+
+  /** 源**全部**是手动存档吗。⭐ 「同版本再存一份」只对手动存档成立：战役存档复制一份会让游戏认不出
+   * 那个区块（理由见对话框里那段说明）。⛔ 多选时**有一个不是**就不能给这一项 —— 否则它会安静地
+   * 只给其中几个生效，而玩家以为整批都做了。 */
+  private transferAllManual(): boolean {
+    const rows: SaveRow[] = this.transferSourceRows();
+    if (rows.length === 0) {
+      return false;
+    }
+    for (const r of rows) {
+      if (r.entry.kind !== 'manual') {
+        return false;
+      }
+    }
+    return true;
+  }
+
   private askTransfer(op: string): void {
-    if (this.selectedSave === '') {
+    /* ⭐ 判据是「有没有源」，⛔ 不是 `selectedSave === ''` —— 多选态下源是勾上的那批，
+     * 而那个字段只是「详情里最后点过的那一个」。 */
+    if (this.transferSourceRows().length === 0) {
       return;
     }
     this.transferOp = op;
@@ -2249,31 +2308,84 @@ export struct LauncherHome {
    * 否则会出现一个看起来能选、点下去报「源和目标在同一个目录」的选项。
    */
   private transferTargets(): VersionEntry[] {
-    /* ⭐ 「源」= **选中那一行自己的目录**，不再是当前版本的目录 —— 列表里可能有别的版本的存档。
-     * ⛔ 用 `savesDirShown` 的话会把**当前版本那一份**当成源（而它可能根本没有这个存档）。 */
-    const here: string = this.selectedSaveDir();
-    return this.versions.filter((v: VersionEntry) => (v.dataDir + '/saves') !== here);
+    /* ⭐ 「源」= **源那几行自己的目录**，不再是当前版本的目录 —— 列表里可能有别的版本的存档。
+     * ⛔ 用 `savesDirShown` 的话会把**当前版本那一份**当成源（而它可能根本没有这些存档）。
+     * ⚠️ 多选时**每一个**源目录都要排除：勾上的两个存档可能来自同一个版本，而「复制到原地」
+     * 是没意义的（`copySaveTo` 会当场报「源和目标在同一个目录」）⇒ 让玩家**选不出**这种组合，
+     * 比让他按下去再报错好（同 L3142 对「移动单选」的处理理由）。 */
+    const dirs: string[] = this.transferSourceDirs();
+    return this.versions.filter((v: VersionEntry) => dirs.indexOf(v.dataDir + '/saves') < 0);
   }
 
-  /** 目标那一行的后果说明。⭐ 用户要的就是「移动前讲清后果」。 */
+  /** 目标那一行的后果说明。⭐ 用户要的就是「移动前讲清后果」。
+   * ⚠️ 多选时要改复数措辞 —— 否则「复制**一份**过去」在一批 3 个时是错的。
+   * ⛔ 源 =1 时**逐字保持原样**（那是已经在用的句子，别因为重构改了它）。 */
   private transferTargetNote(v: VersionEntry): string {
     const n: number = countSavesIn(v.dataDir + '/saves');
     const head: string = n === 0
       ? '它还没有存档'
       : ('它现在有 ' + String(n) + ' 个存档');
+    const m: number = this.transferSourceRows().length;
     if (this.transferOp === 'move') {
-      return head + '；移过去之后，这个存档只在「' + v.label + '」下有。';
+      return m > 1
+        ? (head + '；移过去之后，这 ' + String(m) + ' 个存档只在「' + v.label + '」下有。')
+        : (head + '；移过去之后，这个存档只在「' + v.label + '」下有。');
     }
-    return head + '；复制一份过去，两边都有。';
+    return m > 1
+      ? (head + '；复制 ' + String(m) + ' 份过去，两边都有。')
+      : (head + '；复制一份过去，两边都有。');
+  }
+
+  /* 一条失败行。⭐ 源不止一个时**必须带上存档名** —— 否则「A → B：原因」里那个 A 是谁，
+   * 玩家从屏幕上读不出来（而批量操作失败时，他正需要知道**是哪一个**没成）。
+   * ⛔ 源 =1 时保持改动前那句话（`目标：原因`），别因为重构改了已经在用的措辞。
+   * ⚠️ 写成方法而不是局部箭头函数：本文件通篇是这个形状，而 ArkTS 比 TS 严
+   * （文件里没有任何局部函数定义的先例，不拿它试）。 */
+  private transferFailLine(src: SaveRow, where: string, why: string): string {
+    if (this.transferSourceRows().length > 1) {
+      return src.entry.label + ' → ' + where + '：' + why;
+    }
+    return where + '：' + why;
+  }
+
+  /* 对话框的标题。⭐ 单源念名字（今天的样子），多源念个数。
+   * ⚠️ 渲染期调用 ⇒ 只读内存（见 `transferSourceRows` 的注释）。 */
+  private transferSourceTitle(): string {
+    const m: number = this.transferSourceRows().length;
+    const verb: string = this.transferOp === 'move' ? '移动' : '复制';
+    if (m > 1) {
+      return verb + ' ' + String(m) + ' 个存档';
+    }
+    return verb + '「' + this.selectedSaveLabel() + '」';
+  }
+
+  /** 对话框的副标题 —— 一句话说清「源会怎样」。 */
+  private transferSourceSubtitle(): string {
+    const m: number = this.transferSourceRows().length;
+    if (this.transferOp === 'move') {
+      return m > 1
+        ? ('原版本会看不到这 ' + String(m) + ' 个。选一个目标。')
+        : '原版本会看不到它。选一个目标。';
+    }
+    return m > 1
+      ? ('原来那 ' + String(m) + ' 份不动。可以选多个目标。')
+      : '原来那一份不动。可以选多个目标。';
   }
 
   /* 按下「确定」——**这才是真正动手的地方**。
-   * ⚠️ 多个目标时**逐个执行**，并把失败的那几个**列出来**（不是遇到第一个失败就停）：
-   * 停下来的话，玩家会以为后面那些也没做，而其实前面已经成功了 —— 那种「状态不明」比失败本身更难受。
-   * ⇒ 成功的照做，失败的汇总成一句话，并且**照旧刷新**（部分成功也要反映出来）。 */
+   *
+   * ⚠️ **源 × 目标**：多选态下源是一批（`transferSourceRows`），复制还可以有多个目标
+   * ⇒ 最坏是 N×M 次文件操作。⛔ 单源时它与改动前逐字等价（一层循环退化成一次）。
+   *
+   * ⚠️ **不遇到第一个失败就停**：停下来的话，玩家会以为后面那些也没做，而其实前面已经成功了 ——
+   * 那种「状态不明」比失败本身更难受。⇒ 成功的照做，失败的汇总，并且**照旧刷新**。
+   *
+   * ⚠️ **失败行要给上限**：源×目标可以到几十条，而这段文字渲染在**一个** `Text` 里
+   * ⇒ 全列出来会把对话框顶爆。取前 6 条 + 一句「还有 N 条」。⛔ 但**总数照报** ——
+   * 只说 6 条会让人以为只错了 6 个。 */
   private confirmTransfer(): void {
-    const sv: SaveEntry | undefined = this.selectedSaveEntry();
-    if (sv === undefined || this.transferPicked.length === 0) {
+    const srcs: SaveRow[] = this.transferSourceRows();
+    if (srcs.length === 0 || this.transferPicked.length === 0) {
       return;
     }
     const fails: string[] = [];
@@ -2285,41 +2397,63 @@ export struct LauncherHome {
       if (v === undefined) {
         fails.push('选中的目标已经不在了');
       } else {
-        const e: string = moveSaveTo(sv, this.selectedSaveDir(), v.dataDir + '/saves');
-        if (e === '') {
-          okCount += 1;
-        } else {
-          fails.push(v.label + '：' + e);
+        for (const src of srcs) {
+          const e: string = moveSaveTo(src.entry, src.dir, v.dataDir + '/saves');
+          if (e === '') {
+            okCount += 1;
+          } else {
+            fails.push(this.transferFailLine(src, v.label, e));
+          }
         }
       }
     } else {
       for (const key of this.transferPicked) {
         if (key === DUP_KEY) {
-          const e: string = duplicateSave(sv, this.selectedSaveDir());
+          for (const src of srcs) {
+            const e: string = duplicateSave(src.entry, src.dir);
+            if (e === '') {
+              okCount += 1;
+            } else {
+              fails.push(this.transferFailLine(src, '再存一份', e));
+            }
+          }
+          continue;
+        }
+        const v: VersionEntry | undefined =
+          this.transferTargets().find((x: VersionEntry) => x.path === key);
+        if (v === undefined) {
+          fails.push('有个选中的目标已经不在了');
+          continue;
+        }
+        for (const src of srcs) {
+          const e: string = copySaveTo(src.entry, src.dir, v.dataDir + '/saves');
           if (e === '') {
             okCount += 1;
           } else {
-            fails.push('再存一份：' + e);
-          }
-        } else {
-          const v: VersionEntry | undefined =
-            this.transferTargets().find((x: VersionEntry) => x.path === key);
-          if (v === undefined) {
-            fails.push('有个选中的目标已经不在了');
-            continue;
-          }
-          const e: string = copySaveTo(sv, this.selectedSaveDir(), v.dataDir + '/saves');
-          if (e === '') {
-            okCount += 1;
-          } else {
-            fails.push(v.label + '：' + e);
+            fails.push(this.transferFailLine(src, v.label, e));
           }
         }
       }
     }
 
     if (fails.length === 0) {
+      /* ⚠️⚠️ **先记住是哪个动作，再关窗。** `closeTransferDialog()` 会把 `transferOp` 清成 `''`
+       * ⇒ 关窗之后再写 `this.transferOp === 'move'` 是**恒假**，下面那个分支永远不进。
+       *
+       * ⛔ 2026-10-04 我正是这么写的第一版，用户当场看到：**移动完还留在多选态** ——
+       * 提示条上「已选 2 项」停在旧数上（那两行已经从源里搬走了），勾选也没散。
+       * ⭐ 教训：**一个函数把某个字段清掉之后，它就不是「那个动作」的证据了** ——
+       * 想拿它做判断，就把值在读得到的时候先取出来。 */
+      const wasMove: boolean = this.transferOp === 'move';
       this.closeTransferDialog();
+      /* ⭐⭐ 收场按「源还在不在」而定（2026-10-04 用户选定）：
+       *   **复制**不动源 ⇒ **留在多选态**，可以直接再复制到别的版本；
+       *   **移动**把它们从源里搬走了 ⇒ **退出多选态**，否则会说「已选 3 项」而屏幕上只剩 2 行，
+       *   而且 `selectedSave` 还指着一个已经不存在的存档（详情面板会念一个空）。 */
+      if (wasMove && this.multiMode) {
+        this.exitMulti();
+        this.selectedSave = '';
+      }
     } else {
       /* ⭐⭐ 失败提示就两行：**「复制失败：」/「移动失败：」＋具体原因**（2026-10-02：「复制失败：
        * 「具体原因」，别的解释不需要」）。⛔ 原来拼的是「成功了 N 个；没成功：A；B；C」，一句话塞
@@ -2327,7 +2461,12 @@ export struct LauncherHome {
        * ⚠️ 部分成功时只在最前面留一行「成功了 N 个。」—— 那是**事实**，少了它会让人以为一个都没成。 */
       const head: string = this.transferOp === 'move' ? '移动失败' : '复制失败';
       const okLine: string = okCount > 0 ? ('成功了 ' + String(okCount) + ' 个。\n') : '';
-      this.transferNote = okLine + head + '：\n' + fails.join('\n');
+      const CAP: number = 6;
+      const shown: string[] = fails.slice(0, CAP);
+      const rest: string = fails.length > CAP
+        ? ('\n…还有 ' + String(fails.length - CAP) + ' 条')
+        : '';
+      this.transferNote = okLine + head + '：\n' + shown.join('\n') + rest;
       /* 清掉选择 —— 成功的那些再点一次会撞同名而报错，失败的那些让玩家重新挑。 */
       this.transferPicked = [];
     }
@@ -2886,7 +3025,11 @@ export struct LauncherHome {
          * 得先在「首页」把版本切过去（提示在「按版本」那边）。
          * ⭐⭐ **多选态下把这一条整根藏掉**（2026-10-02 同意）：不藏的话屏幕上会同时出现**两个「删除」**
          * （删勾上的这一批 / 删详情里那一个），长得一样、位置又近 ⇒ 玩家按下哪一个都是赌 —— 两个意思
-         * 不同的同名按钮并存，比少一个按钮糟得多。⚠️ 复制/移动也一起藏（它们只作用于一个存档）。 */
+         * 不同的同名按钮并存，比少一个按钮糟得多。
+         * ⭐ **2026-10-04 起这条理由更硬了**：多选条上现在**也有复制/移动**，于是同名的冲突从
+         * 「删除」一处变成**删除/复制/移动三处**。⚠️ 而两组按钮**意思确实不同**（多选条作用于
+         * **勾上的那一批**、这一排只作用于**详情里那一个**）⇒ 判据不变、结论不变：**藏**。
+         * ⛔ 别因为「现在两边都有复制了」就把这一排放出来。 */
         if (!this.multiMode) {
           Divider()
             .strokeWidth(1).color($r('app.color.launcher_border'))
@@ -2909,28 +3052,80 @@ export struct LauncherHome {
    * 「删除」是抹掉，于是不敢按。 */
   @Builder
   MultiBar() {
+    /* ⭐⭐ **窄屏拆两行**（2026-10-04 用户：「这样在手机上，文字提示和按钮必须拆分成两行了
+     * （平板够宽不用）」）。四个按钮加上那句提示，在手机上挤不进一行 ⇒ 提示独占一行、按钮换到第二行。
+     * ⛔ 判据走 `isNarrow()`（阈值在 L243 那一处），别在这儿再写一个宽度判断。
+     * ⚠️ 两个分支共用同一个 `MultiBarButtons()` —— ⛔ 别把四个按钮抄两遍。 */
+    if (this.isNarrow()) {
+      Column() {
+        Text('已选 ' + String(this.multiPickCount()) + ' 项 · 删除只是放进垃圾站，可以找回')
+          .fontSize(12).fontColor($r('sys.color.font_secondary'))
+          .width('100%')
+          /* 独占一行了，所以放宽到 2 行 —— 还按 1 行截断就白拆这一行了。 */
+          .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
+        /* ⚠️ 外面再包一层 `Row`：`MultiBarButtons` 自己是自然宽度，要有东西把它推到右边。
+         * ⛔ 别改成给那个 builder 里的 `Row` 加 `width('100%')` —— 宽屏那一臂里它与一个
+         * `layoutWeight(1)` 的 `Text` 是兄弟，那个 100% 会把宽屏的文字挤成 0 宽。 */
+        Row() {
+          this.MultiBarButtons()
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.End)
+        .margin({ top: 8 })
+      }
+      .width('100%')
+      .margin({ top: 10 })
+      .alignItems(HorizontalAlign.Start)
+    } else {
+      Row() {
+        Text('已选 ' + String(this.multiPickCount()) + ' 项 · 删除只是放进垃圾站，可以找回')
+          .fontSize(12).fontColor($r('sys.color.font_secondary'))
+          .layoutWeight(1)
+          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+        this.MultiBarButtons()
+      }
+      .width('100%')
+      .margin({ top: 10 })
+      .alignItems(VerticalAlign.Center)
+    }
+  }
+
+  /* 多选条上的四个按钮。⭐ **零参**（所以没有 L6 那条「参数按值传递 ⇒ 不刷新」的问题），
+   * 两个分支共用同一份。
+   * ⭐ 顺序与 `SaveActionRow`（删除 / 复制 / 移动）对齐 —— 用户 2026-10-03 说过这个顺序
+   * 「看着更顺眼」，两处别分叉；`取消` 收尾。
+   * ⚠️ `margin({ left: 8 })` 的分布照 `SaveActionRow`：**第一个按钮不能有左间距**，
+   * 否则整排会往右缩 8vp。 */
+  @Builder
+  MultiBarButtons() {
     Row() {
-      Text('已选 ' + String(this.multiPicked.length) + ' 项 · 删除只是放进垃圾站，可以找回')
-        .fontSize(12).fontColor($r('sys.color.font_secondary'))
-        .layoutWeight(1)
-        .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
       Button('删除')
         .fontSize(BUTTON_FONT_VP)
         .fontColor($r('sys.color.warning'))
-        .backgroundColor($r('app.color.launcher_bg'))
-        .enabled(this.multiPicked.length > 0)
+        .backgroundColor($r('app.color.btn_neutral'))
+        .enabled(this.multiPickCount() > 0)
         /* ⭐ 只**开窗**，不直接删 —— 见 `showMultiAsk`。⚠️ 名单每次重新**收起**：上一次展开过的
          * 话，这一次一进来就是展开的，而那是上一个批次的状态。 */
         .onClick(() => { this.showMultiAsk = true; this.multiListOpen = false; })
+      Button('复制')
+        .fontSize(BUTTON_FONT_VP)
+        .backgroundColor($r('app.color.btn_neutral'))
+        .margin({ left: 8 })
+        .enabled(this.multiPickCount() > 0)
+        .onClick(() => { this.askTransfer('copy'); })
+      Button('移动')
+        .fontSize(BUTTON_FONT_VP)
+        .backgroundColor($r('app.color.btn_neutral'))
+        .margin({ left: 8 })
+        .enabled(this.multiPickCount() > 0)
+        .onClick(() => { this.askTransfer('move'); })
       Button('取消')
         .fontSize(BUTTON_FONT_VP)
-        .backgroundColor($r('app.color.launcher_bg'))
+        .backgroundColor($r('app.color.btn_neutral'))
         .margin({ left: 8 })
         .onClick(() => { this.exitMulti(); })
     }
-    .width('100%')
-    .margin({ top: 10 })
-    .alignItems(VerticalAlign.Center)
+    /* ⛔ **不要在这里写 `width('100%')`** —— 理由见上面窄屏那一臂的注释。 */
   }
 
   @Builder
@@ -3123,13 +3318,13 @@ export struct LauncherHome {
   TransferDialog() {
     Column() {
       Column() {
-        Text((this.transferOp === 'move' ? '移动「' : '复制「') + this.selectedSaveLabel() + '」')
+        /* ⭐ 多选态下源是一批 ⇒ 标题改念**个数**（念名字的话，三个存档的名字接在一起会溢出一行）。
+         * ⛔ 源 =1 时保持原样「复制「名字」」—— 那是已经在用的样子。 */
+        Text(this.transferSourceTitle())
           .fontSize(17).fontColor($r('sys.color.font_primary'))
           .width('100%').textAlign(TextAlign.Center)
 
-        Text(this.transferOp === 'move'
-             ? '原版本会看不到它。选一个目标。'
-             : '原来那一份不动。可以选多个目标。')
+        Text(this.transferSourceSubtitle())
           .fontSize(13).fontColor($r('sys.color.font_secondary'))
           .width('100%').textAlign(TextAlign.Center)
           .margin({ top: 10 })
@@ -3146,9 +3341,10 @@ export struct LauncherHome {
          * （它有自己的一套主题与获焦行为，本项目在焦点上栽过）。 */
         Scroll() {
           Column() {
-            /* ---- 同版本再存一份（只有复制 + 只有手动存档）---- */
-            if (this.transferOp === 'copy' && this.selectedSaveEntry() !== undefined
-                && this.selectedSaveEntry()!.kind === 'manual') {
+            /* ---- 同版本再存一份（只有复制 + 源全是手动存档）----
+             * ⚠️ 判据是**全部**（`transferAllManual`），⛔ 不是「第一个源的 kind」——
+             * 混选时那样会让这一项出现、却只对其中几个生效。 */
+            if (this.transferOp === 'copy' && this.transferAllManual()) {
               Row() {
                 Column() {
                   Text('在这个版本里再复制一份')
@@ -3175,9 +3371,11 @@ export struct LauncherHome {
               .onClick(() => { this.toggleTransferPick(DUP_KEY); })
             }
 
-            /* ---- 战役存档说明为什么没有上面那一项 ---- */
-            if (this.transferOp === 'copy' && this.selectedSaveEntry() !== undefined
-                && this.selectedSaveEntry()!.kind === 'sector') {
+            /* ---- 战役存档说明为什么没有上面那一项 ----
+             * ⚠️ 对着**这批里有一个不是手动存档**就说 —— 混选时上面那一项整块不出现，
+             * 不说一句的话玩家会以为它被删了（或者说不出为什么少了一项）。 */
+            if (this.transferOp === 'copy'
+                && !this.transferAllManual() && this.transferSourceRows().length > 0) {
               Text('⚠️ 战役存档不能在同一个版本里复制 —— 一个区块出现两份存档，游戏会认不出来。'
                    + '要备份它，请复制到别的版本。')
                 .fontSize(12).fontColor($r('sys.color.warning'))
@@ -3213,8 +3411,7 @@ export struct LauncherHome {
             }, (v: VersionEntry) => v.path)
 
             if (this.transferTargets().length === 0
-                && !(this.transferOp === 'copy' && this.selectedSaveEntry() !== undefined
-                     && this.selectedSaveEntry()!.kind === 'manual')) {
+                && !(this.transferOp === 'copy' && this.transferAllManual())) {
               Text('没有可以选的目标 —— 先在「首页」导入另一个游戏版本。')
                 .fontSize(12).fontColor($r('sys.color.font_tertiary'))
                 .width('100%').margin({ top: 8 })
