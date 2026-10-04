@@ -5724,19 +5724,16 @@ export struct LauncherHome {
           /* ⭐⭐ **实验性：自动适配**（用户 2026-10-04：「标注为实验性功能，这个不默认开启」）。
            * ⛔ 出厂关闭（见 `LauncherPrefs.GAME_DISPLAY_DEFAULT`）。
            * 算法与依据全在 `GameAutoFit.ets` 的文件头 —— 那里也记着**它算出来的值（84）
-           * 比你在真机上实测最好的值（100）小**，而那是**有意的**：它给的是「刚好让开挖孔」的下限。 */
+           * 比你在真机上实测最好的值（100）小**，而那是**有意的**：它给的是「刚好让开挖孔」的下限。
+           *
+           * ⛔⛔ **这一张卡上【只有两处文字】：`异形屏避让（单位：px）` 与底下的
+           *    `只覆盖默认设置`。** 用户 2026-10-04 明确要求删掉我加的全部说明行，并立了一条规矩：
+           *    **默认不加提示，他同意了才加。** ⇒ 别在这里写「关闭时用滑条自己定」之类的小字；
+           *    也⛔ 不要在标题里带上当前数值（那也是一种提示，是他要删的那一类）。 */
           Row() {
-            Column() {
-              Text('自动适配（实验性）')
-                .fontSize(14).fontColor($r('sys.color.font_primary'))
-              Text(this.gameAuto
-                   ? ('按本机挖孔算出的避让值：' + String(this.gameAutoEdge))
-                   : '关闭时用下面的滑条自己定')
-                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-                .margin({ top: 4 })
-            }
-            .alignItems(HorizontalAlign.Start)
-            .layoutWeight(1)
+            Text('自动适配（实验性）')
+              .fontSize(14).fontColor($r('sys.color.font_primary'))
+              .layoutWeight(1)
 
             Toggle({ type: ToggleType.Switch, isOn: this.gameAuto })
               .onChange((on: boolean) => {
@@ -5749,24 +5746,13 @@ export struct LauncherHome {
           }
           .width('100%')
 
-          Row() {
-            Column() {
-              Text('异形屏避让')
-                .fontSize(14).fontColor($r('sys.color.font_primary'))
-              Text(this.gameAuto
-                   ? ('游戏里界面四周留出的空隙（' + String(this.gameAutoEdge) + '，自动）')
-                   : ('游戏里界面四周留出的空隙（' + String(this.gameEdge) + '）'))
-                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-                .margin({ top: 4 })
-            }
-            .alignItems(HorizontalAlign.Start)
-            .layoutWeight(1)
-          }
-          .width('100%')
-          .margin({ top: 18 })
+          Text('异形屏避让（单位：px）')
+            .fontSize(14).fontColor($r('sys.color.font_primary'))
+            .width('100%')
+            .margin({ top: 18 })
           Slider({
-            /* ⚠️ 自动开着时滑条显示**算出来的值**并禁用 —— 让它显示旧的手动值会与上面那句
-             *    「按本机挖孔算出的避让值：84」并排显示两个不同的数，看不出哪个在生效。 */
+            /* ⚠️ 自动开着时滑条显示**算出来的值**并禁用 —— 让它显示旧的手动值会与自动值不符，
+             *    而屏幕上没有数字能说明哪个在生效。 */
             value: this.gameAuto ? this.gameAutoEdge : this.gameEdge,
             min: GAME_EDGE_MIN,
             max: GAME_EDGE_MAX,
@@ -5788,19 +5774,12 @@ export struct LauncherHome {
               this.saveGameDisplay();
             })
 
-          Row() {
-            Column() {
-              Text('UI 缩放')
-                .fontSize(14).fontColor($r('sys.color.font_primary'))
-              Text('游戏界面的整体大小（' + String(this.gameScale) + '%）')
-                .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-                .margin({ top: 4 })
-            }
-            .alignItems(HorizontalAlign.Start)
-            .layoutWeight(1)
-          }
-          .width('100%')
-          .margin({ top: 18 })
+          /* ⛔ 用户只要了两处文字，所以这里**连单位都不加**（他没提 UI 缩放的单位）。
+           *    要加的话由他开口 —— 规矩见上面那段。 */
+          Text('UI 缩放')
+            .fontSize(14).fontColor($r('sys.color.font_primary'))
+            .width('100%')
+            .margin({ top: 18 })
           Slider({
             value: this.gameScale,
             min: GAME_SCALE_MIN,
@@ -5820,12 +5799,16 @@ export struct LauncherHome {
               this.saveGameDisplay();
             })
 
-          /* ⭐ 这一行**不是**「把标题重说一遍」那种冗余提示（用户为此删过两处），
-           *    它说的是**一条玩家推不出来的规则**：启动器只会在游戏仍是默认值时写入。
-           *    ⛔ 所以留着；但如果哪天它也被判为噪音，删掉它不会影响任何行为。 */
-          Text('只在这个版本的游戏还是默认设置时写入；你在游戏里自己调过就不会被覆盖')
+          /* ⭐ 这张卡的**第二处、也是最后一处文字**（用户 2026-10-04 指定的）。
+           * ⛔ 它把「不覆盖玩家已经调过的值」这条规则一句话说完 —— 所以**它同时取代了**
+           *    我原来那句更长的说明，以及我在 `applyGameDisplay` 里为「自动模式没写进去」
+           *    单独加的那条提示（那条已删：这条更短，而且涵盖同一个意思）。
+           * ⇒ 别在它旁边再加解释。 */
+          Text('只覆盖默认设置')
             .fontSize(12).fontColor($r('sys.color.font_tertiary'))
             .width('100%').margin({ top: 14 })
+          /* ⚠️ 这一条**不是提示**，是**写入失败**时的报错（正常路径下永不出现）——
+           *    与上面那条规则无关，所以留着。⛔ 但也别往里加正常的说明文字。 */
           if (this.gameDisplayNote !== '') {
             Text(this.gameDisplayNote)
               .fontSize(12).fontColor($r('sys.color.warning'))

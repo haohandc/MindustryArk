@@ -451,10 +451,6 @@ export function applyGameDisplay(dataDir: string, filesDir: string,
   }
 
   let changed: boolean = false;
-  /* ⭐ 三个给末尾那句提示用的标志（它们只在 `auto` 开着时才有意义）。 */
-  const autoWanted: boolean = pref.auto;
-  let edgeWritten: boolean = false;
-  let edgeWasPlayersOwn: boolean = false;
   const next: GameDisplayPref = { edge: pref.edge, scale: pref.scale, auto: pref.auto };
 
   /* 边距。 */
@@ -465,14 +461,12 @@ export function applyGameDisplay(dataDir: string, filesDir: string,
     if ((ours || untouched) && cur !== pref.edge) {
       if (setIntSetting(rows, KEY_EDGE_PADDING, pref.edge)) {
         changed = true;
-        edgeWritten = true;
         hilog.info(DOMAIN, TAG, 'gamesettings: %{public}s %{public}d -> %{public}d',
                    KEY_EDGE_PADDING, cur, pref.edge);
       }
     } else if (!ours && !untouched) {
       /* 玩家在游戏里调过 ⇒ 不仅不写，还要**记住他那个值**，否则下次启动我们会以为自己没写过、
        * 又拿「默认」去比 —— 而它已经不等于默认，于是每次都白算一遍（结果一样，但日志会吵）。 */
-      edgeWasPlayersOwn = true;
       next.edge = cur;
       hilog.info(DOMAIN, TAG, 'gamesettings: %{public}s is %{public}d (the player set it in game) '
                  + '-- leaving it alone', KEY_EDGE_PADDING, cur);
@@ -502,16 +496,12 @@ export function applyGameDisplay(dataDir: string, filesDir: string,
     if (applied === null || applied.edge !== next.edge || applied.scale !== next.scale) {
       writeAppliedGameDisplay(filesDir, next);
     }
-    /* ⭐⭐ **自动适配开着、却因为「游戏里已有玩家自己的值」而没写** —— 这必须说出来。
-     *    用户 2026-10-04 定的规则优先：**已有设置不覆盖**（他原话里的「空存档」进一步说明
-     *    自动生效的对象是还没被设置过的存档）。⇒ 自动模式**不是**「强制接管」，而是
-     *    「在游戏还是默认值时替你调好」。
-     * ⛔ 不说的话，玩家（以及这个功能的作者）看到的是「拨了开关、什么都没发生」——
-     *    而那与**功能坏了**长得一模一样。这条判据本项目用过很多次：**静默无效最贵。**
-     * ⚠️ 只有在**自动开着**时才报这一句：手动模式下不写是正常的（他就是在自己定值）。 */
-    if (autoWanted && !edgeWritten && edgeWasPlayersOwn) {
-      return '游戏里已经有你自己设的避让值（' + String(next.edge) + '），自动适配不会覆盖它';
-    }
+    /* ⛔ **几种「没写」的原因一律【不】在这里报文字。** 用户 2026-10-04 定了规矩：
+     *    **默认不加提示，他同意了才加** —— 而这一张卡上只留了两处文字，
+     *    其中 `只覆盖默认设置` 已经把「为什么没写」说完了。
+     * ⚠️ 我原来在这里为「自动开着但游戏里是玩家自己的值」单加过一句更啰嗦的提示，已删。
+     * ⭐ 真要查「为什么没写」，`storage_state.txt` 的 `game=` 那行有两个数，
+     *    再加上这里 `hilog` 打的「the player set it in game」就够定性了。 */
     return '';
   }
 
