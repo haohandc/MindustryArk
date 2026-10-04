@@ -435,10 +435,32 @@ static void log_game_settings_probe(const char *home)
         } else if (type == 3) {
             fseek(f, 4, SEEK_CUR);
         } else if (type == 4 || type == 5) {
-            /* ⚠️ 这两种是**变长**的，跳过它们要先读长度 —— 做得到，但那就等于实现整个格式了。
-             * ⇒ 停在这里并把原因说出来（`skipped_kinds` 非 0）。 */
-            skipped_kinds++;
-            break;
+            /* ⚠️ 变长的两种。**只读长度前缀再跳过** —— 这一步很小，但不做的话探针会停在
+             *    第一个字符串上（本项目实测：文件里 `lastBuildString` 排在第 16 条，
+             *    于是 `uiscale` 永远读不到、报 -1）。⛔ 别在这里解析字符串内容：
+             *    那是「再实现一份格式」，而完整实现已经在 ArkTS 那边（`GameSettings.ets`）。
+             *    这里只需要**知道有多长**：type 4 是 `writeUTF`（2 字节长度），
+             *    type 5 是 `int` 长度 + 内容（4 字节）。 */
+            unsigned char lb[4];
+            if (type == 4) {
+                if (fread(lb, 1, 2, f) != 2) {
+                    break;
+                }
+                const int n = (lb[0] << 8) | lb[1];
+                if (n < 0 || fseek(f, n, SEEK_CUR) != 0) {
+                    skipped_kinds++;
+                    break;
+                }
+            } else {
+                if (fread(lb, 1, 4, f) != 4) {
+                    break;
+                }
+                const long n = (long) ((lb[0] << 24) | (lb[1] << 16) | (lb[2] << 8) | lb[3]);
+                if (n < 0 || fseek(f, n, SEEK_CUR) != 0) {
+                    skipped_kinds++;
+                    break;
+                }
+            }
         } else {
             SDL_Log("settings-probe: unknown type %d for '%s' -- stopped", type, key);
             break;
@@ -453,7 +475,7 @@ static void log_game_settings_probe(const char *home)
     } else {
         /* ⚠️ 读到一半停下来时**照样报已知的那两个**，但**说清是残缺的** ——
          * 「89」与「只读到第 12 条所以 89 可能是旧的」是两件不同的事。 */
-        SDL_Log("settings-probe: PARTIAL (%d of %d entries; stopped at a variable-length value) -- "
+        SDL_Log("settings-probe: PARTIAL (%d of %d entries; the file is malformed or truncated) -- "
                 "uiEdgePadding=%ld uiscale=%ld", read_entries, count, edge, scale);
     }
 }
