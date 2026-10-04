@@ -16,6 +16,7 @@ import { bundleManager, common } from '@kit.AbilityKit';
 import { appLabel } from '../utils/AppLabel';
 import { newTreeStat, copyTreeInto, removeTree, TreeStat, isDir, pathExists } from '../utils/FsTree';
 import { externalRootPath } from '../settings/StorageRoot';
+import { fileIo as fs } from '@kit.CoreFileKit';
 import { picker } from '@kit.CoreFileKit';
 import { fileUri } from '@kit.CoreFileKit';
 import {
@@ -24,7 +25,8 @@ import {
 } from '../games/DataPack';
 import { GameJar, GameResolution, listGameJars, readSelection, writeSelection,
          resolveGame, gameJarDir, ensureGameJarDir,
-         bundledGameVersion, hasBundledGame, bundledGamePath } from '../games/GameLibrary';
+         bundledGameVersion, hasBundledGame, bundledGamePath,
+         gameVersionParts } from '../games/GameLibrary';
 /* 界面偏好（启动后进哪里）。⛔ 内容宽度**不再**在这里 —— 见 gamesWidthVp。 */
 import { readLaunchMode, writeLaunchMode,
          LAUNCH_MODE_HOME, LAUNCH_MODE_GAME,
@@ -50,7 +52,7 @@ import { GRANULARITY_OFF, GRANULARITY_NUMBER, GRANULARITY_BUILD, GRANULARITY_PAT
          copyLiveDataInto, gameDataExists, liveGameDataDir, isolatedGameDataDir,
          GameDataCounts, countsOf, describeCounts,
          resolveGameDataDir, resolveGameDirAndKey, GameDirForKey,
-         listInstanceKeys } from '../settings/Isolation';
+         listInstanceKeys, granularityKey, KEY_UNKNOWN } from '../settings/Isolation';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
@@ -84,6 +86,13 @@ interface SaveRow {
 /* 一组**共用同一份数据**的版本，以及那份数据里的存档。
  * ⚠️ 按**目录**分组而非按版本：隔离关着时所有版本共用一份数据，按版本分会让同一批存档
  * 出现 N 遍；按目录分恰好得到一组，组头的版本名单正好回答「属于哪几个版本」。 */
+/* 一个「共用同一份数据」的组：`key` 是那个目录的键，`versions` 是读它的版本名。
+ * ⭐ 「哪几个版本共用存档」这个问题，答案就是它。见 `isolationGroups()`。 */
+interface IsoGroup {
+  key: string;
+  versions: string[];
+}
+
 interface SaveGroup {
   /** 数据目录（`…/<版本>/sets/default/.local/share/Mindustry/saves`）。 */
   dir: string;
@@ -264,12 +273,33 @@ const NOTICE_MS: number = 4000;
 
 const CARD_RADIUS_VP = 14;
 
+/* 确认窗里「取消」的宽度（%）。**五个确认窗共用这一个值**，⛔ 别各自写一个数。
+ *
+ * ⛔⛔ 原来是 25%。弹窗内容宽 280vp（`max(320, winW × 0.5)` 减左右各 20vp 内边距），
+ *    25% = **70vp**；而「取消」两字 14fp ≈ 28vp，加 `Button` 默认左右内边距 ≈ 32vp = **60vp**
+ *    ⇒ 只剩 10vp 余量。而 `fontSize(14)` 的单位是 **fp**、**跟着系统字体缩放**
+ *    ⇒ 字体一调大，那两个字就装不下、变成 **「...」**（用户 2026-10-04 报的正是它）。
+ * ⭐ 34% = 95vp，留足缩放余量。判据是**按最大字号算，而不是按默认字号算** ——
+ *    一个「今天刚好放得下」的宽度，就是明天会坏掉的宽度。 */
+const CANCEL_BTN_WIDTH: string = '34%';
+
 /** 按钮字号。**显式给**，因为不给会按各自标签长度自适应，两个按钮的字不一样大。 */
 const BUTTON_FONT_VP = 16;
 
 /* 「按版本」那一屏存档行的三列宽度（vp）：文件名占剩下的全部，大小与时间**各占一列、右对齐**。
  * ⚠️ 宽度必须写死（`Text` 默认按内容自适应 ⇒ 列会歪），写死是安全的，因为两个格式**定长**：
  * 大小 ≤ 7 个字符（`1.2 MB`），时间恒为 10 个字符（`2026-10-02`）。
+ *
+ * ⭐⭐ **但「宽度写死」只在字号也写死时才成立。** 这一条是 2026-10-04 才补上的：
+ * 原来那句理由默认了「字不会变大」，而 ArkUI 里 `fontSize(12)` 的单位是 **fp**（SDK 原文：
+ * 「If fontSize is of the number type, the unit fp is used」）⇒ **它跟着系统字体缩放**。
+ * 系统字体一调大，10 个字符的日期就会撑出 92vp，列宽写死反而变成裁切。
+ *
+ * ⇒ ⭐ **判据（全文件通用）**：
+ *    · **标签 / 说明文字**（跟着读的字）—— 用数字（fp），**让用户按自己的需要放大**；
+ *    · **装在定宽盒子里的数据**（大小、日期、勾）—— 用 `'12vp'` 这样的字符串，
+ *      **不跟系统字体缩放**，否则那个盒子装不下它。
+ * ⛔ 别反过来：给标签写 vp 会让看不清的用户没有出路；给数据列写 fp 会让列宽失效。
  * 手机窄屏上文件名只剩一百多 vp，靠 `TextOverflow.Ellipsis` 收尾 —— 比三列错开代价小。 */
 const SAVE_SIZE_COL_VP = 74;
 const SAVE_DATE_COL_VP = 92;
@@ -407,6 +437,8 @@ export struct LauncherHome {
     if (this.showDeleteAsk) { this.showDeleteAsk = false; return true; }
     /* 清空垃圾站的确认框。⚠️ 与上面那些同理 —— 一个能永久删东西的窗必须能被返回键关掉。 */
     if (this.showVaultClearAsk) { this.showVaultClearAsk = false; return true; }
+    /* 删除版本的确认窗。⚠️ 与上面同理：一个会真删东西的窗必须能被返回键关掉。 */
+    if (this.showGameDeleteAsk) { this.showGameDeleteAsk = false; return true; }
     if (this.transferOp !== '') { this.transferOp = ''; this.transferNote = ''; return true; }
     if (this.isolationConfirm !== '') { this.isolationConfirm = ''; return true; }
     if (this.showIsolationAsk) {
@@ -455,6 +487,31 @@ export struct LauncherHome {
    * ⛔⛔ 这个动作**不可逆**（`vaultPurge` 是真删，不是搬去别处）⇒ 必须过确认，
    *     和单个存档的删除走同一条规矩（那边的理由见 `showDeleteAsk`）。 */
   @State showVaultClearAsk: boolean = false;
+
+  /* 「删除这个版本」的确认窗开着没有。
+   * ⛔ 它与存档那个删除**不是一回事**：存档是搬进垃圾站（能找回），这里两个选项都是**真删**，
+   *     而「连数据一起删」还可能连带别的版本（见 `otherVersionsOnSelectedDir`）⇒ 必须过确认。 */
+  @State showGameDeleteAsk: boolean = false;
+  /* 「按『xxx』进行数据隔离」那个窗里，详情展开了没有。
+   * ⭐ 默认收起 —— 里面那两块（这一档怎么分 / 版本→目录表）是**要看的人才有用**的，
+   * 摊在外面会让整个弹窗读不完（用户 2026-10-04：「之前的提示我都快看不懂了」）。 */
+  @State showIsolationDetail: boolean = false;
+
+  /** 「数据未迁移」那条提示被玩家**手动忽略**了吗。
+   * ⭐ 忽略只在**本次运行内**有效，而且状态一变就会自己复位（见 `refresh()`）——
+   *    否则他忽略了、又改了粒度，新出现的那个空目录就再也不会提示。
+   * ⚠️ 忽略只是**把提示收起来**，不改任何文件 —— 它不是「门」，所以不需要出口。 */
+  @State staleIgnored: boolean = false;
+
+  /* 要删的是**哪一个**。⛔ 不用「当前选中的那个」—— 左滑是**对着某一行**做的动作，
+   * 而那一行不一定是选中的那一行（选中只决定「点启动游戏时跑哪个」）。
+   * ⚠️ 这三样都在**打开确认窗那一刻**存住，理由见 `openGameDeleteAsk`。 */
+  @State gameDeletePath: string = '';
+  @State gameDeleteLabel: string = '';
+  @State gameDeleteDir: string = '';
+  /* 版本页上一次删除的结果 / 失败原因。
+   * ⛔ 必须说出来：删除失败却让界面看着正常，是这个项目最不该有的那类缺陷。 */
+  @State gamesNote: string = '';
   /** 垃圾站里现在有什么。`refresh()` 里读一次，渲染只用它。 */
   @State vaultEntries: VaultEntry[] = [];
   /** 保留期（天）。⭐ 全局设置。 */
@@ -540,19 +597,31 @@ export struct LauncherHome {
    * 反悔的地方，恰恰那时什么解释都没有。用玩家**真实的版本**算，不举 `160.5` 这种编的例子。
    * ⚠️ 在 `chooseGranularity()` 里算一次（要读每个 jar），⛔ 不在渲染里算。 */
   @State pendingPreview: string = '';
+  /* ⭐⭐ 说明那一行**存下来**，渲染只读这个字符串。
+   *
+   * ⛔ 我 2026-10-04 把它改成「算出来的」之后，忘了它被**渲染**调用（设置页 + 弹窗两处），
+   *    而它的实现要读**每一个 jar**（`gameVersionParts` 没有缓存，单个最大 88 MB）⇒
+   *    **每渲染一次就把所有 jar 读一遍**。讽刺的是我自己在下面写了「⛔ 绝不在渲染路径上」，
+   *    然后又违反了它。
+   * ⭐ 判据（本文件通用）：**凡是要读 jar 的，一律在 `refresh()` / 事件处理里算好，存进 @State**；
+   *    渲染里只允许读已经算好的值。
+   * ⚠️ 两份：设置页按 `this.granularity` 算，弹窗按 `pendingGranularity` 算，两者不同。 */
+  @State granularityHintText: string = '';
+  @State pendingHint: string = '';
 
   /* 当前选中的是**内置游戏** —— 它在任何档位下都用固定的 `bundled` 目录。
    * ⛔ 必须专门说一句：玩家这时切「大版本/构建号/小版本」，**目录名一个都不会变** ⇒
    * 他会以为功能坏了。真因是一条刻意的设计：内置那份永不移动，换内置 jar 时玩家数据不跟着搬。 */
   @State pendingUsesBundled: boolean = false;
 
-  /* 询问窗要点名的那个版本：【「名字 · 版本号」】与它在**这一档下**会用的键。
+  /* 询问窗要点名的那个版本：「名字 · 版本号」。
    * ⚠️ 原来整句话只有指代（「这个版本」），而那个版本的**身份**在那一屏上看不见（它在首页页签）
    * ⇒ 这里点名。
-   * ⚠️ `pendingKey` 必须用**待确认的那一档**算，⛔ 不能用 `versions` 里现成的 `.key`
-   * （那是按**当前**档位算的）—— 两者在玩家正切换时不一样。 */
+   * ⛔【曾经还有一个 `pendingKey`】—— 窗里单独写一行「这一档下，它用目录：xxx」。
+   *    2026-10-04 删了：下面那份「版本 → 目录」对照表**本来就含当前版本那一行**，
+   *    再单独写一遍是同一份信息的第二遍。⚠️ 顺带省掉一次 `resolveGameDirAndKey()` ——
+   *    它会**真读 jar**（最大 88 MB），而弹窗每打开一次要渲染好几遍。 */
   @State pendingVersionName: string = '';
-  @State pendingKey: string = '';
 
   /* **隔离开着，但那一份数据目录根本不存在** —— 即「开关拨过去了、数据没过去」。
    * ⛔ 必须单独显出来：这种状态在界面上**完全看不出来**，玩家进游戏看到的是一整套空数据
@@ -726,17 +795,135 @@ export struct LauncherHome {
     return '不隔离';
   }
 
-  private granularityHint(g: string): string {
-    if (g === GRANULARITY_NUMBER) {
-      return 'v8 的所有版本共用一份；v9 出来之后才会分开';
+  /* 把「已装的版本」按**当前档位算出来的键**分组 —— 键相同 = 落进同一个目录 = 共用一份数据。
+   *
+   * ⭐⭐ 这是用户 2026-10-04 要的那张「哪几个版本共用存档」的表，也是【说明文字】的唯一来源。
+   * ⛔ 在它之前，说明那句是**写死的**（`'v8 的所有版本共用一份'`）而表是真算的 ⇒
+   *    只要装的不是 v8，**说明就在说谎**（用户原话：「我不知道你有没有做 v7 等等的提示」——
+   *    答案是没有）。现在两者同一处算，不可能分叉。
+   *
+   * ⚠️ 分组【不自己折版本字段】（number / build 那些）：`computeKey()` 已经把该并的并了，
+   *    包括「与内置同版本也走 bundled」那条规则 —— 再折一次就是把那条规则实现第二遍。
+   * ⚠️ 它会读每个 jar（`gameVersionParts` **没有缓存**）⇒ 只从 `chooseGranularity()` 与
+   *    设置页那次调用，⛔ 绝不在渲染路径上。 */
+  private isolationGroups(g: string): IsoGroup[] {
+    const out: IsoGroup[] = [];
+    const at: Map<string, number> = new Map<string, number>();
+    for (const v of this.versions) {
+      const key: string = resolveGameDirAndKey(g, v.source, v.path, this.bundledJar()).key;
+      const k: string = key === '' ? '（不隔离）' : key;
+      /* ⭐ 显示**实际版本号**，⛔ 不是 jar 文件名（用户 2026-10-04：
+       * 「不要展示 jar 名称，展示实际版本名称」）。读不出才退回文件名。 */
+      const nm: string = (v.version === '' ? v.label : v.version)
+                       + (v.source === 'bundled' ? '（内置）' : '');
+      const i: number | undefined = at.get(k);
+      if (i === undefined) {
+        at.set(k, out.length);
+        out.push({ key: k, versions: [nm] });
+      } else {
+        out[at.get(k) as number].versions.push(nm);
+      }
     }
-    if (g === GRANULARITY_BUILD) {
-      return '160.5 与 160.1 共用一份；160 与 159 分开。改动最大的界线在这里';
+    return out;
+  }
+
+  /* 键 → 它代表的**版本槽位**（`b160` → `160`、`n8` → `8`）；**不是槽位的键返回空串**。
+   *
+   * ⛔⛔ 这是 2026-10-04 用户当场看到那个 bug 的根：我在两个调用点各自写了
+   *      `key.substring(1)`，理由是「槽位键恒为 `n`/`b` + 数字」。而 `KEY_BUNDLED`
+   *      是 `bundled` ⇒ 被砍成 **`undled`**，又以 `b` 开头 ⇒ 还被当成「构建号系列」，
+   *      于是弹窗上写着 **「vundled 的所有版本共用一份」**。
+   * ⭐ 判据改成**形状**（`n`/`b` 后面必须跟数字）：`bundled`（b+u）与 `_unknown`（下划线）
+   *    自然落选，⛔ 不依赖任何白名单，将来多出别的键也不会再误判。 */
+  private slotOfKey(key: string): string {
+    return /^[nb][0-9]/.test(key) ? key.substring(1) : '';
+  }
+
+  /* 内置那份**在这一档下本来会落到哪个槽位**（`n8` / `b160`）—— ⛔ 不是它实际用的那个：
+   * 内置恒用 `bundled`，这个值只用来**告诉玩家它相当于哪一档**。
+   * ⭐ 用户 2026-10-04：「按大版本：内置游戏（v8）」「按构建号：内置游戏（b160）」。
+   * ⛔ 它读 jar（`gameVersionParts` 没有缓存）⇒ 只从 `buildGranularityPreview()` /
+   *    `isoGroupTitle()` 走，⛔ 不在渲染路径上。读不出返回 `''`（那时不显示括号）。 */
+  private bundledSlotKey(g: string): string {
+    const p: string = bundledGamePath(this.bundleCodeDir);
+    if (p === '') {
+      return '';
+    }
+    return granularityKey(g, gameVersionParts(p));
+  }
+
+  /** 一个槽位键给玩家看的写法：`n8` → `v8`，`b160` → `b160`。⛔ 不是槽位就返回空串。 */
+  private slotLabel(key: string): string {
+    if (key === '' || key === KEY_UNKNOWN) {
+      return '';
+    }
+    return key.charAt(0) === 'n' ? ('v' + key.substring(1)) : key;
+  }
+
+  /** 一个组在表里的标题。⛔ `bundled` / `_unknown` **不是版本槽位**，不能当版本号念。 */
+  private isoGroupTitle(g: string, key: string): string {
+    if (key === 'bundled') {
+      /* ⭐ 说人话：它对应的就是「内置游戏」那一行。
+       * ⭐⭐ 再带上它**相当于哪一档** —— 玩家看「内置游戏」不知道那一档把它分到了哪里，
+       * 而括号里那个才是他能和自己导入的 jar 对上的东西。
+       * ⚠️ 这个值是**算**出来的（读内置 jar 的版本），⛔ 不是写死的 ——
+       * 我们换内置游戏版本时它会自己跟着变（用户 2026-10-04：「文字需要是动态的，
+       * 不是固定死的，这样我们换了版本可以少改一处」）。 */
+      const sub: string = this.slotLabel(this.bundledSlotKey(g));
+      return sub === '' ? '内置游戏' : ('内置游戏（' + sub + '）');
+    }
+    if (key === '_unknown') {
+      /* ⚠️ 同一条道理：`_unknown` 是**内部键**，不能原样念给玩家听。
+       * 措辞跟版本列表那边走（读不出就是「未知版本」）—— 一处词，两处别分叉。 */
+      return '未知版本';
+    }
+    const slot: string = this.slotOfKey(key);
+    if (slot === '') {
+      return key;                     // `_unknown` / `（不隔离）` 之类，原样
+    }
+    return key.charAt(0) === 'n' ? ('v' + slot + ' 系列') : (slot + ' 版本');
+  }
+
+  /* 说明那一行。⭐ **每一段都来自 `isolationGroups()`** —— 也就是玩家自己装了什么。 */
+  private granularityHint(g: string): string {
+    if (g === GRANULARITY_OFF) {
+      return '所有版本共用一份数据（默认）';
+    }
+    const groups: IsoGroup[] = this.isolationGroups(g);
+    if (groups.length === 0) {
+      return '';
     }
     if (g === GRANULARITY_PATCH) {
-      return '每个小版本各一份（160.5 与 160.4 也分开）。切得最细，但要重建的东西也最多';
+      return '每个版本各一份';
     }
-    return '所有版本共用一份数据（默认）。换版本时看到的是同一批存档';
+    /* ⭐ 只数**真槽位**（`n8` / `b160`）。`bundled` / `_unknown` 不是槽位 ——
+     * 它们在这句里没有对应的话可说（内置那份由下面那行「注意」交代）。 */
+    const slots: string[] = [];
+    for (const gr of groups) {
+      const s: string = this.slotOfKey(gr.key);
+      if (s !== '' && slots.indexOf(s) < 0) {
+        slots.push(s);
+      }
+    }
+    if (slots.length === 0) {
+      /* 装的版本一个槽位都算不出来（全是内置 / 读不出）⇒ 退回**通用规则**，
+       * ⛔ 不要拼出半句空话。 */
+      return g === GRANULARITY_NUMBER ? '同一个大版本共用一份' : '同一构建号的版本共用一份';
+    }
+    const parts: string[] = [];
+    const cap: number = Math.min(slots.length, 2);
+    for (let i = 0; i < cap; i += 1) {
+      if (g === GRANULARITY_NUMBER) {
+        parts.push('v' + slots[i] + ' 的所有版本共用一份');
+      } else {
+        /* ⛔ 这里不列成员 —— 下面那张表会逐个列出来，一行说明再列一遍就长了。 */
+        parts.push('同一 ' + slots[i] + ' 的版本共用一份');
+      }
+    }
+    if (slots.length > 2) {
+      parts.push('其余同理');
+    }
+    return parts.join('；');
   }
 
   /* 玩家点了某一档。⭐ **关掉不问、打开才问** —— 两者后果不同：
@@ -761,17 +948,20 @@ export struct LauncherHome {
     this.isolationCounts = countsOf(liveGameDataDir());
     /* 选之前就把「这一档怎么分、会落到哪些目录」摆出来（原来要选完才知道是啥情况）。 */
     this.pendingPreview = this.buildGranularityPreview(g);
+    /* ⭐ 与上面同一批：要读 jar 的东西在这里一次算好（渲染只读字符串，见 `pendingHint` 的注释）。 */
+    this.pendingHint = this.granularityHint(g);
+    /* 每次打开都**收起详情** —— 上一次展开过的话，这次一进来就是展开的，
+     * 而那是上一次的状态（与 `MultiBar` 里那个「名单每次重新收起」同一条理由）。 */
+    this.showIsolationDetail = false;
     /* 「复制过去」要复制的分类：算出来并**默认全勾**（玩家的意图就是每个版本都别丢数据，
      * 那是常见情形；反过来默认一个都不勾会让最常见的意图要点两次）。与「我替你全选」的差别
      * 在于 —— **现在是看得见的**，而且能改。 */
     this.copyTargets = this.buildCopyTargets(g);
     this.copyPicked = this.copyTargets.map((c: CopyTarget) => c.key);
     this.pendingUsesBundled = this.versions.some((v: VersionEntry) => v.source === 'bundled');
-    /* 点名当前这个版本，以及它在**这一档下**会用哪个目录。⚠️ 版本名按 `resolution.path`
-     * （**版本身份**，jar 路径）找，⛔ 不是版本号（两个 jar 可以是同一个版本号）。 */
+    /* 点名当前这个版本。⚠️ 版本名按 `resolution.path`（**版本身份**，jar 路径）找，
+     * ⛔ 不是版本号（两个 jar 可以是同一个版本号）。 */
     const res: GameResolution = this.resolution;
-    const rk: GameDirForKey = resolveGameDirAndKey(g, res.source, res.path, this.bundledJar());
-    this.pendingKey = rk.key;
     const hit: VersionEntry | undefined =
       this.versions.find((v: VersionEntry) => v.path === res.path);
     if (hit === undefined) {
@@ -788,13 +978,20 @@ export struct LauncherHome {
    * ⚠️ 它会读每个 jar（`gameVersionParts` **没有缓存**）⇒ 只从 `chooseGranularity()` 调，
    * ⛔ 绝不在渲染路径上（一次点开 = 读 4 个 jar，与 `refresh()` 同量级）。 */
   private buildGranularityPreview(g: string): string {
-    if (this.versions.length === 0) {
+    const groups: IsoGroup[] = this.isolationGroups(g);
+    if (groups.length === 0) {
       return '（现在还没有可用的游戏版本）';
     }
     const lines: string[] = [];
-    for (const v of this.versions) {
-      const key: string = resolveGameDirAndKey(g, v.source, v.path, this.bundledJar()).key;
-      lines.push(v.label + '   →   ' + (key === '' ? '（不隔离）' : key));
+    for (const gr of groups) {
+      /* ⭐ 组标题（用户 2026-10-04 给的形状：「160版本 / xxx -> xxx / 159版本 / …」）。
+       * ⛔ 小版本那一档**不出标题** —— 每个版本各一份，标题只会逐行重复「各自一份」。 */
+      if (g !== GRANULARITY_PATCH) {
+        lines.push(this.isoGroupTitle(g, gr.key));
+      }
+      for (const nm of gr.versions) {
+        lines.push('    ' + nm + '   →   ' + gr.key);
+      }
     }
     return lines.join('\n');
   }
@@ -911,25 +1108,52 @@ export struct LauncherHome {
   @Builder
   StaleCopyOffer() {
     Column() {
-      Text('⚠ 隔离开着，但当前版本这一档还是空的 —— 进游戏会看到空的数据。'
-           + '你的存档一直都在（在「未隔离的那一份」里）。')
-        .fontSize(12).fontColor($r('sys.color.warning'))
+      /* ⭐⭐ 2026-10-04 按用户给的文案定稿（他原话：「开启隔离后，数据未迁移到当前版本。
+       * 选项：复制过去；忽略」）。此前那一版是我自己收的，他不要。
+       * ⚠️ 颜色仍是常规色而非 warning：这是**一个状态 + 两个选项**，不是错误 ——
+       *    整块报警色会让人以为出了事，而其实什么都没坏。 */
+      Text('开启隔离后，数据未迁移到当前版本')
+        .fontSize(14).fontColor($r('sys.color.font_primary'))
         .width('100%')
+
       /* 失败时**留在这块里**说清楚 —— 失败意味着状态没变、这块还会在。⛔ 不写成弹窗：
-       * 失败一次就弹一次的话，玩家得先关掉窗才看得见下面还有什么。 */
+       * 失败一次就弹一次的话，玩家得先关掉窗才看得见下面还有什么。
+       * ⭐ 这一条**保留**警告色：它才是真的出事了。 */
       if (this.staleCopyNote !== '') {
         Text(this.staleCopyNote)
           .fontSize(12).fontColor($r('sys.color.warning'))
           .width('100%').margin({ top: 6 })
       }
+
+      /* ⭐⭐ 按钮**必须比正文小**。原来用 `BUTTON_FONT_VP`（16）⇒ 按钮上的字**比要读的正文（12）还大**，
+       * 加上 `Button` 默认 40vp 高，整块看起来是「一句话 + 一个和它一样大的色块」。
+       * ⇒ 字号降到 14、高度压到 34（⛔ 不走 `BUTTON_FONT_VP`：那个常量同时管着 10 个**主**按钮，
+       *   这里是个次要出路，不该跟着它们一起定）。
+       * ⚠️ 34vp 低于 48vp 那个最小触控目标 —— 有意的取舍：它够宽（左右各 18vp 内边距），
+       *    而这块提示本身不该在屏幕上占掉主按钮的分量。 */
+      /* ⭐ 两个选项。「复制过去」是**主**动作（填色），「忽略」是次级（描边感：卡片底色）。
+       * ⚠️ 两个都不走 `BUTTON_FONT_VP` —— 那个常量管着 10 个主按钮，这里是提示里的出路，
+       *    字号 14 / 高 34 是刻意的（用户 2026-10-04：「按钮相较文字提示过大」）。 */
       Row() {
-        Button('把未隔离的那份复制过来')
-          .fontSize(BUTTON_FONT_VP)
+        Button('复制过去')
+          .fontSize(14)
+          .height(34)
+          .padding({ left: 18, right: 18 })
           .onClick(() => { this.copyStaleCurrent(); })
+        /* 「忽略」只把这一块收起来，**不动任何文件** —— 所以它不需要二次确认，
+         * 也不需要「出口」：状态一变提示会自己回来（见 `refresh()` 里那次复位）。 */
+        Button('忽略')
+          .fontSize(14)
+          .height(34)
+          .padding({ left: 18, right: 18 })
+          .fontColor($r('sys.color.font_secondary'))
+          .backgroundColor($r('app.color.launcher_card'))
+          .margin({ left: 8 })
+          .onClick(() => { this.staleIgnored = true; })
       }
       .width('100%')
       .justifyContent(FlexAlign.End)
-      .margin({ top: 8 })
+      .margin({ top: 10 })
     }
     .width('100%')
     .padding(14)
@@ -998,6 +1222,9 @@ export struct LauncherHome {
     this.resolution = resolveGame(this.filesDir, this.bundleCodeDir);
     this.bundledVer = bundledGameVersion(this.bundleCodeDir);
     this.hasBundled = hasBundledGame(this.bundleCodeDir);
+    /* ⭐ 设置页那一行的说明：与版本列表同一批算好。⚠️ 它按 `this.granularity`（当前档），
+     * 而弹窗那份按 `pendingGranularity`（待确认档）—— 两者在玩家正切换时不同，不能共用。 */
+    this.granularityHintText = this.granularityHint(readGranularity(this.filesDir));
 
     /* 存档。⚠️ 目录**取决于隔离状态** —— 用与 native 算 `user.home` 同一套输入，否则这里会列出
      * 另一份存档，那是最坏的一类不一致：界面上看起来完全正常。⚠️ 两者仍可能分叉：玩家改了粒度
@@ -1019,6 +1246,9 @@ export struct LauncherHome {
       hilog.error(DOMAIN, TAG, 'isolation: STALE -- on, but %{public}s does not exist '
                 + '(the un-isolated copy does)', dataDir);
     } else {
+      /* ⭐ 状态解除了 ⇒ 把「已忽略」一并复位。⛔ 不复位的话，下次真的又出现这个状态时，
+       *    提示会被上一次的忽略静默吃掉 —— 而那正是最需要它出现的时候。 */
+      this.staleIgnored = false;
       /* 状态解除了 ⇒ 上一次那句「没复制成功」不再关于任何东西 —— 清掉。⛔ 不清的话它会一直挂在
        * `StaleCopyOffer` 里，等下一次出现空的档位时重新露出来，而那时它说的是另一个键的事 ——
        * 一条关于旧状态的错误消息比没有消息更坏：它指向一个已经不存在的问题。 */
@@ -2140,6 +2370,128 @@ export struct LauncherHome {
     hilog.info(DOMAIN, TAG, 'launcher: picked (bundled)');
   }
 
+  /* 打开确认窗。`g` = **刚被左滑的那一行**（见 `SwipeDeleteAction`），不是「选中的那个」。
+   * ⭐⭐ 三样东西都在这里算一次并存住，理由有两条，缺一条都不行：
+   *   ① `computeKey()` **没有缓存** —— 每调一次就真读一次那个 jar（最大 88 MB），
+   *      而对话框会渲染好几遍，⛔ 不能每遍都去读；
+   *   ② 删除流程走到一半 jar 就没了，**那时同一个版本会算到别的键上**
+   *      ⇒「删它的数据」会删到另一份上去。 */
+  private openGameDeleteAsk(g: GameJar): void {
+    this.gameDeletePath = g.path;
+    /* ⭐⭐ **文件名在前**（用户 2026-10-04：「具体哪个文件」）。
+     * ⚠️ 与首页那一行的次序**相反**，而且这次是对的：那一行是**挑版本**时看的（版本号才是要比的），
+     *    这里是**确认删哪个文件** —— 同一个版本号可能有好几个 jar，要认的正是文件名。
+     * 版本号跟在后面（读不出就不跟），它只是补充。 */
+    this.gameDeleteLabel = g.version === '' ? g.name : (g.name + '  ·  ' + g.version);
+    this.gameDeleteDir = resolveGameDirAndKey(this.granularity, 'user', g.path,
+                                              this.bundledJar()).dir;
+    this.gamesNote = '';
+    this.showGameDeleteAsk = true;
+  }
+
+  /** 这个版本有没有**自己**的隔离数据。
+   *  ⛔ `false` 的含义很重：它用的是全应用唯一那份「未隔离的数据」⇒ **不能删**
+   *     （删它等于把所有不隔离的版本一起清掉，还包括玩家最初那一份）。 */
+  private jarHasOwnData(): boolean {
+    return this.gameDeleteDir !== '' && this.gameDeleteDir !== liveGameDataDir();
+  }
+
+  /** 除它之外，还有哪些版本读同一个数据目录。 */
+  private otherVersionsOnSelectedDir(): VersionEntry[] {
+    const out: VersionEntry[] = [];
+    if (this.gameDeletePath === '' || this.gameDeleteDir === '') {
+      return out;
+    }
+    for (const v of this.versions) {
+      if (v.dataDir === this.gameDeleteDir && v.path !== this.gameDeletePath) {
+        out.push(v);
+      }
+    }
+    return out;
+  }
+
+  /** 那些版本的名字。⚠️ 超过三个就截断 —— 一整串会把那段警告挤成墙。 */
+  private otherVersionsText(): string {
+    const names: string[] = [];
+    for (const v of this.otherVersionsOnSelectedDir()) {
+      names.push(v.version === '' ? v.label : v.version);
+    }
+    if (names.length <= 3) {
+      return names.join('、');
+    }
+    return names.slice(0, 3).join('、') + ' 等 ' + String(names.length) + ' 个';
+  }
+
+  /** 这份数据里现在有几个存档。⭐ 「会少掉多少」要在按之前就能看见。 */
+  private jarDataSaveCount(): number {
+    if (this.gameDeleteDir === '') {
+      return 0;
+    }
+    return countSavesIn(this.gameDeleteDir + '/saves');
+  }
+
+  /* 真删一个版本。`withData = true` ⇒ 连它的数据一起删。
+   *
+   * ⚠️ 目录用 `this.gameDeleteDir`（打开窗时算好的），⛔ **不在这里重算** —— 见 `openGameDeleteAsk`。
+   *
+   * ⚠️ 顺序是**先数据、后 jar**，而且数据没删干净就**整个停下**：
+   *    · 反过来先删 jar，会留下一个「没有版本读它」的孤儿目录 —— 界面上本来就有一类专门显示
+   *      它，但那是**另一件事**，不该由「删除」制造出来；
+   *    · 数据删一半就停，玩家还能看着这个版本再试一次，而不是剩一个游戏配半份数据。 */
+  private deleteGame(withData: boolean): void {
+    const path: string = this.gameDeletePath;
+    this.showGameDeleteAsk = false;
+    if (path === '') {
+      return;
+    }
+    const dir: string = this.gameDeleteDir;
+
+    /* ⛔ 未隔离那一份**自己再拦一次**。界面本来就不会给出那个按钮（见 `jarHasOwnData`），
+     * 但**界面不是门**：一个真删东西的动作必须自己认得「这个不能删」，而不是指望调用点记得。
+     * 这也是这一条比界面那条更重要的地方 —— 界面会变，这条不会。 */
+    if (withData && (dir === '' || dir === liveGameDataDir())) {
+      this.gamesNote = '那份是全应用唯一的未隔离数据，不能这样删。';
+      this.refresh();
+      return;
+    }
+
+    if (withData) {
+      const rm: TreeStat = newTreeStat();
+      removeTree(dir, 0, rm);
+      if (rm.failed > 0) {
+        this.gamesNote = '数据没删干净，游戏也先没删（可以再试一次）：' + rm.firstError;
+        this.refresh();
+        return;
+      }
+      hilog.info(DOMAIN, TAG, 'games: removed data dir %{public}s', dir);
+    }
+
+    /* 删 jar 本身。⚠️ `unlinkSync` 删不存在的文件会**抛** ⇒ 先探一下（`EntryAbility` 里同一条）。 */
+    try {
+      if (fs.accessSync(path)) {
+        fs.unlinkSync(path);
+      }
+    } catch (e) {
+      const err = e as BusinessError;
+      this.gamesNote = '删除失败：' + err.message;
+      this.refresh();
+      return;
+    }
+
+    /* 删掉的正好是选中那个 ⇒ 退回内置。⛔ 不退的话选中路径指向一个不存在的文件，
+     * 而首页会显示「没有找到游戏」—— 一个删除动作不该把应用弄成那个样子。 */
+    if (this.selected === path) {
+      writeSelection(this.filesDir, '');
+    }
+    this.gameDeletePath = '';
+    this.gameDeleteLabel = '';
+    this.gameDeleteDir = '';
+    this.gamesNote = withData ? '已删除这个版本和它的数据。' : '已删除这个版本（保留数据）。';
+    hilog.info(DOMAIN, TAG, 'games: deleted %{public}s withData=%{public}s',
+               path, String(withData));
+    this.refresh();
+  }
+
   /** 内容一栏的宽度（vp）。**靠左**摆，见 CONTENT_MIN_VP。
    * ⚠️ 它返回**数值 width** 而不是配 `width('100%')` 用的 `constraintSize` —— 这个选择为动画服务：
    * `animateTo` 动的是**渲染属性**，而 `constraintSize` 是**布局约束**（约束变了布局直接重排、
@@ -2320,10 +2672,24 @@ export struct LauncherHome {
                 }
                 .width('100%')
                 .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+                /* ⭐⭐ 白底与圆角**必须在【内容】这一层**，不能挂在 `ListItem` 上。
+                 * ⛔ 挂在 ListItem 上的后果（用户 2026-10-04 报的）：`swipeAction` 移动的是
+                 *    **内容**，而 ListItem 自己的背景不动 ⇒ 左滑时**文字滑走了、白卡片原地不动**，
+                 *    看起来像"只有字在动"。挪进来之后整张卡片一起滑。
+                 * ⚠️ `onClick` 与 `swipeAction` 留在 `ListItem` 上 —— 后者是 `ListItemAttribute`
+                 *    的方法，挪不下来。 */
+                .backgroundColor($r('app.color.launcher_card'))
+                .borderRadius(CARD_RADIUS_VP)
               }
-              .backgroundColor($r('app.color.launcher_card'))
-              .borderRadius(CARD_RADIUS_VP)
               .onClick(() => { this.pick(g.path); })
+              /* ⭐ 左滑露出「删除」。用系统原生的 `ListItem.swipeAction`，**不自写手势** ——
+               * 回弹、只允许一行展开、与纵向滚动抢手势，这些它都已经处理好了。
+               * ⚠️ `end` = 垂直列表里**向左滑**露出的那一侧（向右滑是 `start`）。
+               * ⛔ 不给 `onAction`（滑到底自动触发）：「滑到底」是个顺手就会做出来的动作，
+               *    让它直接弹确认窗比「点一下露出来的按钮」容易误触。
+               * ⚠️ 内置那一行没有这个 —— 它在 HAP 里，不是文件，删不掉。 */
+              .swipeAction({ end: { builder: () => { this.SwipeDeleteAction(g) } },
+                             edgeEffect: SwipeEdgeEffect.Spring })
             }, (g: GameJar): string => this.gameRowKey(g))
           }
           .width('100%')
@@ -2355,6 +2721,16 @@ export struct LauncherHome {
         this.refresh();
         this.isRefreshing = false;
       })
+
+      /* 上一次删除的结果 / 失败原因。⭐ 独立于下面那个按钮 —— 删完之后那个版本就没了、
+       * 按钮会跟着消失，而消息**必须还在**（否则就是「删了没反馈」）。 */
+      if (this.gamesNote !== '') {
+        Text(this.gamesNote)
+          .fontSize(12).fontColor($r('sys.color.font_secondary'))
+          .width(this.gamesWidthVp())
+          .padding({ left: 16, right: 16, top: 12 })
+      }
+
 
       /* 主按钮。它被禁用的唯一理由是「确实没有任何可加载的东西」—— 由 resolveGame 判定，
        * 而它已经确认过文件真的能打开。 */
@@ -2480,9 +2856,14 @@ export struct LauncherHome {
             Column() {
               ForEach(this.metaRowsExcept(), (r: MetaRow) => {
                 Row() {
+                  /* ⭐⭐ 这里**不能**用 `.width(88)`。它是**标签**（要跟着系统字体放大），
+                   * 而 88vp 是个**定宽盒子** —— 两者只能选一个：
+                   * 「写入时的构建号」7 个汉字，系统字体调到 1.75 倍就约 147vp ⇒ **被裁掉**。
+                   * ⇒ 改成 `constraintSize({ minWidth: 88 })`：短标签仍从 88 起（列还是齐的），
+                   *   长标签**把它撑开**而不是被裁 —— 代价是那一行的值列右移，但那比缺字好。 */
                   Text(r.label)
                     .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-                    .width(88)
+                    .constraintSize({ minWidth: 88 })
                   Text(r.value)
                     .fontSize(12).fontColor($r('sys.color.font_primary'))
                     .layoutWeight(1)
@@ -2663,17 +3044,18 @@ export struct LauncherHome {
                   .layoutWeight(1)
                   .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
 
+                /* ⚠️ `'12vp'` 而不是 `12` —— 它在定宽列里，⛔ 不能跟着系统字体缩放。理由见常量那段。 */
                 Text(formatSaveSize(sv.bytes))
-                  .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                  .fontSize('12vp').fontColor($r('sys.color.font_tertiary'))
                   .width(SAVE_SIZE_COL_VP).textAlign(TextAlign.End)
 
                 Text(formatSaveDate(sv.mtime))
-                  .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                  .fontSize('12vp').fontColor($r('sys.color.font_tertiary'))
                   .width(SAVE_DATE_COL_VP).textAlign(TextAlign.End)
                   .margin({ left: 10 })
 
                 Text('✓')
-                  .fontSize(14).fontColor($r('sys.color.brand'))
+                  .fontSize('14vp').fontColor($r('sys.color.brand'))
                   .width(SAVE_TICK_COL_VP).textAlign(TextAlign.End)
                   .margin({ left: 6 })
                   .visibility(this.rowHot(this.saveKey(this.versionSavesDir(), sv.id))
@@ -3130,7 +3512,7 @@ export struct LauncherHome {
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
         Button('取消')
           .fontSize(14)
-          .width('25%').alignSelf(ItemAlign.Center)
+          .width(CANCEL_BTN_WIDTH).alignSelf(ItemAlign.Center)
           .margin({ top: 12 })
           .onClick(() => { this.showMultiAsk = false; })
       }
@@ -3195,9 +3577,119 @@ export struct LauncherHome {
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
         Button('取消')
           .fontSize(14)
-          .width('25%').alignSelf(ItemAlign.Center)
+          .width(CANCEL_BTN_WIDTH).alignSelf(ItemAlign.Center)
           .margin({ top: 12 })
           .onClick(() => { this.showVaultClearAsk = false; })
+      }
+      .width('100%')
+      .constraintSize({ maxWidth: this.dialogWidthVp() })
+      .padding(20)
+      .backgroundColor($r('app.color.launcher_card'))
+      .borderRadius(CARD_RADIUS_VP)
+      .alignItems(HorizontalAlign.Start)
+      /* 吞掉落在卡片上的点击 —— 与另外几个确认窗同一处理由（`DeleteAskDialog` 的注释）。 */
+      .onClick(() => {})
+    }
+    .width('100%').height('100%')
+    .backgroundColor('#80000000')
+    .justifyContent(FlexAlign.Center)
+    /* 异形屏避让，与另外几个确认窗逐字相同 —— ⛔ 别在这里另发明一套边距。 */
+    .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
+               top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
+    .transition(enterFade())
+  }
+
+  /* 「删除这个版本」的确认窗。
+   * ⭐ 取舍与 `DeleteAskDialog` 同一条：把**代价写进按钮标签**，而不是在按钮上面写一段说明 ——
+   * 玩家应当看一眼按钮就知道自己在选什么。
+   * ⚠️ 但有一件事没法塞进标签：**共用数据**（还有别的版本在读）和**唯一那份未隔离数据**，
+   * 那两个必须单独说，因为按下去损的不止是刚选的那个版本。 */
+  /* 左滑露出的那一块。
+   *
+   * ⭐⭐ **只画一个图标，不画底色** —— 这一条同时解掉两个问题：
+   *   ① 露出区的**尺寸就是 `builder` 内容的尺寸**（`actionAreaDistance` 是「滑多远才触发
+   *      `onAction`」的阈值，**不是**色块大小，别被名字骗了）。做成整块底色的话，那块矩形
+   *      比列表项高、又没有圆角 ⇒ 拉出来时**卡片右下角那个圆角就被盖掉了**。
+   *   ② 露出区自己**没有背景**，所以唯一画出来的东西就是这里的内容。
+   *      ⇒ 内容是圆的 ⇒ 圆角问题从根上不存在，⛔ 不需要去和框架较劲。
+   *
+   * ⚠️ 外层 `Row` 只负责给一个**够大的点击区域**（图标本身 26fp 小于 48vp 的最小触控目标），
+   *    它自己不画任何东西；真正被看见的只有里面那个符号。
+   * ⛔ `onAction`（滑到底自动触发）仍然不给 —— 「滑到底」顺手就能做出来，让它直接弹确认窗太容易误触。
+   * ⚠️ 以后要加编辑、重命名之类，每个动作各占一个这样的小图标，**挤在一起要留出间距**。 */
+  @Builder
+  SwipeDeleteAction(g: GameJar) {
+    Row() {
+      SymbolGlyph($r('sys.symbol.ohos_trash_circle'))
+        .fontSize(26)
+        .fontColor([$r('app.color.danger')])
+    }
+    .height('100%')
+    .padding({ left: 16, right: 20 })
+    .justifyContent(FlexAlign.Center)
+    .onClick(() => { this.openGameDeleteAsk(g); })
+  }
+
+  @Builder
+  GameDeleteAskDialog() {
+    Column() {
+      Column() {
+        /* ⭐ 标题两行（用户 2026-10-04 给的形状）：
+         *   第一行 = **「永久删除」**，用危险色 —— 它说明【动作的性质】；
+         *   第二行 = **具体哪个文件** —— 它说明【对象】。
+         * ⛔ 原来是一行「删除「160.5（文件名）」」：既没说清是永久删除，又把两件事挤在一起。
+         * ⚠️ 第二行用文件名而不是版本号为主：同一版本号可能有好几个 jar，
+         *    而玩家要确认的正是"删的是哪一个文件"。 */
+        Text('永久删除')
+          .fontSize(17).fontColor($r('app.color.danger'))
+          .width('100%').textAlign(TextAlign.Center)
+        Text(this.gameDeleteLabel)
+          .fontSize(13).fontColor($r('sys.color.font_secondary'))
+          .width('100%').textAlign(TextAlign.Center)
+          .margin({ top: 6 })
+
+        if (!this.jarHasOwnData()) {
+          /* 隔离关着 ⇒ 全应用唯一那份数据。⛔ 这条路连选项都不给。 */
+          Text('这个版本用的是**未隔离**的那一份数据 —— 全应用只有那一份，'
+               + '删它会把所有未隔离版本的数据一起清掉。\n所以这里只提供「只删除游戏」。')
+            .fontSize(12).fontColor($r('sys.color.font_secondary'))
+            .width('100%').margin({ top: 10 })
+        } else if (this.otherVersionsOnSelectedDir().length > 0) {
+          /* ⛔ 共用这一条必须点名：按下去损的不止是他刚选的那个版本。 */
+          Text('这份数据还有 ' + String(this.otherVersionsOnSelectedDir().length)
+               + ' 个版本在读（' + this.otherVersionsText() + '），'
+               + '里面现在有 ' + String(this.jarDataSaveCount()) + ' 个存档。'
+               + '\n连数据一起删，它们也会一起没有。')
+            .fontSize(12).fontColor($r('sys.color.warning'))
+            .width('100%').margin({ top: 10 })
+        }
+
+        Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
+
+        Button('只删除游戏（保留数据）')
+          .fontSize(15)
+          .width('80%').alignSelf(ItemAlign.Center)
+          .margin({ top: 16 })
+          .onClick(() => { this.deleteGame(false); })
+
+        /* ⛔ 数据不能删时这个按钮**不出现**（而不是出现再置灰）—— 置灰的按钮会让人一直找
+         * 「怎么才能点亮它」，而上面那句话已经解释了原因。 */
+        if (this.jarHasOwnData()) {
+          Button('删除游戏和数据')
+            .fontSize(15)
+            .fontColor($r('sys.color.warning'))
+            .backgroundColor($r('app.color.launcher_bg'))
+            .width('80%').alignSelf(ItemAlign.Center)
+            .margin({ top: 10 })
+            .onClick(() => { this.deleteGame(true); })
+        }
+
+        Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
+        Button('取消')
+          .fontSize(14)
+          .width(CANCEL_BTN_WIDTH).alignSelf(ItemAlign.Center)
+          .margin({ top: 12 })
+          .onClick(() => { this.showGameDeleteAsk = false; })
       }
       .width('100%')
       .constraintSize({ maxWidth: this.dialogWidthVp() })
@@ -3247,7 +3739,7 @@ export struct LauncherHome {
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
         Button('取消')
           .fontSize(14)
-          .width('25%').alignSelf(ItemAlign.Center)
+          .width(CANCEL_BTN_WIDTH).alignSelf(ItemAlign.Center)
           .margin({ top: 12 })
           .onClick(() => { this.showDeleteAsk = false; })
       }
@@ -4007,7 +4499,7 @@ export struct LauncherHome {
                   /* ⭐⭐ 「当前版本那一档是空的」在**存档页**也要有出口 —— 玩家来找存档时就是在这儿看见
                    * 「空」的。⚠️ 放在列表**顶上**而不是塞进那一组里：这个状态意味着当前版本那一组本身是空的，
                    * 把按钮放进一个空组里玩家会以为它只对那一组有效。 */
-                  if (this.isolationStale) {
+                  if (this.isolationStale && !this.staleIgnored) {
                     this.StaleCopyOffer()
                   }
                   ForEach(this.saveGroups, (g: SaveGroup) => {
@@ -4215,7 +4707,12 @@ export struct LauncherHome {
            * 不是自明的，而选错的代价是「换个版本就看不到存档了」。
            * ⚠️ 未选中的底色从 `launcher_card` 改成 `launcher_bg`：卡片本身就是 `launcher_card`，两者同色
            * 会让未选中的那三个**完全看不见**（不是「颜色不好看」，是「没画出来」）。 */
-          Row() {
+          /* ⭐ **必须能换行。** 四个 chip 是定长的（各 12vp 内边距 + 三四个汉字），
+           * 手机默认档实测就已经贴边，系统字体一大就会把最后一个挤出屏幕外 ——
+           * 而这一行【不换行】的时候，溢出是**裁掉**，看起来像少了一个选项。
+           * ⚠️ 间距从「每个左边 8」改成「每个右边 8 + 下边 8」：换行之后，
+           *    第二行第一个若还带左间距，整行会比第一行缩进 8vp。 */
+          Flex({ wrap: FlexWrap.Wrap }) {
             Text('不隔离')
               .fontSize(13)
               .fontColor(this.granularity === GRANULARITY_OFF
@@ -4224,6 +4721,7 @@ export struct LauncherHome {
               .borderRadius(9)
               .backgroundColor(this.granularity === GRANULARITY_OFF
                                ? $r('app.color.launcher_border') : $r('app.color.launcher_bg'))
+              .margin({ right: 8, bottom: 8 })
               .onClick(() => { this.chooseGranularity(GRANULARITY_OFF); })
             Text('大版本')
               .fontSize(13)
@@ -4233,7 +4731,7 @@ export struct LauncherHome {
               .borderRadius(9)
               .backgroundColor(this.granularity === GRANULARITY_NUMBER
                                ? $r('app.color.launcher_border') : $r('app.color.launcher_bg'))
-              .margin({ left: 8 })
+              .margin({ right: 8, bottom: 8 })
               .onClick(() => { this.chooseGranularity(GRANULARITY_NUMBER); })
             Text('构建号')
               .fontSize(13)
@@ -4243,7 +4741,7 @@ export struct LauncherHome {
               .borderRadius(9)
               .backgroundColor(this.granularity === GRANULARITY_BUILD
                                ? $r('app.color.launcher_border') : $r('app.color.launcher_bg'))
-              .margin({ left: 8 })
+              .margin({ right: 8, bottom: 8 })
               .onClick(() => { this.chooseGranularity(GRANULARITY_BUILD); })
             Text('小版本')
               .fontSize(13)
@@ -4253,29 +4751,31 @@ export struct LauncherHome {
               .borderRadius(9)
               .backgroundColor(this.granularity === GRANULARITY_PATCH
                                ? $r('app.color.launcher_border') : $r('app.color.launcher_bg'))
-              .margin({ left: 8 })
+              .margin({ right: 8, bottom: 8 })
               .onClick(() => { this.chooseGranularity(GRANULARITY_PATCH); })
           }
           .width('100%').margin({ top: 12 })
 
-          Text(this.granularityHint(this.granularity))
+          Text(this.granularityHintText)
             .fontSize(12).fontColor($r('sys.color.font_secondary'))
             .margin({ top: 10 })
 
           /* ⭐⭐ 这一条是给**已经踩进去的状态**留的出口。它不是错误提示，而是一句**诊断**：
            * 说清现在什么状态、以及怎么退回去。⛔ 没有它，玩家只能看到「存档全没了」，
            * 而界面上没有任何线索指向隔离。 */
-          if (this.isolationStale) {
+          if (this.isolationStale && !this.staleIgnored) {
             /* ⛔ 原来这里只是一句提示（「请把隔离关掉（或重新打开一次）」）—— 那是让玩家去猜一个
              * **我们该做**的动作。现在它是同一块可点的东西。 */
             this.StaleCopyOffer()
           }
 
-          /* 迁移出问题时的提示。⛔ 它不是门 —— 隔离照旧打开，只是新目录可能是空的，而原数据完好。 */
+          /* 迁移出问题时的提示。⛔ 它不是门 —— 隔离照旧打开，只是新目录可能是空的，而原数据完好。
+           * ⚠️ 紧跟在 `StaleCopyOffer` 后面时两者只隔 6vp 会像同一段话的两半 ⇒ 用一条分隔线断开。 */
           if (this.isolationNote !== '') {
+            Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 10 })
             Text(this.isolationNote)
               .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-              .margin({ top: 8 })
+              .width('100%').margin({ top: 8 })
           }
         }
         .width('100%').padding(16)
@@ -4583,73 +5083,80 @@ export struct LauncherHome {
     if (this.showIsolationAsk) {
       Column() {
         Column() {
-          /* ⭐ 标题里直接点出**这一档叫什么**（2026-10-02：「我们加上具体的版本粒度就行」）。
-           * ⚠️ 原来只有「打开数据隔离」四个字，玩家看不出自己点的是哪一档 —— 那正是他下一步要确认的。 */
-          Text('打开数据隔离  ·  ' + this.granularityName(this.pendingGranularity))
+          /* ⭐ 标题（2026-10-04 用户重写的结构：「按"xxx"进行数据隔离」）。
+           * ⛔ 它**取代了原来两段**：`打开数据隔离  ·  构建号` 与「之后，当前选中的版本的数据与
+           *    其他版本隔离。你想怎么处理存档？」—— 那两句在说同一件事，而用户的原话是
+           *    「之前的提示我都快看不懂了」。
+           * ⚠️⚠️ 被取代的第二句，代码里原本标着**「用户留给他自己改的，别动」**（2026-10-02 他点名）。
+           *    这次是他自己重做这个窗、并给了新结构，所以按新结构并进了标题。
+           *    **它没有丢**（在 git 里），他要是要那句回来，一句话就能加。 */
+          Text('按「' + this.granularityName(this.pendingGranularity) + '」进行数据隔离')
             .fontSize(18).fontColor($r('sys.color.font_primary'))
-          /* ⛔ 这一行**是用户留给他自己改的**（2026-10-02 他点名要自己动措辞）⇒ 我**不动它**。
-           * 之前有一轮我顺手改过一次、已还原 —— 那是他的句子。⚠️ 谁要改这句，先问他。 */
-          Text('之后，当前选中的版本的数据与其他版本隔离。你想怎么处理存档？')
-            .fontSize(13).fontColor($r('sys.color.font_secondary'))
-            .width('100%').textAlign(TextAlign.Center)
-            .margin({ top: 12 })
 
-          /* ⭐⭐ 把「当前选中的版本」**点名**（2026-10-02：「现在说的是'这个版本'，我们加上具体的
-           * 版本粒度就行」）。⚠️ 原来整句话里只有指代，而玩家在那一屏上根本看不到自己选的是哪一个
-           * （它在「首页」页签里）⇒ 这里给出【版本名 + 版本号】，并把它**这一档下实际会用的目录**
-           * 也写出来 —— 那就是「具体到什么粒度」的答案。
-           * ⚠️ 目录名那一行**刻意**与上面那份总表用同一套键，两处不会分叉。 */
+          /* 点名当前这个版本 —— ⚠️ 这一段**用户的新结构里没提**，但它原本是有理由的：
+           * 玩家在那一屏上看不到自己选的是哪一个（它在「首页」页签里）。保留，降到小字。 */
           Text(this.pendingVersionName)
-            .fontSize(14).fontColor($r('sys.color.font_primary'))
-            .width('100%').textAlign(TextAlign.Center)
-            .margin({ top: 10 })
-          Text('这一档下，它用目录：' + (this.pendingKey === '' ? '（不隔离）' : this.pendingKey))
-            .fontSize(12).fontColor($r('sys.color.font_secondary'))
-            .width('100%').textAlign(TextAlign.Center)
-            .margin({ top: 4 })
+            .fontSize(13).fontColor($r('sys.color.font_secondary'))
+            .width('100%').margin({ top: 6 })
 
-          /* ============================================================
-           * ⭐⭐ 「这一档到底怎么分」—— 2026-10-02 点名要的（原话：「切换的大版本，构建号，小版本时，
-           * 弹窗**没说明是怎么分类的**，必须让人**选完了才知道是啥情况**」）。
-           * ⛔ 必须在这个窗里说：**这个窗是唯一能反悔的地方**，而那句说明原来只在设置页、**选完之后**
-           * 才显示 —— 顺序正好是反的。这里给的是**玩家自己的版本号算出来的目录名**，不是编的例子。
-           * ============================================================ */
           Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
 
-          Text('这一档怎么分')
-            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-            .width('100%').textAlign(TextAlign.Center).margin({ top: 12 })
-          Text(this.granularityHint(this.pendingGranularity))
-            .fontSize(13).fontColor($r('sys.color.font_primary'))
-            .width('100%').textAlign(TextAlign.Center).margin({ top: 4 })
+          /* ⭐⭐ 「显示详情」—— 把原来摊在外面的两块收进来（用户 2026-10-04：
+           * 「显示详情（点开后，列表分别展示哪几个版本共用存档）」）。
+           * ⛔ 原来「这一档怎么分」+ 一张「版本 → 目录」表是**常驻**的，加上六行说明文字，
+           *    整个弹窗读不完 —— 那正是他说的「快看不懂了」。现在默认收起。
+           * ⭐ 形状照抄多选那个展开器：整行是个盒子、右边一个 `▾/▴`（那是「它能点」的唯一视觉线索）。 */
+          Row() {
+            Text(this.showIsolationDetail ? '收起详情' : '显示详情')
+              .fontSize(13).fontColor($r('sys.color.font_secondary'))
+              .layoutWeight(1)
+            Text(this.showIsolationDetail ? '▴' : '▾')
+              .fontSize(13).fontColor($r('sys.color.brand'))
+              .margin({ left: 8 })
+          }
+          .width('100%')
+          .margin({ top: 12 })
+          .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+          .borderRadius(9)
+          .backgroundColor($r('app.color.launcher_bg'))
+          .alignItems(VerticalAlign.Center)
+          .onClick(() => { this.showIsolationDetail = !this.showIsolationDetail; })
 
-          Text('你的版本会落到这些目录（在 instances/ 下面）')
-            .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-            .width('100%').textAlign(TextAlign.Center).margin({ top: 12 })
-          /* ⚠️ 只有这一块**左对齐** —— 它是一份「版本 -> 目录名」的对照表，居中的话 `→` 会参差不齐、
-           * 反而读不出对应关系。其余说明文字一律居中（与「文字居中显示」一致）。 */
-          Text(this.pendingPreview)
-            .fontSize(12).fontColor($r('sys.color.font_secondary'))
-            .width('100%').textAlign(TextAlign.Start).margin({ top: 6 })
-            .copyOption(CopyOptions.LocalDevice)
-
-          /* ⭐⭐ 这一句是**必须**的，它解释的正是最容易让人误判成故障的那个现象：⛔ 当前玩的是内置
-           * 游戏时，**任何档位算出来的键都是 `bundled`** ⇒ 玩家切来切去目录名一个都不变、会得出
-           * 「这功能没生效/坏了」。而真因是**一条刻意的设计**（内置那份永不移动，这样换内置 jar 时
-           * 玩家数据不会跟着搬走）。⭐ 不说这句，界面就在把一个设计决定**伪装成一个故障**。 */
-          if (this.pendingUsesBundled) {
-            Text('⚠️ 内置游戏永远用固定的目录 bundled，与这一档无关 —— '
-                 + '这样我们以后换内置的游戏版本时，你的数据不会跟着搬走。'
-                 + '要让档位真正起作用，得先在「首页」导入并选中一个自己的 jar。')
-              .fontSize(11).fontColor($r('sys.color.warning'))
-              .width('100%').textAlign(TextAlign.Center).margin({ top: 10 })
+          if (this.showIsolationDetail) {
+            /* ⭐ 这一档怎么分 —— 2026-10-02 点名要的（「必须让人选完了才知道是啥情况」）。
+             * ⚠️ 给的是**用他自己的版本号算出来的**判断，不是编的例子。 */
+            Text(this.pendingHint)
+              .fontSize(12).fontColor($r('sys.color.font_secondary'))
+              .width('100%').margin({ top: 10 })
+            /* 版本 → 目录 的对照表。⚠️ 左对齐：居中的话 `→` 会参差不齐，反而读不出对应关系。 */
+            Text(this.pendingPreview)
+              .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+              .width('100%').textAlign(TextAlign.Start).margin({ top: 8 })
+              .copyOption(CopyOptions.LocalDevice)
           }
 
-          /* ⭐ 先摆出【现在有什么】，用真实数量 —— 让玩家在**选之前**就看到结果。 */
+          Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
+
+          /* ⭐ 「注意」那一行（2026-10-04 用户指定的措辞与黄色）。
+           * ⚠️ 仍然**有条件**，判据从 `pendingUsesBundled` 放宽到 `hasBundled`：
+           *    · 这句话说的是「内置游戏」，而没有内置游戏的包（lite 分支，`SHIPS_GAME = False`）
+           *      里它是**一句假话** ⇒ 不能无条件显示；
+           *    · 放宽到「包里有没有那份游戏」，是他写的「常驻」在 master 上成立、在 lite 上不成立
+           *      这两件事的交集。
+           * ⛔ 原来挂得更窄（选中的正好是内置那份）—— 那时它解释的是「为什么切了档位没变化」；
+           *    现在它是**陈述**，所以条件也换成「这份游戏在不在」。 */
+          if (this.hasBundled) {
+            Text('注意：内置游戏永远使用 bundled 目录存放数据')
+              .fontSize(12).fontColor($r('sys.color.warning'))
+              .width('100%').margin({ top: 12 })
+          }
+
+          /* ⭐ 摆出【现在有什么】，用真实数量 —— 「复制过去」会带走多少，在**选之前**就看得见。
+           * ⚠️ 这一段**用户的新结构里也没提** —— 但两个选项的差别正是「带不带这些」，
+           *    去掉它，玩家就得靠猜。保留。 */
           Text('当前数据：' + describeCounts(this.isolationCounts))
             .fontSize(12).fontColor($r('sys.color.font_secondary'))
-            .width('100%').textAlign(TextAlign.Center)
-            .margin({ top: 12 })
+            .width('100%').margin({ top: 12 })
 
           /* 每一块的顺序是【说明在上、按钮在下】（2026-10-02 要的对调）。⚠️「复制过去」**不配任何说明**
            * （「很直观了，根本不需要任何说明」）—— ⛔ 别在别处补一句解释回去，那正是被删掉的冗余。
@@ -4658,37 +5165,46 @@ export struct LauncherHome {
            * ⚠️ 宽度 `'50%'` 之后要 `alignSelf(ItemAlign.Center)`：父 Column 是 `HorizontalAlign.Start`，
            * 光给宽度会让按钮贴左边。 */
 
-          /* ============ 选项一：主操作（系统蓝） ============ */
+          /* ⭐⭐ 按钮组：**一条分隔线 + 三个按钮**。
+           * ⛔ 原来每个按钮上面各有一条线（共三条）—— 那是每个选项**各带一段说明**时的产物；
+           *    说明在 2026-10-02 就删了，那两条线从此没有任何东西可分，只是把弹窗拉长。
+           *
+           * ⚠️ 三个都不设底色，全用 `Button` 的**系统默认主题色** —— 一处颜色，不给自己造的色值
+           *    留分叉的机会。（`launcher_bg` 在深色模式下是近黑色，当年做过一次黑按钮。）
+           *
+           * ⭐ 尺寸（用户 2026-10-04：「文字可以小一点，按钮再稍微宽一点扁一点」）：
+           *    字号 15 → **13**；宽 40% → **56%**；高显式给 **34**（`Button` 默认 40 ⇒ 扁一点）。
+           *
+           * ⛔⛔ 而「取消」原来是 `width('20%')` —— 它**装不下那两个字**：弹窗内容宽只有 280vp
+           *    （`max(320, winW × 0.5)` = 320，减左右各 20vp 内边距），20% = **56vp**；
+           *    而「取消」两字 14fp ≈ 28vp + `Button` 默认左右内边距 ≈ 32vp = **60vp** ⇒ **溢出成「...」**。
+           *    这正是用户报的那个现象。现在 34% ≈ 95vp，宽裕。
+           * ⚠️ 取消比另外两个窄是**刻意**的：它是否定动作，不该和「复制过去」长得一样重。 */
           Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
           Button('复制过去')
-            .fontSize(15)
-            .width('40%').alignSelf(ItemAlign.Center)
-            .margin({ top: 14 })
+            .fontSize(13)
+            .height(34)
+            .width('56%').alignSelf(ItemAlign.Center)
+            .margin({ top: 12 })
             /* ⭐ 两步：先记下意图，由下面那个二次确认来真正执行。⛔ 这里**不**直接调
              * applyIsolationCopy() —— 那会让二次确认变成摆设。 */
             .onClick(() => { this.isolationConfirm = 'copy'; })
 
-          /* ============ 选项二 ============ */
           /* ⛔ **这个选项【没有】说明文字**（2026-10-02：「'不复制'的说明去掉吧，这个不用解释了」）。
            * ⚠️ 它与「复制过去」是**对称**的，两个词本身已经把结果说完了。⛔ 别再补「相当于新建一个
            * 存档」之类 —— 那是解释，不是信息。 */
-          Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
           Button('不复制')
-            .fontSize(15)
-            .width('40%').alignSelf(ItemAlign.Center)
-            .margin({ top: 10 })
-            /* ⛔ 这里【曾经】写 `.backgroundColor(launcher_bg)` + `.fontColor(font_primary)` 想做成
-             * 「灰底次级按钮」，**实测是黑的** —— `launcher_bg` 在深色模式下是 #FF101010，而深色主题
-             * 正是默认（2026-10-02：「现在颜色是黑色的。也改成蓝色吧」）⇒ 三个按钮都不设底色，全用
-             * `Button` 的系统默认主题色 —— 一处颜色，不给自己造的色值留分叉的机会。 */
+            .fontSize(13)
+            .height(34)
+            .width('56%').alignSelf(ItemAlign.Center)
+            .margin({ top: 8 })
             .onClick(() => { this.isolationConfirm = 'empty'; })
 
-          /* ============ 取消：也是蓝底，但更窄 ============ */
-          Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
           Button('取消')
-            .fontSize(14)
-            .width('20%').alignSelf(ItemAlign.Center)
-            .margin({ top: 12 })
+            .fontSize(13)
+            .height(34)
+            .width(CANCEL_BTN_WIDTH).alignSelf(ItemAlign.Center)
+            .margin({ top: 8 })
             .onClick(() => {
               this.showIsolationAsk = false;
               this.pendingGranularity = '';
@@ -4942,6 +5458,12 @@ export struct LauncherHome {
      * 排在这里只是防御性顺序（Stack 里后声明的在上）。 */
     if (this.showVaultClearAsk) {
       this.VaultClearAskDialog()
+    }
+
+    /* 删除版本的确认。⚠️ 它在**首页**，与垃圾站那个窗不可能同时开着 ——
+     * 排在这里只是防御性顺序（Stack 里后声明的在上）。 */
+    if (this.showGameDeleteAsk) {
+      this.GameDeleteAskDialog()
     }
 
     if (this.launchFault !== '' && !this.faultAck) {
