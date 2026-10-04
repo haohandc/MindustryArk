@@ -435,6 +435,11 @@ export struct LauncherHome {
    *    而「意图没提交」=「值没变」⇒ 控件不会自己弹回去（用户 2026-10-04 报的
    *    「点取消，开关还是开着的」就是这个）。详见 Toggle 那一段的说明。 */
   @State storageToggleOn: boolean = false;
+  /* ⭐ **搬移进行中**（用户 2026-10-04：「复制完成前，切换按钮变成灰色不给点」）。
+   * ⛔ 它不是装饰：搬移是**同步**的（`migrateGameData` 在主线程上跑完 250 来个文件），
+   *    所以「进行中」这个状态**必须由我们自己在开始前设上、结束后清掉** ——
+   *    没有别的东西能给出这个信号（没有进度回调，也没有异步句柄）。 */
+  @State storageBusy: boolean = false;
   /** 探针的原始结论 / 切换结果。⛔ 原样显示，别改写探针的话。 */
   @State storageNote: string = '';
 
@@ -1117,6 +1122,10 @@ export struct LauncherHome {
    * 弹窗只在那一刻响一次、手一滑关掉就再也找不到；换一个 jar ⇒ 目标目录又空了 ⇒ 这块又出现。
    * ⛔ 只补当前版本这一个键，别的键一律不动，已有的数据一律不覆盖。 */
   private copyStaleCurrent(): void {
+    /* ⛔ 搬移中不给点（同那个开关的防呆）—— 它俩都在搬同一批数据。 */
+    if (this.storageBusy) {
+      return;
+    }
     this.staleCopyNote = '';
     const res: GameResolution = resolveGame(this.filesDir, this.bundleCodeDir);
     const key: string = resolveGameDirAndKey(this.granularity, res.source, res.path,
@@ -1128,15 +1137,21 @@ export struct LauncherHome {
       this.refresh();
       return;
     }
-    const note: string = copyLiveDataInto(key);
-    if (note !== '') {
-      this.staleCopyNote = note;
-    } else {
-      this.isolationNote = '已经把数据复制进这一档（' + key + '）。';
-    }
-    /* 必须显式重算 —— 复制成功后这块会**自己消失**、存档列表会当场填上。⛔ 不刷新的话，
-     * 「复制成功」与「什么都没发生」在界面上长得一模一样。 */
-    this.refresh();
+    /* ⭐ 同样**先让出一帧**再搬 —— 理由见 `askStorageSwitch`：同步搬移会把 UI 线程占住，
+     * 不许让出的话，那两个按钮**没有机会变灰**，玩家看到的就是「点下去卡一下」。 */
+    this.storageBusy = true;
+    setTimeout(() => {
+      const note: string = copyLiveDataInto(key);
+      this.storageBusy = false;
+      if (note !== '') {
+        this.staleCopyNote = note;
+      } else {
+        this.isolationNote = '已经把数据复制进这一档（' + key + '）。';
+      }
+      /* 必须显式重算 —— 复制成功后这块会**自己消失**、存档列表会当场填上。⛔ 不刷新的话，
+       * 「复制成功」与「什么都没发生」在界面上长得一模一样。 */
+      this.refresh();
+    }, 50);
   }
 
   /* 上面那个状态的界面。⭐ 零参 `@Builder`，所以**设置页与存档页可以共用同一份**
@@ -1175,6 +1190,7 @@ export struct LauncherHome {
           .fontSize(14)
           .height(34)
           .padding({ left: 18, right: 18 })
+          .enabled(!this.storageBusy)
           .onClick(() => { this.copyStaleCurrent(); })
         /* 「忽略」只把这一块收起来，**不动任何文件** —— 所以它不需要二次确认，
          * 也不需要「出口」：状态一变提示会自己回来（见 `refresh()` 里那次复位）。 */
@@ -1185,6 +1201,7 @@ export struct LauncherHome {
           .fontColor($r('sys.color.font_secondary'))
           .backgroundColor($r('app.color.launcher_card'))
           .margin({ left: 8 })
+          .enabled(!this.storageBusy)
           .onClick(() => { this.staleIgnored = true; })
       }
       .width('100%')
@@ -1352,16 +1369,33 @@ export struct LauncherHome {
     const from: string = gameDataRoot(this.filesDir);
     const to: string = gameDataRootFor(this.filesDir,
                                        on ? STORAGE_MODE_EXTERNAL : STORAGE_MODE_SANDBOX);
-    const err: string = migrateGameData(from, to);
-    if (err !== '') {
-      /* ⛔ 没提交 ⇒ 控件必须弹回去（同探针不过那条）。 */
-      this.storageNote = err;
-      this.syncStorageToggle();
-      return;
-    }
-    writeStorageMode(this.filesDir, on ? STORAGE_MODE_EXTERNAL : STORAGE_MODE_SANDBOX);
-    /* ⭐ `refresh()` 会把控件同步到新的意图，并把状态文件重写一遍。 */
-    this.refresh();
+
+    /* ⭐⭐ **防呆：搬移期间把开关置灰、不给点**（用户 2026-10-04）。
+     *
+     * ⛔⛔ **不能直接在这下面调 `migrateGameData`，否则那个灰色永远看不到。**
+     *    搬移是**同步**的 —— 它在这一个事件回调里从头跑到尾，UI 线程被占着，
+     *    ArkUI **没有机会画出「置灰」那一帧**：先 `true` 再 `false`，中间没有渲染点，
+     *    玩家看到的只是「点下去卡一下」。
+     * ⇒ 所以**先让出一帧**（`setTimeout`）：置灰 → 渲染出去 → 再开始搬。
+     *    这也是唯一能给出可见反馈的办法 —— 搬移没有进度回调。
+     * ⚠️ 那之后 UI 仍然会**冻结一小段**（同步 IO，写 250 来个文件），这是已知的、
+     *    可接受的：冻结的时长与搬移时长相同，而它现在**有一个明确的视觉前因**
+     *    （开关已经灰了），不再是「点下去没反应」。⛔ 要彻底不卡只能把搬移挪进
+     *    worker，那是另一件事，别顺手做。 */
+    this.storageBusy = true;
+    setTimeout(() => {
+      const err: string = migrateGameData(from, to);
+      this.storageBusy = false;
+      if (err !== '') {
+        /* ⛔ 没提交 ⇒ 控件必须弹回去（同探针不过那条）。 */
+        this.storageNote = err;
+        this.syncStorageToggle();
+        return;
+      }
+      writeStorageMode(this.filesDir, on ? STORAGE_MODE_EXTERNAL : STORAGE_MODE_SANDBOX);
+      /* ⭐ `refresh()` 会把控件同步到新的意图，并把状态文件重写一遍。 */
+      this.refresh();
+    }, 50);
   }
 
   private refresh(): void {
@@ -5333,10 +5367,23 @@ export struct LauncherHome {
              * ⭐ 所以要有这个显式的控件状态 + `syncStorageToggle()`：任何**没有真正提交**的出口
              *    （探针不过 / 取消 / 迁移失败）都要调它，把控件拉回意图那一档。
              * ⛔ 别再改回「直接绑意图」那种写法，也别删掉那些 sync —— 删了就退回这个 bug。 */
+            /* ⭐ **搬移期间置灰、不给点**（用户 2026-10-04 要的防呆）。
+             * ⛔ `enabled(false)` 是承重的，不只是好看：没有它，搬移那一小段里玩家
+             *    再拨一次就**又发起一次搬移**，而那时源/目标的中间态正在被读写。
+             * ⚠️ 灰**要能被看见**，所以搬移不能在同一个事件回调里跑完 —— 见
+             *    `askStorageSwitch` 里那个 `setTimeout` 的说明。 */
             Toggle({ type: ToggleType.Switch, isOn: this.storageToggleOn })
+              .enabled(!this.storageBusy)
               .onChange((on: boolean) => { this.askStorageSwitch(on); })
           }
           .width('100%')
+
+          /* 搬移中把「正在搬」说出来 —— 只有灰色的话，玩家会以为是自己点坏了。 */
+          if (this.storageBusy) {
+            Text('正在搬移，请勿退出…')
+              .fontSize(12).fontColor($r('sys.color.font_secondary'))
+              .width('100%').margin({ top: 8 })
+          }
 
           /* ⛔ 这里原来还有一行「游戏上次启动用的是：…（需要重启才生效）」，**2026-10-04 删了**。
            * 用户的理由：**切换时游戏进程肯定是关着的**。而这条比听上去更强 ——

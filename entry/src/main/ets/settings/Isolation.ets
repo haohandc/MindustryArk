@@ -325,6 +325,78 @@ export function dumpDataDirs(filesDir: string): string {
       return 'ERR(' + err.message + ')';
     }
   };
+  /* ⭐⭐ 把 `settings.bin` 里 **`locale` 那个键的值**抠出来 —— 语言就是它决定的。
+   * ⛔ **为什么值得为它写一段**：`Vars.loadLocales()`（反编译核实）读的就是这个键，
+   *    而 **`locale=default` 是「跟随 `Locale.getDefault()`」** —— 本启动器**没有给 JVM
+   *    设过任何 locale**（`launcher.c` 里没有 `LC_ALL`/`LANG`，`jvm.options` 里也没有），
+   *    于是 HotSpot 取到的 C locale 是 `C`、`Locale.getDefault()` 就是**英文**。
+   * ⚠️⚠️ 更要紧的是**它会被固化**：`LanguageDialog.findClosestLocale()` 在
+   *    `locale == "default"` 时去找「language 等于 `Locale.getDefault().getLanguage()`」
+   *    的那一项，找不到就**硬编码 `new Locale("en")`**，然后 **`put("locale", …)`
+   *    写回 settings.bin** ⇒ 那个「跟随系统」**一次就被写成死值**，之后再也不会跟着系统变。
+   *    实测两份 settings.bin 都是 `locale=en`，与这条吻合。
+   * ⭐ 所以这一行是分辨「语言变英文」病因的唯一判据：
+   *    `zh_CN` ⇒ 游戏该显示中文，问题在别处；`en` ⇒ 是上面那条固化，改回来只需在游戏里
+   *    重选一次语言（那会写进 `zh_CN`，而且是写在游戏真正在读的那棵树里）。
+   * ⚠️ `settings.bin` 是 ARC 的自定义二进制，但**键名是以 `writeUTF` 原样写进去的**
+   *    ⇒ 用「找到 `00 06` + `locale`、再按长度前缀取值」就能读到，不必实现整个格式的解析器。 */
+  const localeOf = (dir: string): string => {
+    const p: string = dir + '/settings.bin';
+    try {
+      if (!fs.accessSync(p)) {
+        return 'no-settings';
+      }
+      const size: number = fs.statSync(p).size;
+      const want: number = size > 65536 ? 65536 : size;
+      const f: fs.File = fs.openSync(p, fs.OpenMode.READ_ONLY);
+      const buf: ArrayBuffer = new ArrayBuffer(want);
+      const got: number = fs.readSync(f.fd, buf);
+      fs.closeSync(f);
+      const u: Uint8Array = new Uint8Array(buf, 0, got);
+      /* ⛔⛔ **必须连【长度前缀】一起匹配**（`00 06` + `locale`），否则会撞上别的键名或
+       *    值里含 `locale` 的地方 —— 第一版就是那么写的，量出来的值旁边跟着
+       *    `factoryControl-` 那样一段看不懂的东西，**无法判断读到的是不是那个键**。
+       *    ARC 的 `writeUTF` 用的是带 2 字节长度前缀的写法 ⇒ 键名 `locale` 一定长这样。 */
+      const key: string = 'locale';
+      let seen: number = 0;
+      for (let i = 0; i + key.length + 2 <= got; i++) {
+        let hit: boolean = true;
+        for (let j = 0; j < key.length; j++) {
+          if (u[i + j] !== key.charCodeAt(j)) {
+            hit = false;
+            break;
+          }
+        }
+        if (!hit) {
+          continue;
+        }
+        seen++;
+        if (u[i - 2] !== 0 || u[i - 1] !== key.length) {
+          continue;                       /* 长度前缀对不上 ⇒ 不是这个键，继续找 */
+        }
+        /* 结构：`00 06 locale` | 类型字节 | 值。String 类型的值是 `writeUTF` ⇒ 再来一个
+         * 2 字节长度前缀。两个前缀都读出来、并按它们取准确长度，别靠「打到不可打印为止」。 */
+        const typeAt: number = i + key.length;
+        if (typeAt + 2 >= got) {
+          continue;
+        }
+        const vlen: number = (u[typeAt + 1] << 8) | u[typeAt + 2];
+        if (vlen <= 0 || vlen > 32 || typeAt + 3 + vlen > got) {
+          return 'type=' + String(u[typeAt]) + ' len=' + String(vlen) + ' (not a short string)';
+        }
+        let out: string = '';
+        for (let j = 0; j < vlen; j++) {
+          const c: number = u[typeAt + 3 + j];
+          out += (c >= 32 && c < 127) ? String.fromCharCode(c) : ('\\x' + c.toString(16));
+        }
+        return out;
+      }
+      return seen === 0 ? 'no-key' : ('no-exact-key(' + String(seen) + ' loose)');
+    } catch (e) {
+      const err = e as BusinessError;
+      return 'ERR(' + err.message + ')';
+    }
+  };
   let out: string = '';
   const roots: string[] = ['sandbox', 'external'];
   for (const which of roots) {
@@ -350,7 +422,8 @@ export function dumpDataDirs(filesDir: string): string {
     out += '--- ' + which + ':arkts ' + root + GAME_DATA_SUFFIX + '\n'
          + '  entries=' + arktsEntryCount(root + GAME_DATA_SUFFIX)
          + ' saves=' + arktsEntryCount(root + GAME_DATA_SUFFIX + '/saves')
-         + ' schematics=' + arktsEntryCount(root + GAME_DATA_SUFFIX + '/schematics') + '\n';
+         + ' schematics=' + arktsEntryCount(root + GAME_DATA_SUFFIX + '/schematics') + '\n'
+         + '  locale=' + localeOf(root + GAME_DATA_SUFFIX) + '\n';
     /* ② 每一个隔离键那一份。⚠️ 键用 native 列 —— ArkTS 的 `fs` 在外部根上不一定读得到，
      *    而「读不到」与「没有」在这里长得一模一样，正是要避免的那种混淆。 */
     const keysRaw: string = nativeListTree(root + INSTANCES_SUBDIR, 1);
@@ -374,8 +447,12 @@ export function dumpDataDirs(filesDir: string): string {
       out += '--- ' + which + ':keys none (' + keysRaw.trim() + ')\n';
     }
     for (const k of keys) {
+      /* ⭐ 每一档也带上**语言**那一行 —— 游戏在读的正是其中这一档，而「语言变英文了」
+       *    要看的就是**这一档**里 settings.bin 的 `locale`。⛔ 只印根那一层不够。 */
+      const kd: string = root + INSTANCES_SUBDIR + '/' + k + SETS_SUFFIX + GAME_DATA_SUFFIX;
       out += '--- ' + which + ':' + k + '\n'
-           + nativeListTree(root + INSTANCES_SUBDIR + '/' + k + SETS_SUFFIX + GAME_DATA_SUFFIX, 2);
+           + nativeListTree(kd, 2)
+           + '  locale=' + localeOf(kd) + '\n';
     }
   }
   return out;
