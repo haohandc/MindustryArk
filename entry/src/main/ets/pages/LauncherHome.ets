@@ -271,6 +271,17 @@ const BUTTON_FONT_VP = 16;
 /* 「按版本」那一屏存档行的三列宽度（vp）：文件名占剩下的全部，大小与时间**各占一列、右对齐**。
  * ⚠️ 宽度必须写死（`Text` 默认按内容自适应 ⇒ 列会歪），写死是安全的，因为两个格式**定长**：
  * 大小 ≤ 7 个字符（`1.2 MB`），时间恒为 10 个字符（`2026-10-02`）。
+ *
+ * ⭐⭐ **但「宽度写死」只在字号也写死时才成立。** 这一条是 2026-10-04 才补上的：
+ * 原来那句理由默认了「字不会变大」，而 ArkUI 里 `fontSize(12)` 的单位是 **fp**（SDK 原文：
+ * 「If fontSize is of the number type, the unit fp is used」）⇒ **它跟着系统字体缩放**。
+ * 系统字体一调大，10 个字符的日期就会撑出 92vp，列宽写死反而变成裁切。
+ *
+ * ⇒ ⭐ **判据（全文件通用）**：
+ *    · **标签 / 说明文字**（跟着读的字）—— 用数字（fp），**让用户按自己的需要放大**；
+ *    · **装在定宽盒子里的数据**（大小、日期、勾）—— 用 `'12vp'` 这样的字符串，
+ *      **不跟系统字体缩放**，否则那个盒子装不下它。
+ * ⛔ 别反过来：给标签写 vp 会让看不清的用户没有出路；给数据列写 fp 会让列宽失效。
  * 手机窄屏上文件名只剩一百多 vp，靠 `TextOverflow.Ellipsis` 收尾 —— 比三列错开代价小。 */
 const SAVE_SIZE_COL_VP = 74;
 const SAVE_DATE_COL_VP = 92;
@@ -2634,9 +2645,14 @@ export struct LauncherHome {
             Column() {
               ForEach(this.metaRowsExcept(), (r: MetaRow) => {
                 Row() {
+                  /* ⭐⭐ 这里**不能**用 `.width(88)`。它是**标签**（要跟着系统字体放大），
+                   * 而 88vp 是个**定宽盒子** —— 两者只能选一个：
+                   * 「写入时的构建号」7 个汉字，系统字体调到 1.75 倍就约 147vp ⇒ **被裁掉**。
+                   * ⇒ 改成 `constraintSize({ minWidth: 88 })`：短标签仍从 88 起（列还是齐的），
+                   *   长标签**把它撑开**而不是被裁 —— 代价是那一行的值列右移，但那比缺字好。 */
                   Text(r.label)
                     .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-                    .width(88)
+                    .constraintSize({ minWidth: 88 })
                   Text(r.value)
                     .fontSize(12).fontColor($r('sys.color.font_primary'))
                     .layoutWeight(1)
@@ -2817,17 +2833,18 @@ export struct LauncherHome {
                   .layoutWeight(1)
                   .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
 
+                /* ⚠️ `'12vp'` 而不是 `12` —— 它在定宽列里，⛔ 不能跟着系统字体缩放。理由见常量那段。 */
                 Text(formatSaveSize(sv.bytes))
-                  .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                  .fontSize('12vp').fontColor($r('sys.color.font_tertiary'))
                   .width(SAVE_SIZE_COL_VP).textAlign(TextAlign.End)
 
                 Text(formatSaveDate(sv.mtime))
-                  .fontSize(12).fontColor($r('sys.color.font_tertiary'))
+                  .fontSize('12vp').fontColor($r('sys.color.font_tertiary'))
                   .width(SAVE_DATE_COL_VP).textAlign(TextAlign.End)
                   .margin({ left: 10 })
 
                 Text('✓')
-                  .fontSize(14).fontColor($r('sys.color.brand'))
+                  .fontSize('14vp').fontColor($r('sys.color.brand'))
                   .width(SAVE_TICK_COL_VP).textAlign(TextAlign.End)
                   .margin({ left: 6 })
                   .visibility(this.rowHot(this.saveKey(this.versionSavesDir(), sv.id))
