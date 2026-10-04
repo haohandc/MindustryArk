@@ -15,7 +15,7 @@ import { bundleManager, common, ConfigurationConstant } from '@kit.AbilityKit';
 /* 应用自己的显示名 —— 与游戏里那个 About 卡片同一处规则。 */
 import { appLabel } from '../utils/AppLabel';
 import { newTreeStat, copyTreeInto, removeTree, TreeStat, isDir, pathExists } from '../utils/FsTree';
-import { externalRootPath, SANDBOX_ROOT, STORAGE_MODE_SANDBOX, STORAGE_MODE_EXTERNAL,
+import { externalRootPath, STORAGE_MODE_SANDBOX, STORAGE_MODE_EXTERNAL,
          readStorageMode, writeStorageMode, gameDataRoot, gameDataRootFor, ensureGameDataRoot,
          probeExternalRoot, usedUserHome, usedUserHomeReason,
          dumpStorageState } from '../settings/StorageRoot';
@@ -429,10 +429,11 @@ export struct LauncherHome {
   @State storageUsedReason: string = '';
   /** 上一次写给 hdc 的那个内容。⛔ 拿它避免**每次 refresh 都写一个文件**（见 `dumpStorageState`）。 */
   private storageDumped: string = '';
-  /** 切换询问窗开着没有。 */
-  @State showStorageAsk: boolean = false;
-  /** 询问窗要切到**哪个**模式（'' = 没在问）。 */
-  @State storagePending: string = '';
+  /* ⭐ **开关控件自己的状态**，与 `storageIntent` 分开。
+   * ⛔ 为什么不能直接把 `isOn` 绑到意图上：`Toggle` 只在**绑定值变化时**才重新应用，
+   *    而「意图没提交」=「值没变」⇒ 控件不会自己弹回去（用户 2026-10-04 报的
+   *    「点取消，开关还是开着的」就是这个）。详见 Toggle 那一段的说明。 */
+  @State storageToggleOn: boolean = false;
   /** 探针的原始结论 / 切换结果。⛔ 原样显示，别改写探针的话。 */
   @State storageNote: string = '';
 
@@ -1284,76 +1285,81 @@ export struct LauncherHome {
     }
   }
 
-  /* 「游戏上次启动实际用了哪个」那一行。
-   * ⛔ 读不到就说**读不到**，⛔ 不要拿意图冒充它 —— 那正是这个功能最容易骗人的地方
-   *    （「设置里写着外置」和「游戏真的用了外置」是两件事，只报前者等于报了一个未验证的值）。 */
-  private storageUsedLine(): string {
-    if (this.storageUsed === '') {
-      return '游戏还没启动过 —— 实际用哪个还不知道';
-    }
-    const where: string = this.storageUsed.startsWith(SANDBOX_ROOT) ? '沙箱' : '外置';
-    const why: string = (this.storageUsedReason === 'on' || this.storageUsedReason === 'off')
-      ? '' : ('（回退了，原因：' + this.storageUsedReason + '）');
-    const tail: string = this.storageUsedMismatch() ? '　← 需要重启游戏才会生效' : '';
-    return '游戏上次启动用的是：' + where + why + tail;
-  }
-
-  /** 意图与实际对不上吗。⭐ 对不上不是 bug，是**「改了设置但还没重启」** —— native 在启动那一刻读。
-   * ⚠️ 记录里没有（游戏没启动过）不算不一致：那是「还不知道」。 */
-  private storageUsedMismatch(): boolean {
-    if (this.storageUsed === '') {
-      return false;
-    }
-    const usedIsSandbox: boolean = this.storageUsed.startsWith(SANDBOX_ROOT);
-    return usedIsSandbox !== (this.storageIntent === STORAGE_MODE_SANDBOX);
-  }
+  /* ⛔ 这里原来有两个方法：`storageUsedLine()`（「游戏上次启动用的是：…　← 需要重启游戏才会生效」）
+   * 和 `storageUsedMismatch()`（给那行上警示色）。**2026-10-04 整行删了。**
+   *
+   * 用户的理由：**切换时游戏进程肯定是关着的** —— 而这条比听上去更强：
+   *   启动器的设置页与游戏**不可能同时在跑**（同一个应用、同一个进程）⇒ `usedUserHome()`
+   *   读到的永远来自**上一次**启动，**不存在活的冲突**。
+   * ⭐ 那行当年存在的理由是「界面上说的和实际用的会分叉」，而在这个功能里那个分叉
+   *   **构造上不可能出现** ⇒ 它是句废话，还把界面弄长了一行。
+   * ⚠️ **`usedUserHome()` / `usedUserHomeReason()` 仍然在调用** —— 它们进
+   *   `dumpStorageState()` → `storage_state.txt` 给 hdc 读。那是**排查通道**，
+   *   与「界面上要不要显示」是两件不同的事：⛔ 别因为界面不显示了就把那条路也删掉，
+   *   否则出问题时**只剩眼睛**可看（本应用的 hilog 读不到）。 */
 
   /* 拨存储位置那个开关。
-   * ⭐ 顺序：**先探针、再问要不要搬、最后才落盘**。任何一步不过就什么都不改 ——
-   *    而 `isOn` 绑的是 `storageIntent`，所以「不改意图」就等于开关自己弹回去。 */
+   * ⭐ 顺序：**先探针、再问要不要搬、最后才落盘**。任何一步不过就什么都不改。 */
+  /* 把开关控件拉回**意图**那一档。
+   * ⛔ **任何「没有真正提交」的出口都要调它** —— 见 Toggle 那段的说明：控件的视觉状态不会
+   *    因为「意图没变」而自己回去。 */
+  private syncStorageToggle(): void {
+    this.storageToggleOn = (this.storageIntent === STORAGE_MODE_EXTERNAL);
+  }
+
   private askStorageSwitch(on: boolean): void {
     /* 控件可能因为别的重渲染回调一次与当前值相同的状态 ⇒ 先挡掉，否则会白弹一个询问窗。 */
     if (on === (this.storageIntent === STORAGE_MODE_EXTERNAL)) {
+      this.syncStorageToggle();
       return;
     }
+
+    /* ⭐⭐ **先把控件状态记成玩家刚拨到的这一档。这一步是承重的，别删。**
+     *
+     * ⛔⛔ 2026-10-04 我在这个问题上错了**两次**，两次都是同一个机制：
+     *    `Toggle` 只在**绑定值发生变化时**才重新应用视觉状态。而「取消」那条路上
+     *    `storageIntent` 没变 ⇒ `syncStorageToggle()` 算出来还是 `false`、**和之前同一个值**
+     *    ⇒ ArkUI 认为无事发生 ⇒ **控件照旧停在「开」**（用户两次都看到这个）。
+     *    ⭐ 我第一版甚至连 state 都没有（绑的是 `storageIntent` 的表达式）；
+     *      第二版加了 state 但那个 state **从头到尾没变过** —— 都一样坏。
+     * ⇒ **判据：要靠状态把控件弹回去，那个状态就必须在「拨了」与「没拨」两个值之间
+     *    真的动一次。** 只提供一个「正确的值」是不够的。
+     * ⚠️ 所以这里先设成 `on`（此时与控件自己的视觉一致、所以看不出变化），
+     *    而在**任何取消路径**上再设回意图那一档 —— 那一次才是真的变化，控件才会弹回去。 */
+    this.storageToggleOn = on;
+
     if (on) {
       /* ⛔ **外置必须先过探针**：那是「native 能不能在那儿写」的闸门，而且它返回的是
        * **字符串**（五种处境），不是布尔 —— 原样显示，别压成「不可用」。 */
       const p: string = probeExternalRoot(this.filesDir);
       if (!p.startsWith('ok')) {
         this.storageNote = '外置不可用：' + p;
+        this.syncStorageToggle();      /* 刚设成 true，这里设回 false ⇒ 值真的变了 ⇒ 弹回去 */
         return;
       }
     }
+    /* ⭐⭐ **拨完就直接搬**（用户 2026-10-04：「把提示框删了，这个就没用了」）。
+     *    ⛔ 原来这里弹一个确认窗，而它只剩「搬过去 / 取消」两个按钮 —— 一个动作的窗
+     *    只是多一次点按。删掉之后：**拨开关 = 立刻搬**。
+     *
+     * ⚠️⚠️ **这里有一个已知的、用户接受的取舍**：不再有确认，而搬会**删掉旧位置那份**。
+     *    可恢复性靠三样：① 复制**全部成功才删源**（中途失败源完好，重试即可）；
+     *    ② 搬反方向就是搬回来；③ 垃圾站留在沙箱、永远不跟着走。
+     *    ⛔ 别因为「太危险」就自己把确认窗加回来 —— 那是用户明确要去掉的东西。
+     * ⭐ **失败**仍然要说（用户 2026-10-04：「除非失败了才弹提示」）—— 见下面 `storageNote`。 */
     this.storageNote = '';
-    this.storagePending = on ? STORAGE_MODE_EXTERNAL : STORAGE_MODE_SANDBOX;
-    this.showStorageAsk = true;
-  }
-
-  /* 询问窗上的出口。`how` = `'copy'` / `'move'` / `'keep'`（什么都不搬）。
-   * ⭐ **复制/移动失败就不落盘** —— 与隔离那套同一条（「先复制，成功了才落盘」，
-   * 那条教训是「存档全没了」）。 */
-  private confirmStorageSwitch(how: string): void {
     const from: string = gameDataRoot(this.filesDir);
-    const to: string = gameDataRootFor(this.filesDir, this.storagePending);
-    if (how !== 'keep') {
-      const err: string = migrateGameData(from, to, how === 'move');
-      if (err !== '') {
-        this.storageNote = err;
-        this.showStorageAsk = false;
-        return;
-      }
+    const to: string = gameDataRootFor(this.filesDir,
+                                       on ? STORAGE_MODE_EXTERNAL : STORAGE_MODE_SANDBOX);
+    const err: string = migrateGameData(from, to);
+    if (err !== '') {
+      /* ⛔ 没提交 ⇒ 控件必须弹回去（同探针不过那条）。 */
+      this.storageNote = err;
+      this.syncStorageToggle();
+      return;
     }
-    writeStorageMode(this.filesDir, this.storagePending);
-    this.showStorageAsk = false;
-    /* ⚠️ 说清「要重启游戏」：native 在**启动那一刻**读桥，所以现在游戏那边还是旧的根。
-     * ⛔ 三种出口的话术分开 —— 「移动」最要紧的一句是**旧的已经删了**，玩家得知道，
-     *    否则他会去旧位置找一个已经不在了的东西。 */
-    this.storageNote = how === 'copy'
-      ? '已切换并复制。下次启动游戏才会用新的位置。'
-      : (how === 'move'
-         ? '已切换并搬走了，旧位置那份已经删除。下次启动游戏才会用新的位置。'
-         : '已切换（数据没有搬）。下次启动游戏才会用新的位置。');
+    writeStorageMode(this.filesDir, on ? STORAGE_MODE_EXTERNAL : STORAGE_MODE_SANDBOX);
+    /* ⭐ `refresh()` 会把控件同步到新的意图，并把状态文件重写一遍。 */
     this.refresh();
   }
 
@@ -1391,11 +1397,16 @@ export struct LauncherHome {
      *    （既有笔记），所以这三行必须落成文件，否则「数据到底落在哪」只能靠眼睛看界面。
      * ⛔ 只在内容变了时写：它在 `refresh()` 里，而每渲染周期写一次文件本身就是卡顿源。 */
     this.storageIntent = readStorageMode(this.filesDir);
+    /* ⭐ 开关控件跟**已确认的意图**对齐。它同时覆盖两件事：进页面时的初值、以及
+     * 「切换成功」之后（本函数是 `confirmStorageSwitch` 的最后一步）—— 所以成功那条路
+     * 不需要单独调 `syncStorageToggle()`。 */
+    this.syncStorageToggle();
     this.storageUsed = usedUserHome();
     this.storageUsedReason = usedUserHomeReason();
     const dump: string = this.storageIntent + '|' + this.storageUsed + '|' + this.storageUsedReason;
     if (dump !== this.storageDumped) {
-      if (dumpStorageState(this.storageIntent, this.storageUsed, this.storageUsedReason)) {
+      if (dumpStorageState(this.filesDir, this.storageIntent, this.storageUsed,
+                                    this.storageUsedReason)) {
         this.storageDumped = dump;
       }
     }
@@ -4011,96 +4022,16 @@ export struct LauncherHome {
     .onClick(() => { this.openGameDeleteAsk(g); })
   }
 
-  @Builder
-  /* 切换存储位置时的询问窗。⭐ 形状照「隔离窗」那套：**先问、并且把后果摆出来**，
-   * 三个出口（复制过去 / 不复制 / 取消）—— ⛔ 不提供「直接切」那条路，因为
-   * 「切了但数据没跟过去」在玩家眼里就是「存档全没了」。
-   * ⚠️ 选项文字里带**真实数量**（`countsOf`）：只说「你的数据」不告诉他有几个存档，
-   *    玩家没法判断该不该等这一次复制。 */
-  @Builder
-  StorageSwitchDialog() {
-    Column() {
-      Column() {
-        Text(this.storagePending === STORAGE_MODE_EXTERNAL ? '切到外置存储' : '切回沙箱')
-          .fontSize(17).fontColor($r('sys.color.font_primary'))
-          .width('100%').textAlign(TextAlign.Center)
-
-        Text(this.storageSwitchLine())
-          .fontSize(13).fontColor($r('sys.color.font_secondary'))
-          .width('100%').textAlign(TextAlign.Center)
-          .margin({ top: 10 })
-
-        Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
-
-        /* ⚠️ 「复制过去」是**主**动作（品牌蓝实底 + 白字），与两排动作按钮的配色一致；
-         *    「不复制」与「取消」留在灰底上。 */
-        Button('复制过去')
-          .fontSize(15)
-          .fontColor(Color.White)
-          .backgroundColor($r('sys.color.brand'))
-          .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
-          .margin({ top: 16 })
-          .onClick(() => { this.confirmStorageSwitch('copy'); })
-
-        /* ⭐ 移动（2026-10-04 用户要的）：搬完把**源删掉**。⚠️ 它是这一排里唯一的**破坏性**动作，
-         * 所以不给满色 —— 同 `SaveActionRow` 那条判据（主操作给满色，破坏性的给底色 + 警示词）。 */
-        Button('移动过去')
-          .fontSize(15)
-          .fontColor($r('sys.color.warning'))
-          .backgroundColor($r('app.color.btn_neutral'))
-          .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
-          .margin({ top: 10 })
-          .onClick(() => { this.confirmStorageSwitch('move'); })
-
-        Button('不搬动')
-          .fontSize(15)
-          .backgroundColor($r('app.color.btn_neutral'))
-          .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
-          .margin({ top: 10 })
-          .onClick(() => { this.confirmStorageSwitch('keep'); })
-
-        Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
-        Button('取消')
-          .fontSize(14)
-          .backgroundColor($r('app.color.btn_neutral'))
-          .constraintSize({ maxWidth: '100%' }).alignSelf(ItemAlign.Center)
-          .margin({ top: 12 })
-          .onClick(() => { this.showStorageAsk = false; this.storagePending = ''; })
-      }
-      .width('100%')
-      .constraintSize({ maxWidth: this.dialogWidthVp() })
-      .padding(20)
-      .backgroundColor($r('app.color.launcher_card'))
-      .borderRadius(CARD_RADIUS_VP)
-      .alignItems(HorizontalAlign.Start)
-      .onClick(() => {})
-    }
-    .width('100%').height('100%')
-    .backgroundColor('#80000000')
-    .justifyContent(FlexAlign.Center)
-    .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
-               top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
-    .transition(enterFade())
-  }
 
   /** 询问窗里那段话：说清**往哪切**、**现在有多少东西**、**复制是搬运还是抄一份**。 */
-  private storageSwitchLine(): string {
-    const c: GameDataCounts = countsOf(gameDataRoot(this.filesDir));
-    const n: number = c.sectorSaves + c.manualSaves;
-    const where: string = this.storagePending === STORAGE_MODE_EXTERNAL
-      ? '「下载」里的应用文件夹（data 子目录）'
-      : '应用内部（沙箱）';
-    /* ⚠️ 三个数分别说 —— 玩家关心的是存档，模组和蓝图只是顺带提一句。
-     * ⛔ 「0 个存档」也要说出来：那说明这次没什么可搬的，玩家可以放心按「不复制」。 */
-    const what: string = n === 0
-      ? '现在这份数据里没有存档'
-      : ('现在这份数据里有 ' + String(n) + ' 个存档'
-         + (c.mods > 0 ? ('、' + String(c.mods) + ' 个模组') : '')
-         + (c.schematics > 0 ? ('、' + String(c.schematics) + ' 份蓝图') : ''));
-    return '要放到：' + where + '。\n' + what + '。\n\n'
-         + '复制过去 = 新的留一份、旧的**不动**；移动过去 = 旧的**删掉**；'
-         + '不搬动 = 新位置从空的开始。';
-  }
+  /* ⛔ 这里原来有一个 `storageSwitchLine()`，拼那段说明文字（往哪切 / 有多少存档 / 两个选项
+   * 各对旧那份做什么）。**用户 2026-10-04 要求整段去掉，函数删了。**
+   * ⚠️ 它顺带丢掉了三件事，都记在这儿，将来要加回来知道该加什么：
+   *    ① 目标位置是「下载」里的应用文件夹（`data` 子目录）；
+   *    ② 这份数据里有多少存档 / 模组 / 蓝图（`countsOf()`）；
+   *    ③ **「移动会把旧那份删掉」** —— 这一条最要紧：它是玩家**唯一**可能在事后去旧位置
+   *       找一个已经不在了的东西的情形。⛔ 要加回来时**别再用 `**` 写粗体**，
+   *       `Text()` 不认 markdown、会原样显示两个星号（那次就是这么被发现的）。 */
 
   @Builder
   GameDeleteAskDialog() {
@@ -4122,7 +4053,7 @@ export struct LauncherHome {
 
         if (!this.jarHasOwnData()) {
           /* 隔离关着 ⇒ 全应用唯一那份数据。⛔ 这条路连选项都不给。 */
-          Text('这个版本用的是**未隔离**的那一份数据 —— 全应用只有那一份，'
+          Text('这个版本用的是「未隔离」的那一份数据 —— 全应用只有那一份，'
                + '删它会把所有未隔离版本的数据一起清掉。\n所以这里只提供「只删除游戏」。')
             .fontSize(12).fontColor($r('sys.color.font_secondary'))
             .width('100%').margin({ top: 10 })
@@ -5364,21 +5295,34 @@ export struct LauncherHome {
             .alignItems(HorizontalAlign.Start)
             .layoutWeight(1)
 
-            /* ⭐ 开关的「开」= 用外置。⚠️ `isOn` 绑的是**意图**，所以探针不过时把开关拨回来
-             * 只需要「不改 storageIntent」—— 不需要手动复位一个控件状态（那是最容易做错的一步）。 */
-            Toggle({ type: ToggleType.Switch,
-                     isOn: this.storageIntent === STORAGE_MODE_EXTERNAL })
+            /* ⭐ 开关的「开」= 用外置。
+             *
+             * ⛔⛔ **`isOn` 绑的是一个独立的 `@State`，不是直接绑意图 —— 这是 2026-10-04 改的，
+             *    因为原来那种写法有个真 bug。** 那一版绑的是 `this.storageIntent === EXTERNAL`，
+             *    我以为「不动意图，开关自己就会弹回去」。**不会。**
+             *    `Toggle` 有自己的视觉状态，而 `isOn` **只在绑定表达式的值【发生变化时】才重新应用**；
+             *    意图没变 ⇒ 值没变 ⇒ 控件照样停在「开」。
+             *    ⇒ 用户看到的是：**点取消，开关还是开着的，而下面的文字仍写着「沙箱」**
+             *      （文字读的是意图，所以文字是对的 —— 两个不同步的东西并排显示，就是这么来的）。
+             * ⭐ 所以要有这个显式的控件状态 + `syncStorageToggle()`：任何**没有真正提交**的出口
+             *    （探针不过 / 取消 / 迁移失败）都要调它，把控件拉回意图那一档。
+             * ⛔ 别再改回「直接绑意图」那种写法，也别删掉那些 sync —— 删了就退回这个 bug。 */
+            Toggle({ type: ToggleType.Switch, isOn: this.storageToggleOn })
               .onChange((on: boolean) => { this.askStorageSwitch(on); })
           }
           .width('100%')
 
-          Text(this.storageUsedLine())
-            .fontSize(12)
-            .fontColor(this.storageUsedMismatch()
-                       ? $r('sys.color.warning') : $r('sys.color.font_tertiary'))
-            .width('100%').margin({ top: 10 })
+          /* ⛔ 这里原来还有一行「游戏上次启动用的是：…（需要重启才生效）」，**2026-10-04 删了**。
+           * 用户的理由：**切换时游戏进程肯定是关着的**。而这条比听上去更强 ——
+           * 启动器的设置页与游戏**不可能同时在跑**（同一个应用、同一个进程）⇒
+           * `usedUserHome()` 读到的永远来自**上一次**启动，**不存在活的冲突**，
+           * 所以「要重启才生效」是句废话。⭐ 它当年存在的理由是「界面上说的和实际用的会分叉」，
+           * 而那个分叉在这个功能里**构造上不可能出现**。
+           * ⚠️ `usedUserHome()` / `usedUserHomeReason()` **仍然要留着** ——
+           * `dumpStorageState()` 把它们写进 `storage_state.txt` 给 hdc 读，那是**排查通道**，
+           * 与「界面上要不要显示」是两件事。 */
 
-          /* 探针的原始结论 / 切换结果。⛔ **原样显示探针那句话** —— 它返回五种不同处境
+          /* 只在**出错**时给的提示。⛔ **原样显示探针那句话** —— 它返回五种不同处境
            * （`no-path` / `no-dir` / `open: errno=…` / `readback: …` / `left-behind: …`），
            * 压成一句「不可用」就把判据丢掉了。 */
           if (this.storageNote !== '') {
@@ -6021,12 +5965,6 @@ export struct LauncherHome {
      * （多选态下单条动作行整个藏了），所以顺序只是防御性的。 */
     if (this.showMultiAsk) {
       this.MultiDeleteAskDialog()
-    }
-
-    /* 切换存储位置的询问。⚠️ 它在**设置页**，与别的确认框不可能同时开着 ——
-     * 排在这里只是防御性顺序（Stack 里后声明的在上）。 */
-    if (this.showStorageAsk) {
-      this.StorageSwitchDialog()
     }
 
     /* 清空垃圾站的确认。⚠️ 它只在垃圾站那一屏出现，与别的确认框不可能同时开着 ——

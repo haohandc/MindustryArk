@@ -12,6 +12,8 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { GameVersionParts, gameVersionParts } from '../games/GameLibrary';
 import { copyTreeInto, removeTree, newTreeStat, TreeStat } from '../utils/FsTree';
+/* ⭐ 跨根迁移用 **native** 的递归复制 —— 理由见那个函数与 `storprobe.c` 的说明。 */
+import { nativeCopyTree } from './StorageRoot';
 /* ⭐ 存储根的唯一真相源。⛔ 这里 import 它**不会成环**：`StorageRoot` 只依赖 `ModImporter`，
  *    而 `ModImporter` 谁都不依赖（2026-10-04 查过整张图）。 */
 import { gameDataRoot } from './StorageRoot';
@@ -428,7 +430,31 @@ export function describeCounts(c: GameDataCounts): string {
  * ⛔ 垃圾站（`save-vault/`）**不在列**：用户 2026-10-04 定的「垃圾站留在沙箱」（它是兜底恢复副本）。 */
 const MIGRATED_SUBTREES: string[] = ['/.local/share', '/instances'];
 
-/* 把游戏数据在两个根之间搬迁。`move` = 搬完之后把源删掉。
+/* 把一次迁移失败的详情落成一个**沙箱里的小文件**，供 hdc 读走。
+ * ⭐ 理由与 `dumpStorageState` 那处一样，而且这里更要紧：**本应用的 hilog 读不到**，
+ *   所以没有这个文件时，一条失败的迁移只能靠玩家**照着屏幕念**（2026-10-04 正是如此，
+ *   来回好几轮问同一句话的下半截）。写下完整的前几条，一眼能看出是「某一条」还是「整片」。
+ * ⚠️ 只写不读（除排障外），而且是**追加**语义 —— 直接在调用点覆盖写。 */
+function writeStorageDiag(body: string): void {
+  try {
+    const f: fs.File = fs.openSync(NATIVE_FILES + '/storage_migrate_error.txt',
+      fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
+    try {
+      fs.writeSync(f.fd, body + '\n');
+    } finally {
+      fs.closeSync(f);
+    }
+  } catch (e) {
+    /* 落不下来不该拦住任何流程 —— 与全项目其它诊断写盘同一条。 */
+  }
+}
+
+/* 把游戏数据在**两个根之间搬过去**：复制成功之后把源删掉。
+ * ⛔ **没有「只复制不搬」这个选项**（2026-10-04 用户定：「外置就纯外置，内置就纯内置，
+ *   不给复制的选项，只有移动」）。
+ * ⭐ 所以这个函数**连参数都不给** —— 少一个布尔，就少一条「有人传了 false、于是又出现
+ *   『两处各一份』那个必须靠判断才能回答『哪一份是活的』的状态」的路。
+ *   判据同 `launcher.c` 拆掉 `ISOLATION_ROOT` 宏那次：**让错的写法写不出来。**
  *
  * @returns '' 成功；否则一句给玩家看的话。
  *
@@ -436,7 +462,7 @@ const MIGRATED_SUBTREES: string[] = ['/.local/share', '/instances'];
  * ⚠️ 顺序是承重的：**先全部复制成功，再删源**。反过来（先删）一旦中途失败就是真的丢数据；
  *    而「复制成功才落盘/才删」这条本项目已经付过一次代价（隔离那次的「存档全没了」）。
  *⚠️ 「没有数据可搬」**不算失败**（全新安装第一次就切，走的就是这条）。 */
-export function migrateGameData(fromRoot: string, toRoot: string, move: boolean): string {
+export function migrateGameData(fromRoot: string, toRoot: string): string {
   if (fromRoot === '' || toRoot === '' || fromRoot === toRoot) {
     return '';
   }
@@ -450,23 +476,26 @@ export function migrateGameData(fromRoot: string, toRoot: string, move: boolean)
     if (!gameDataExists(src)) {
       continue;                     /* 这棵本来就没有 —— 不是错（全新安装就是这样） */
     }
-    const acc: TreeStat = newTreeStat();
-    copyTreeInto(src, dst, 0, acc);
-    dirs += acc.dirs;
-    files += acc.files;
-    if (acc.failed > 0) {
-      /* ⚠️ 路径与**第一个**错误都进日志：只报错误码会把排查的第一步推给下一个人。
-       * ⛔ 这里直接返回 ⇒ **连前面已经复制成功的那几棵也不删**（`move` 时更该如此）。 */
-      hilog.error(DOMAIN, TAG,
-                  'storage: migrating %{public}s had %{public}d failure(s), first: %{public}s',
-                  rel, acc.failed, acc.firstError);
-      return '复制没完成（' + String(acc.failed) + ' 个文件没复制过去）：' + acc.firstError;
+    /* ⛔⛔ **跨根迁移走 native，不走 ArkTS 的 `copyTreeInto`。**
+     * 理由见 `storprobe.c` 里 `copyTree` 上方那段：同一个文件、同一个外部目标，
+     * ArkTS 的 `copyFileSync` 报 EPERM（126 个全废），而 native 的裸 POSIX 拷贝成功。
+     * 而把 `copyFileSync` 单独放进探针里跑**又成功了** —— 那个差异我解释不了
+     * （三种假设全被自己的测量推翻）⇒ **走被证明可行的那条**，别在解释上继续烧时间。
+     * ⚠️ 沙箱内部的复制（隔离、垃圾站）**继续用 `copyTreeInto`**：那条路实测没问题，
+     *    换过来没有收益、还多一次跨语言调用。 */
+    const err: string = nativeCopyTree(src, dst);
+    if (err !== '') {
+      hilog.error(DOMAIN, TAG, 'storage: migrating %{public}s failed: %{public}s', rel, err);
+      /* ⭐ 落一个文件给 hdc 读 —— 本应用的 hilog 读不到，没有它这类失败只能靠玩家照着屏幕念。 */
+      writeStorageDiag(rel + '：' + err);
+      /* ⛔ 直接返回 ⇒ **连前面已经复制成功的那几棵也不删**（`move` 时更该如此）。 */
+      return err;
     }
     copied.push(rel);
   }
 
-  /* ② 删源（仅 `move`，且**只删真的复制成功的那几棵**）。 */
-  if (move) {
+  /* ② 删源。⛔ **只删真的复制成功的那几棵** —— 失败的那几棵留在原地。 */
+  {
     for (const rel of copied) {
       const acc: TreeStat = newTreeStat();
       removeTree(fromRoot + rel, 0, acc);
@@ -481,8 +510,8 @@ export function migrateGameData(fromRoot: string, toRoot: string, move: boolean)
   }
 
   hilog.info(DOMAIN, TAG,
-             'storage: %{public}s %{public}d dir(s) / %{public}d file(s) %{public}s -> %{public}s (%{public}s)',
-             move ? 'moved' : 'copied', dirs, files, fromRoot, toRoot,
+             'storage: moved %{public}s -> %{public}s (%{public}s)',
+             fromRoot, toRoot,
              copied.length === 0 ? 'nothing to move' : copied.join('+'));
   return '';
 }

@@ -15,16 +15,37 @@ const TAG = 'MindustryLauncher';
 /* 环的保护：`statSync` 跟随符号链接，指向上级的链接会让递归不终止、把主线程钉死。 */
 const MAX_DEPTH = 32;
 
-/** 一次复制/删除的记账。`firstError` 只留第一条，够定位就行。 */
+/** 一次复制/删除的记账。
+ *  `firstError` 保留原样（调用点的措辞依赖它），`samples` 额外多留几条 —— 理由见 `recordFailure`。 */
 export interface TreeStat {
   dirs: number;
   files: number;
   failed: number;
   firstError: string;
+  samples: string[];
 }
 
+/** 多留几条错误的上限。⛔ 只留第一条时，一次「整片失败」会看起来像「某一条失败」。 */
+const SAMPLE_CAP = 8;
+
 export function newTreeStat(): TreeStat {
-  return { dirs: 0, files: 0, failed: 0, firstError: '' };
+  return { dirs: 0, files: 0, failed: 0, firstError: '', samples: [] };
+}
+
+/* 记一次失败。⭐ `firstError` 保留、额外收样本，两个理由：
+ *  ① 调用点的措辞（`'复制没完成（N 个文件没复制过去）：' + acc.firstError`）都读 `firstError`
+ *     ⇒ 动它要改好几处，不值当。
+ *  ② ⭐⭐ **只留第一条会把「整片写不进去」报告成「某一条失败」的样子。** 2026-10-04 的真实教训：
+ *     存储迁移在外置根上失败，屏幕上只有一条 `复制失败 <路径>：操作不被允许` ⇒
+ *     看起来像某个文件有病，而实际是那一整片都写不进去。⇒ 多留几条，一眼能看出分布。 */
+function recordFailure(acc: TreeStat, msg: string): void {
+  acc.failed += 1;
+  if (acc.firstError === '') {
+    acc.firstError = msg;
+  }
+  if (acc.samples.length < SAMPLE_CAP) {
+    acc.samples.push(msg);
+  }
 }
 
 /** `accessSync` 不抛、只返回 boolean，这里包一层统一语义。 */
@@ -40,10 +61,7 @@ function exists(path: string): boolean {
  * ⚠️ 每层自己 `mkdir` ⇒ 调用方**不需要**预建父目录。 */
 export function copyTreeInto(src: string, dst: string, depth: number, acc: TreeStat): void {
   if (depth > MAX_DEPTH) {
-    acc.failed += 1;
-    if (acc.firstError === '') {
-      acc.firstError = '目录层级超过 ' + String(MAX_DEPTH) + ' 层（可能有环）';
-    }
+    recordFailure(acc, '目录层级超过 ' + String(MAX_DEPTH) + ' 层（可能有环）');
     return;
   }
   try {
@@ -52,10 +70,7 @@ export function copyTreeInto(src: string, dst: string, depth: number, acc: TreeS
     }
   } catch (e) {
     const err = e as BusinessError;
-    acc.failed += 1;
-    if (acc.firstError === '') {
-      acc.firstError = '建目录失败 ' + dst + '：' + err.message;
-    }
+    recordFailure(acc, '建目录失败 ' + dst + '：' + err.message);
     return;
   }
   acc.dirs += 1;
@@ -65,10 +80,7 @@ export function copyTreeInto(src: string, dst: string, depth: number, acc: TreeS
     names = fs.listFileSync(src);
   } catch (e) {
     const err = e as BusinessError;
-    acc.failed += 1;
-    if (acc.firstError === '') {
-      acc.firstError = '列目录失败 ' + src + '：' + err.message;
-    }
+    recordFailure(acc, '列目录失败 ' + src + '：' + err.message);
     return;
   }
 
@@ -80,10 +92,7 @@ export function copyTreeInto(src: string, dst: string, depth: number, acc: TreeS
       isDir = fs.statSync(s).isDirectory();
     } catch (e) {
       const err = e as BusinessError;
-      acc.failed += 1;
-      if (acc.firstError === '') {
-        acc.firstError = '读状态失败 ' + s + '：' + err.message;
-      }
+      recordFailure(acc, '读状态失败 ' + s + '：' + err.message);
       continue;
     }
     if (isDir) {
@@ -94,10 +103,11 @@ export function copyTreeInto(src: string, dst: string, depth: number, acc: TreeS
         acc.files += 1;
       } catch (e) {
         const err = e as BusinessError;
-        acc.failed += 1;
-        if (acc.firstError === '') {
-          acc.firstError = '复制失败 ' + s + '：' + err.message;
-        }
+        /* ⛔⛔ **一定要把 `d` 也打出来。** 原来只打源路径，而 `copyFileSync(s, d)` 有**两个** open：
+         *     读 `s` 和写 `d`。EPERM（「操作不被允许」）在**读自己的沙箱文件**时几乎不可能出现，
+         *     它出现在**往外部文件夹写**的时候 ⇒ 只打源路径会把人引到**错的那一侧**去查
+         *     （2026-10-04 就是这样：我拿着一个沙箱路径分析了半天，而真正被拒的是外置那一侧）。 */
+        recordFailure(acc, '复制失败 ' + s + ' → ' + d + '：' + err.message);
       }
     }
   }
@@ -106,10 +116,7 @@ export function copyTreeInto(src: string, dst: string, depth: number, acc: TreeS
 /* 递归删除一棵树。⚠️ 到最后一层才 `rmdirSync`，那一刻里面已经空了。 */
 export function removeTree(path: string, depth: number, acc: TreeStat): void {
   if (depth > MAX_DEPTH) {
-    acc.failed += 1;
-    if (acc.firstError === '') {
-      acc.firstError = '目录层级超过 ' + String(MAX_DEPTH) + ' 层（可能有环）';
-    }
+    recordFailure(acc, '目录层级超过 ' + String(MAX_DEPTH) + ' 层（可能有环）');
     return;
   }
   if (!exists(path)) {
@@ -127,10 +134,7 @@ export function removeTree(path: string, depth: number, acc: TreeStat): void {
       acc.files += 1;
     } catch (e) {
       const err = e as BusinessError;
-      acc.failed += 1;
-      if (acc.firstError === '') {
-        acc.firstError = '删除失败 ' + path + '：' + err.message;
-      }
+      recordFailure(acc, '删除失败 ' + path + '：' + err.message);
     }
     return;
   }
@@ -140,10 +144,7 @@ export function removeTree(path: string, depth: number, acc: TreeStat): void {
     names = fs.listFileSync(path);
   } catch (e) {
     const err = e as BusinessError;
-    acc.failed += 1;
-    if (acc.firstError === '') {
-      acc.firstError = '列目录失败 ' + path + '：' + err.message;
-    }
+    recordFailure(acc, '列目录失败 ' + path + '：' + err.message);
     return;
   }
   for (const n of names) {
@@ -152,10 +153,7 @@ export function removeTree(path: string, depth: number, acc: TreeStat): void {
     try {
       isDir = fs.statSync(c).isDirectory();
     } catch (e) {
-      acc.failed += 1;
-      if (acc.firstError === '') {
-        acc.firstError = '读状态失败 ' + c;
-      }
+      recordFailure(acc, '读状态失败 ' + c);
       continue;
     }
     if (isDir) {
@@ -166,10 +164,7 @@ export function removeTree(path: string, depth: number, acc: TreeStat): void {
         acc.files += 1;
       } catch (e) {
         const err = e as BusinessError;
-        acc.failed += 1;
-        if (acc.firstError === '') {
-          acc.firstError = '删除失败 ' + c + '：' + err.message;
-        }
+        recordFailure(acc, '删除失败 ' + c + '：' + err.message);
       }
     }
   }
@@ -178,10 +173,7 @@ export function removeTree(path: string, depth: number, acc: TreeStat): void {
     acc.dirs += 1;
   } catch (e) {
     const err = e as BusinessError;
-    acc.failed += 1;
-    if (acc.firstError === '') {
-      acc.firstError = '删目录失败 ' + path + '：' + err.message;
-    }
+    recordFailure(acc, '删目录失败 ' + path + '：' + err.message);
   }
 }
 

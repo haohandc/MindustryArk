@@ -84,7 +84,14 @@ export function externalRootPath(filesDir: string): string {
  * ⛔ **这就是整个存储切换功能的闸门。** 返回**字符串**，判据是它**以 `ok` 开头**；
  *    其余每一种失败都指向不同的处置，所以不能压成布尔（见 `storprobe.c` 文件头）。
  *
- * ⚠️ 探针会**真的建一个文件再删掉** —— 只 stat 一下不算，那只证明看得见。 */
+ * ⚠️ 探针会**真的建一个文件再删掉** —— 只 stat 一下不算，那只证明看得见。
+ *
+ * ⛔⛔ **但它量的是【native】的能力，不是 ArkTS 的。** 2026-10-04 实测撞上了这个盲区：
+ *    探针（裸 POSIX `open/write/readback/unlink`）在外部文件夹里**全部成功**，
+ *    而**迁移（ArkTS 的 `fileIo.copyFileSync`）126 个文件全部 EPERM**。
+ *    连目录都建出来了，只有文件写不进去。
+ *    ⭐ 所以「探针过了」只说明 native 能写 —— ⛔ **不能拿它当「迁移能成功」的证据**。
+ *    `probeWithinExternal()` 是为这个盲区补的第二探（见它的说明）。 */
 export function probeExternalRoot(filesDir: string): string {
   const dir: string = externalRootPath(filesDir);
   if (dir === '') {
@@ -99,6 +106,57 @@ export function probeExternalRoot(filesDir: string): string {
     return 'threw: ' + err.message;
   }
 }
+
+/** 在**要真正落数据的那一层**（`<外部文件夹>/data`）再探一次。
+ *
+ * ⭐ 为什么要有第二探：迁移是把 126 个文件写进 `<外部文件夹>/data/.local/share/Mindustry/…`，
+ *    而第一探只往**文件夹根**写一个文件。两者在权限上**可能不是一回事** ——
+ *    「权限覆盖这个文件夹本身」与「覆盖它下面新建的子目录」是两道不同的门。
+ * ⛔ 它同样只量 native。ArkTS 那边的结论只能从**迁移自己的错误**里读
+ *    （那正是 `FsTree` 现在会把源与目标都打出来的原因）。 */
+export function probeWithinExternal(filesDir: string): string {
+  /* ⛔ **路径要直接算，不能走 `gameDataRoot()`** —— 那个跟着**玩家选的那个模式**走，
+   *    于是「当前是沙箱」时这一探会去探沙箱、报 `inside-sandbox`（2026-10-04 第一版就是
+   *    这么量的，白跑一轮）。⭐ 这一探量的是**文件系统**，与玩家选了什么都无关。 */
+  const ext: string = externalRootPath(filesDir);
+  if (ext === '') {
+    return 'no-path';
+  }
+  try {
+    return storprobe.probeWritable(ext + EXTERNAL_DATA_SUBDIR);
+  } catch (e) {
+    const err = e as BusinessError;
+    return 'threw: ' + err.message;
+  }
+}
+
+/** 用 **native** 递归复制一棵树。返回 `''` 成功，否则一句给玩家看的话。
+ *
+ * ⛔ **为什么不用 `FsTree.copyTreeInto`（ArkTS 的 fileIo）**：见 `storprobe.c` 里
+ *    `copyTree` 上方那段 —— 同一个文件、同一个外部目标，ArkTS 报 EPERM 而 native 成功，
+ *    而把 `copyFileSync` 放进探针里单独跑**又成功**。那个差异我没解释出来（三种假设全被
+ *    自己的测量推翻）⇒ **走被证明可行的那条**（native），别在解释上继续烧时间。
+ * ⚠️ 它**只**用于跨根迁移；沙箱内部的复制（隔离、垃圾站）继续用 `FsTree.copyTreeInto`
+ *    —— 那条路实测没问题，⛔ 不要顺手也换成 native（换没收益、还多一次跨语言调用）。 */
+export function nativeCopyTree(src: string, dst: string): string {
+  try {
+    const r: string = storprobe.copyTree(src, dst);
+    if (r.startsWith('ok')) {
+      hilog.info(DOMAIN, TAG, 'storage: native copy %{public}s -> %{public}s (%{public}s)',
+                 src, dst, r);
+      return '';
+    }
+    /* ⛔ 原样带上 native 那句（它里面有源与目标路径 + errno）——
+     *    压成「复制失败」会把**唯一的判据**丢掉。 */
+    hilog.error(DOMAIN, TAG, 'storage: native copy failed %{public}s -> %{public}s: %{public}s',
+                src, dst, r);
+    return '复制没完成：' + r;
+  } catch (e) {
+    const err = e as BusinessError;
+    return '复制没完成（native 调用失败）：' + err.message;
+  }
+}
+
 
 /* ====================================================================
  * 两个根：沙箱 / 外置
@@ -278,10 +336,24 @@ export function ensureGameDataRoot(filesDir: string): void {
  * ⛔ **只在内容变了的时候写** —— 它在 `refresh()` 里被调用，而每个渲染周期写一次文件
  *    本身就是卡顿源（本项目为「诊断工具拖慢被测对象」付过代价）。
  * @returns 写成功了没有（调用方用它决定要不要记住「已经写过这个内容」。） */
-export function dumpStorageState(intent: string, used: string, reason: string): boolean {
+export function dumpStorageState(filesDir: string, intent: string, used: string,
+                                  reason: string): boolean {
+  /* ⭐ 顺带把**两个探针**的结论也记下来（2026-10-04 加）。
+   * ⛔ 为什么必须落成文件而不是只显示在界面上：**本应用的 hilog 读不到**，
+   *    而没有这两行时，「探针过了但迁移全废」只能靠玩家照屏幕念（那一轮就是这么来回的）。
+   * ⚠️ 探针每次会**真的建一个文件再删掉** ⇒ 只在调用方判定「内容变了」时才走到这里
+   *    （见 `LauncherHome.refresh()`），别把它变成每次渲染都跑的副作用。 */
+  let probes: string = '';
+  try {
+    probes = 'probe_root=' + probeExternalRoot(filesDir) + '\n'
+           + 'probe_data=' + probeWithinExternal(filesDir) + '\n';
+  } catch (e) {
+    probes = 'probe_root=threw\nprobe_data=threw\n';
+  }
   const body: string = 'intent=' + intent + '\n'
                      + 'used=' + used + '\n'
-                     + 'reason=' + reason + '\n';
+                     + 'reason=' + reason + '\n'
+                     + probes;
   const path: string = SANDBOX_ROOT + '/storage_state.txt';
   try {
     const f: fs.File = fs.openSync(path,

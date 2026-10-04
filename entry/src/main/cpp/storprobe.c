@@ -26,6 +26,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <dirent.h>
 
 /* 沙箱前缀。⛔ 只用来**判定「这不是外部」**，不用来拼任何路径。
  * 理由：如果外部根被解析成了沙箱里的某个目录，那这个功能就是自欺欺人 ——
@@ -148,10 +149,221 @@ done:
     }
 }
 
+/* =====================================================================
+ * 递归复制一棵树 —— **搬「存储位置」用的迁移，故意放在 native 里**
+ *
+ * ⛔⛔ 为什么不用 ArkTS 的 `fileIo.copyFileSync`（项目里已有 `FsTree.copyTreeInto`）：
+ *   2026-10-04 实测，往同一个外部文件夹里拷**同一个文件**：
+ *     · ArkTS 的 `copyFileSync`（迁移走这条路）  → **EPERM，126 个文件全废**
+ *     · 本文件（native，裸 POSIX）              → **成功**（探针在那一层建/写/读回/删全过）
+ *   而把 `copyFileSync` 单独放进探针里跑，**又成功了** —— 同一个操作、同一个路径、结果相反。
+ *   ⇒ 那个差异我解释不了（试过三种假设，全被自己的测量推翻）。而**native 在那儿是证明可写的**、
+ *     而且那个目录将来本来就归 native 读写（JVM 在 native 里跑）⇒ 迁移由 native 做，
+ *     **把 ArkTS 的 fileIo 从关键路径上整个拿掉**，不依赖对那个差异的解释。
+ *   ⭐ 判据：**在一个方向被证明可行、而另一个方向带着一个解释不了的异常时，走被证明的那条。**
+ *
+ * ⚠️ 它只搬**文件与目录**；遇到符号链接等特殊类型**跳过**（并计入 `skipped`），
+ *    不跟着走 —— 跟随链接会让 a→.. 这种环把递归钉死（`FsTree` 那边为同一件事设了深度上限）。
+ * ⚠️ 目标**已存在**的文件会被**覆盖**（`O_TRUNC`）：迁移是「一次性搬家」，
+ *    不是合并，而半途留下的残件正是重试时要盖掉的。
+ * ===================================================================== */
+
+#define COPY_PATH_MAX 1024
+#define COPY_MAX_DEPTH 32
+
+/* mkdir -p（`mkdir` 本身不建父目录）。EEXIST 不算错。 */
+static int mkdirs_all(const char *path)
+{
+    char buf[COPY_PATH_MAX];
+    size_t n = strlen(path);
+    if (n == 0 || n >= sizeof(buf)) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    memcpy(buf, path, n + 1);
+    for (char *p = buf + 1; *p; p++) {
+        if (*p != '/') {
+            continue;
+        }
+        *p = 0;
+        if (mkdir(buf, 0755) != 0 && errno != EEXIST) {
+            return -1;
+        }
+        *p = '/';
+    }
+    if (mkdir(buf, 0755) != 0 && errno != EEXIST) {
+        return -1;
+    }
+    return 0;
+}
+
+/* 复制一个普通文件。返回 0 成功；-1 失败（errno 有效）。 */
+static int copy_one_file(const char *s, const char *d)
+{
+    int in = open(s, O_RDONLY);
+    if (in < 0) {
+        return -1;
+    }
+    int out = open(d, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (out < 0) {
+        const int saved = errno;
+        close(in);
+        errno = saved;
+        return -1;
+    }
+    /* 64 KB 一读：这些文件最大也就几 MB（存档），够用且不占栈。 */
+    char buf[65536];
+    int rc = 0;
+    for (;;) {
+        ssize_t r = read(in, buf, sizeof(buf));
+        if (r == 0) {
+            break;
+        }
+        if (r < 0) {
+            rc = -1;
+            break;
+        }
+        ssize_t off = 0;
+        while (off < r) {
+            ssize_t w = write(out, buf + off, (size_t) (r - off));
+            if (w <= 0) {
+                rc = -1;
+                break;
+            }
+            off += w;
+        }
+        if (rc != 0) {
+            break;
+        }
+    }
+    const int saved = errno;
+    close(out);
+    close(in);
+    errno = saved;
+    return rc;
+}
+
+/* 计数与第一条错误（带路径 —— 只报 errno 会把排查的第一步推给下一个人，
+ * 而项目里已经因为「日志不写路径」返工过）。 */
+typedef struct {
+    int files;
+    int dirs;
+    int failed;
+    int skipped;
+    char first[512];
+} CopyAcc;
+
+static void note_fail(CopyAcc *acc, const char *what, const char *s, const char *d, int e)
+{
+    acc->failed++;
+    if (acc->first[0] == 0) {
+        snprintf(acc->first, sizeof(acc->first), "%s %s -> %s: errno=%d %s",
+                 what, s, d, e, strerror(e));
+    }
+}
+
+static void copy_tree(const char *s, const char *d, int depth, CopyAcc *acc)
+{
+    if (depth > COPY_MAX_DEPTH) {
+        note_fail(acc, "too-deep", s, d, ELOOP);
+        return;
+    }
+    if (mkdirs_all(d) != 0) {
+        note_fail(acc, "mkdir", s, d, errno);
+        return;
+    }
+    acc->dirs++;
+
+    DIR *dir = opendir(s);
+    if (dir == NULL) {
+        note_fail(acc, "opendir", s, d, errno);
+        return;
+    }
+    struct dirent *e;
+    while ((e = readdir(dir)) != NULL) {
+        if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) {
+            continue;
+        }
+        char sp[COPY_PATH_MAX];
+        char dp[COPY_PATH_MAX];
+        if (snprintf(sp, sizeof(sp), "%s/%s", s, e->d_name) >= (int) sizeof(sp) ||
+            snprintf(dp, sizeof(dp), "%s/%s", d, e->d_name) >= (int) sizeof(dp)) {
+            note_fail(acc, "path-too-long", s, d, ENAMETOOLONG);
+            continue;
+        }
+        struct stat st;
+        if (stat(sp, &st) != 0) {
+            note_fail(acc, "stat", sp, dp, errno);
+            continue;
+        }
+        if (S_ISDIR(st.st_mode)) {
+            copy_tree(sp, dp, depth + 1, acc);
+        } else if (S_ISREG(st.st_mode)) {
+            if (copy_one_file(sp, dp) != 0) {
+                note_fail(acc, "copy", sp, dp, errno);
+            } else {
+                acc->files++;
+            }
+        } else {
+            /* ⚠️ 符号链接 / 设备节点等：**跳过**。跟随链接会让 a→.. 把递归钉死。 */
+            acc->skipped++;
+        }
+    }
+    closedir(dir);
+}
+
+/** `copyTree(src, dst)` → 结果字符串。
+ *  成功：`ok: N files, M dirs[, K skipped]`
+ *  失败：`fail <N>: <第一条错误，带源与目标路径>`（**前几条**在同一条里，够定位）
+ *  ⛔ 返回字符串不是布尔，同 `probeWritable`：不同失败指向不同处置。 */
+static napi_value CopyTree(napi_env env, napi_callback_info info)
+{
+    char text[1200];
+    char sbuf[COPY_PATH_MAX];
+    char dbuf[COPY_PATH_MAX];
+    size_t slen = 0;
+    size_t dlen = 0;
+
+    size_t argc = 2;
+    napi_value argv[2] = { NULL, NULL };
+    if (napi_get_cb_info(env, info, &argc, argv, NULL, NULL) != napi_ok || argc != 2) {
+        snprintf(text, sizeof(text), "bad-args: want (src, dst)");
+        goto done;
+    }
+    if (napi_get_value_string_utf8(env, argv[0], sbuf, sizeof(sbuf), &slen) != napi_ok ||
+        napi_get_value_string_utf8(env, argv[1], dbuf, sizeof(dbuf), &dlen) != napi_ok) {
+        snprintf(text, sizeof(text), "bad-args: not strings");
+        goto done;
+    }
+    if (slen == 0 || dlen == 0) {
+        snprintf(text, sizeof(text), "bad-args: empty path");
+        goto done;
+    }
+
+    CopyAcc acc;
+    memset(&acc, 0, sizeof(acc));
+    copy_tree(sbuf, dbuf, 0, &acc);
+
+    if (acc.failed > 0) {
+        snprintf(text, sizeof(text), "fail %d: %s", acc.failed, acc.first);
+    } else {
+        snprintf(text, sizeof(text), "ok: %d files, %d dirs%s",
+                 acc.files, acc.dirs, acc.skipped > 0 ? " (some skipped)" : "");
+    }
+
+done:
+    {
+        napi_value result;
+        napi_create_string_utf8(env, text, NAPI_AUTO_LENGTH, &result);
+        return result;
+    }
+}
+
 static napi_value Init(napi_env env, napi_value exports)
 {
     napi_property_descriptor desc[] = {
         { "probeWritable", NULL, ProbeWritable, NULL, NULL, NULL, napi_default, NULL },
+        { "copyTree", NULL, CopyTree, NULL, NULL, NULL, napi_default, NULL },
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;
