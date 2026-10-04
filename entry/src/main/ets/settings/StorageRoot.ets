@@ -171,6 +171,17 @@ export function nativeListTree(dir: string, depth: number): string {
 }
 
 
+/** 用 **native** 判一个路径存不存在（一次 `lstat`）。
+ *  ⭐ 存在的理由：`fs.accessSync` **在外部根上实测会误报**（见 `Isolation.gameDataExists`
+ *     那段），而 `nativeListTree` 虽然也能判，却要**列整棵树** —— 在「每个粒度键问一次」
+ *     的地方（渲染期）那个代价不能接受。
+ *  ⚠️ 拿不到答案时**抛出**，⛔ 不要在这里吞掉并编一个 `false`：
+ *     调用方需要把「不存在」与「问不到」分开处置（见 `gameDataExists`）。 */
+export function nativePathExists(path: string): number {
+  return storprobe.pathExists(path);
+}
+
+
 /* ====================================================================
  * 两个根：沙箱 / 外置
  * ==================================================================== */

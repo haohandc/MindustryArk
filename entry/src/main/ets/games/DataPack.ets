@@ -279,7 +279,28 @@ export function countPackable(dataDir: string): string {
 /** 解压到一个**已经存在**的目录。
  * ⚠️ `decompressFile` 的两个硬约束（核过 SDK）：`inFile` 扩展名**必须是 `.zip`**、
  *    `outFile` **必须已经存在**（它是目标目录，不是要创建的文件）。
- *    ⇒ 所以调用方先 `ensureDir(staging)`，别指望它替你建。 */
+ *    ⇒ 所以调用方先 `ensureDir(staging)`，别指望它替你建。
+ *
+ * ⭐⭐ **Zip Slip 不用我们自己防 —— 平台挡了**（2026-10-05 代码审查时去核的，一手来源是
+ *    本机 SDK 的 `sdk/default/openharmony/ets/api/@ohos.zlib.d.ts` 第 1005-1009 行，原文：
+ *    「To avoid path traversal, the input parameters of **inFile** and **outFile** cannot contain
+ *     two consecutive periods and a slash (../) since API version 13… **The name of the zipped
+ *     file or zipped folder cannot contain two consecutive periods and a slash (../)**.
+ *     Otherwise, the error code 900003 is returned.」）。
+ *    ⇒ 一个条目名里带 `../` 的包**解压会直接失败**（900003），不会写到 `staging` 外面。
+ *    ⚠️ 这条从 **API 13** 起生效，而本应用的目标 API 更高 ⇒ 适用。
+ *    ⭐ 所以**没有**在这里加「逐条目校验路径」那种自实现 ——
+ *      **平台已经保证的事不要自己再实现一遍**（自己做还会引入新的解析漏洞）。
+ *
+ * ⛔⛔ **但由此暴露了一个【文案】问题，要记着**：`900003` 的官方含义是
+ *    「不是 ZIP 格式或已损坏」—— 而**它同时也是「条目名带 `../` 被拒」的返回码**。
+ *    于是下面那句给玩家的话（`这个文件不是 zip，或者已经损坏。`）会**把一个恶意包说成坏包**。
+ *    ⇒ 不影响安全（解压照样失败、结果是对的），只是**说法不准**。
+ *    ⚠️ 用户立过规矩「界面文案默认一条都不加，他同意了才加」，所以**我没有擅自改那句话** ——
+ *      要改得他点头。这里的注释就是留给那一刻的。
+ * ⚠️ 仍未确认：条目名用**绝对路径**（`/etc/x`）或 Windows 盘符时平台怎么处置 ——
+ *    官方文档只写了 `../` 这一种。不过 `outFile` 本身**必须是沙箱路径**，
+ *    所以即便写得出去也只落在**本应用自己的沙箱内**，越不出应用。 */
 export async function unpackZip(zipPath: string, stagingDir: string): Promise<string> {
   if (!pathExists(zipPath)) {
     return '找不到压缩包：' + zipPath;

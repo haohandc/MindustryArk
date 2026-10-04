@@ -16,7 +16,7 @@ import { copyTreeInto, removeTree, newTreeStat, TreeStat } from '../utils/FsTree
 import { nativeCopyTree } from './StorageRoot';
 /* ⭐ 存储根的唯一真相源。⛔ 这里 import 它**不会成环**：`StorageRoot` 只依赖 `ModImporter`，
  *    而 `ModImporter` 谁都不依赖（2026-10-04 查过整张图）。 */
-import { gameDataRoot, gameDataRootFor, nativeListTree,
+import { gameDataRoot, gameDataRootFor, nativeListTree, nativePathExists,
          STORAGE_MODE_SANDBOX, STORAGE_MODE_EXTERNAL } from './StorageRoot';
 /* ⭐ 解析游戏自己的 settings.bin —— 诊断清单里要报那两个值（异形屏避让 / UI 缩放）。 */
 import { loadGameSettings, intSetting, KEY_EDGE_PADDING, KEY_UI_SCALE } from '../games/GameSettings';
@@ -308,8 +308,18 @@ export function instancesRoot(): string {
   return GAME_DATA_ROOT + INSTANCES_SUBDIR;
 }
 
-/** 某个粒度键对应的游戏数据目录（= `user.home` + ARC 那一层）。 */
+/** 某个粒度键对应的游戏数据目录（= `user.home` + ARC 那一层）。
+ *
+ * ⛔ **这里是「用键拼路径」的本体，所以也是第二层防线**（第一层在 `resolveGameDirAndKey`）。
+ *    键一旦带 `/` 或 `..` 就能拼出数据根**外面**的路径，而这条路径会交给 native 去复制/删。
+ * ⭐ 不安全 ⇒ 返回**不隔离**那棵树 —— 与桥的处置、以及 native `resolve_user_home()` 的
+ *    兜底**三处一致**：脏键一律当成「不隔离」，而不是「用一个坏路径」。 */
 export function isolatedGameDataDir(key: string): string {
+  if (!KEY_SAFE.test(key)) {
+    hilog.warn(DOMAIN, TAG, 'isolation: unsafe key %{public}s in a data path -- using the '
+               + 'live tree instead', key);
+    return liveGameDataDir();
+  }
   return instancesRoot() + '/' + key + SETS_SUFFIX + GAME_DATA_SUFFIX;
 }
 
@@ -518,16 +528,73 @@ export interface GameDirForKey {
  * 要为每个已装版本算目录且是**渲染**出来的 ⇒ 形状上就让它一次给全。`resolveGameDataDir()` 是取 `dir` 的薄包装。 */
 export function resolveGameDirAndKey(granularity: string, source: string, jarPath: string,
                                      bundledJarPath: string): GameDirForKey {
-  const key: string = computeKey(granularity, source, jarPath, bundledJarPath);
+  const raw: string = computeKey(granularity, source, jarPath, bundledJarPath);
+  /* ⛔⛔ **键必须在这里过一遍 `KEY_SAFE`，⛔ 不能只靠桥那一道。**
+   *    2026-10-05 代码审查发现：`writeIsolationBridge` 挡了脏键（它写进文件、native 会信），
+   *    但**这条真正做文件操作的路径一次都没校验过** —— 而键的来源是**玩家可替换的 jar**：
+   *    `computeKey` → `gameVersionParts` → `propField('build')` 只 `trim()`，不过滤任何字符。
+   *    ⇒ 一个 `build=../../x` 的伪造 `version.properties` 能让
+   *    `instancesRoot() + '/' + '../../x' + …` **穿出数据根**，而 `nativeCopyTree` 照做。
+   * ⭐ 处置与桥那边**逐字一致**：不安全 ⇒ 当成「**不隔离**」（`key = ''`），
+   *    而不是「把脏键写下去」。两层都要有：这里防「用坏路径」，native 那边防「读坏路径」。
+   * ⚠️ 而且这样返回的 `{key, dir}` 仍然**自洽** —— 若只让 `isolatedGameDataDir` 兜底、
+   *    键却照旧返回，就会得到「键说不隔离、目录说隔离」这种最容易被误读的状态。 */
+  const key: string = (raw === '' || KEY_SAFE.test(raw)) ? raw : '';
+  if (key === '' && raw !== '') {
+    /* ⛔ 不静默：脏键意味着**有一个我们没料到的 jar 在读**，那是要有人知道的。 */
+    hilog.warn(DOMAIN, TAG, 'isolation: refusing unsafe key %{public}s -- treating it as '
+               + 'not isolated', raw);
+  }
   return { key: key, dir: key === '' ? liveGameDataDir() : isolatedGameDataDir(key) };
 }
 
-/** 两个目录都存在吗。界面用它决定「复制」那一条要不要给。 */
+/** 两个目录都存在吗。界面用它决定「复制」那一条要不要给，**迁移用它决定这一棵要不要搬**。
+ *
+ * ⛔⛔ **两个通道都要问，任一说「有」就算有**（2026-10-05 代码审查发现原来只问 ArkTS）。
+ *
+ * 为什么不能只信 ArkTS 的 `fs.accessSync`：**它在外部根上不可靠，而且已经有实测记录**——
+ * `StorageRoot.ets` 那段记着「同一个外部文件夹，探针（native 裸 POSIX）全部成功，
+ * 而迁移（ArkTS `copyFileSync`）**126 个文件全部 EPERM**」；`dumpDataDirs` 也记着
+ * 「native 列出外置那棵树里有 24 个 `.msch`，而 **ArkTS 侧一个都读不出来**」。
+ *
+ * ⭐⭐ **代价是不对称的，所以判据要偏向「说有」**：
+ *   · 误报「**有**」 ⇒ `copyTree` 照常走，它自己会报真话（源不在就是一条 fail）——**没有损失**；
+ *   · 误报「**没有**」 ⇒ `migrateGameData` 里那一棵被 **`continue` 静默跳过**
+ *     ⇒ 复制阶段全"成功"、于是**照样提交存储位置**，而那一棵**还留在旧根**
+ *     ⇒ 玩家看到的正是「切过去之后存档少了」这一类。
+ *   ⇒ 所以 `||` 而不是 `&&`：**回答「不存在」需要两个通道都同意。**
+ * ⚠️ 这条与 `migrateGameData` 里「复制走 native」是同一个理由的两半 ——
+ *    **判存在与做复制都用被证明可行的那条通道**，别一边 native 一边 ArkTS。
+ *
+ * ⚠️ native 那一路用 `nativePathExists`（**一次 `lstat`**），⛔ **不是 `nativeListTree`**：
+ *    后者要列整棵树，而这个函数在 `buildCopyTargets` 里**每个粒度键调一次、且大多不存在**
+ *    （不存在才会走到 native 那一支），而那条路在**渲染期** —— 列目录的代价在那里不能接受。
+ *    ⭐ 这一条是我自己引入过又改回来的：第一版就是拿 `listTree` 判的。 */
 export function gameDataExists(dir: string): boolean {
   try {
-    return fs.accessSync(dir);
+    if (fs.accessSync(dir)) {
+      return true;
+    }
   } catch (e) {
-    return false;
+    /* ⚠️ `accessSync` 本来就是「返回布尔不抛」，这个 catch 只是兜住极端情况（如路径非法），
+     *    不放它出去 —— 它不该让一次存在性判断把整个迁移掀翻。继续问 native。 */
+  }
+  try {
+    if (nativePathExists(dir) !== 0) {
+      /* ⭐ 两边不一致 ⇒ **记一笔**：这是「ArkTS 在外部根上误报」那个已知病的现场证据，
+       *    将来若还有人怀疑它，这行日志就是判据（本应用的 hilog 读不到，所以也落诊断文件）。 */
+      hilog.warn(DOMAIN, TAG, 'isolation: ArkTS says %{public}s is absent but native says it '
+                 + 'exists -- trusting native', dir);
+      return true;
+    }
+    return false;                  /* 两个通道都说不存在 ⇒ 才承认不存在 */
+  } catch (e) {
+    const err = e as BusinessError;
+    /* ⚠️ native 也问不到 ⇒ **保守地当作「有」**：宁可去复制一棵空的（copyTree 会说真话），
+     *    也不要静默跳过玩家的数据。⭐ 判据同上：两个方向的代价不对称。 */
+    hilog.warn(DOMAIN, TAG, 'isolation: cannot probe %{public}s on either channel (%{public}s) '
+               + '-- treating it as present', dir, err.message);
+    return true;
   }
 }
 

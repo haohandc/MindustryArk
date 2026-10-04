@@ -292,9 +292,17 @@ static void copy_tree(const char *s, const char *d, int depth, CopyAcc *acc)
             note_fail(acc, "path-too-long", s, d, ENAMETOOLONG);
             continue;
         }
+        /* ⛔⛔ **必须是 `lstat`，⛔ 不能是 `stat`。**
+         *    2026-10-05 代码审查发现：这里原来用的是 `stat`（**跟随**链接），
+         *    于是下面那句「符号链接…跳过」的注释**是假的** ——
+         *    一个指向目录的软链会走进 `S_ISDIR` 那支、被**递归进去复制**。
+         * ⚠️ 危害：`a → ..` 这类环会让同一棵树被**重复复制最多 32 次**
+         *    （靠 `COPY_MAX_DEPTH` 兜住，所以不会死循环），而它在**搬存储位置**时
+         *    可能把目标盘写满 —— 那不是崩溃，是「搬完之后空间没了」。
+         * ⭐ `lstat` 下软链自己就落进 `else` 那支，正好与注释声称的行为一致。 */
         struct stat st;
-        if (stat(sp, &st) != 0) {
-            note_fail(acc, "stat", sp, dp, errno);
+        if (lstat(sp, &st) != 0) {
+            note_fail(acc, "lstat", sp, dp, errno);
             continue;
         }
         if (S_ISDIR(st.st_mode)) {
@@ -533,12 +541,44 @@ ret:
     }
 }
 
+/** `pathExists(p)` → 1 / 0。
+ *
+ * ⭐ 为什么单独有它、而不是让调用方去 `listTree('absent:' …)` 判：
+ *    **`listTree` 要把整棵树列出来**，而这个问题只需要一次 `stat`。
+ *    在「每个粒度键问一次」的地方（`buildCopyTargets`），差别是「一次 syscall」与
+ *    「一次目录遍历」—— 而那条路已经在**渲染期**上跑（本项目的另一个已知问题）。
+ * ⚠️ 用 `lstat`：问的是「这个路径**存在**吗」。软链（含断链）都算存在 ——
+ *    与 `copyTree` 用 `lstat` 是同一个选择，两边对「软链看不看得见」的判断一致。
+ * ⛔ 与 ArkTS 的 `fs.accessSync` **不是重复品**：那个在外部根上实测会误报（见 ArkTS 侧那段）。 */
+static napi_value PathExists(napi_env env, napi_callback_info info)
+{
+    char buf[COPY_PATH_MAX];
+    size_t len = 0;
+    int32_t r = 0;
+
+    size_t argc = 1;
+    napi_value argv[1] = { NULL };
+    if (napi_get_cb_info(env, info, &argc, argv, NULL, NULL) == napi_ok && argc >= 1
+        && napi_get_value_string_utf8(env, argv[0], buf, sizeof(buf), &len) == napi_ok
+        && len > 0) {
+        struct stat st;
+        /* ⚠️ `stat`/`lstat` 对**太长的路径**返回 ENAMETOOLONG，与「不存在」不同 ——
+         *    但对调用方而言两者都该走「当作没有」之外的保守分支，所以这里不细分。 */
+        r = (lstat(buf, &st) == 0) ? 1 : 0;
+    }
+
+    napi_value result;
+    napi_create_int32(env, r, &result);
+    return result;
+}
+
 static napi_value Init(napi_env env, napi_value exports)
 {
     napi_property_descriptor desc[] = {
         { "probeWritable", NULL, ProbeWritable, NULL, NULL, NULL, napi_default, NULL },
         { "copyTree", NULL, CopyTree, NULL, NULL, NULL, napi_default, NULL },
         { "listTree", NULL, ListTree, NULL, NULL, NULL, napi_default, NULL },
+        { "pathExists", NULL, PathExists, NULL, NULL, NULL, napi_default, NULL },
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;

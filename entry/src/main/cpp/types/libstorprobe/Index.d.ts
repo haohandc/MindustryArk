@@ -15,3 +15,8 @@ export const copyTree: (src: string, dst: string) => string;
  *    ⇒ 不靠它，那棵树在排查里就是不存在的（2026-10-04 为这个盲区返工过）。
  * 返回 `absent: errno=N …` / `not-a-dir` / 若干行（截断会写明）。 */
 export const listTree: (dir: string, maxDepth?: number) => string;
+
+/* 路径**存在**吗（`lstat`）。1 = 存在，0 = 不存在。
+ * ⭐ 它比 `listTree` 便宜得多（一次 stat，而不是列一棵树），所以「判存在」用它。
+ * ⛔ 与 ArkTS 的 `fs.accessSync` 不是重复品：那个在外部根上实测会误报。 */
+export const pathExists: (path: string) => number;
