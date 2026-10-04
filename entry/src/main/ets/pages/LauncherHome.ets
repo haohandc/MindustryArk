@@ -25,7 +25,8 @@ import {
 } from '../games/DataPack';
 import { GameJar, GameResolution, listGameJars, readSelection, writeSelection,
          resolveGame, gameJarDir, ensureGameJarDir,
-         bundledGameVersion, hasBundledGame, bundledGamePath } from '../games/GameLibrary';
+         bundledGameVersion, hasBundledGame, bundledGamePath,
+         gameVersionParts } from '../games/GameLibrary';
 /* 界面偏好（启动后进哪里）。⛔ 内容宽度**不再**在这里 —— 见 gamesWidthVp。 */
 import { readLaunchMode, writeLaunchMode,
          LAUNCH_MODE_HOME, LAUNCH_MODE_GAME,
@@ -51,7 +52,7 @@ import { GRANULARITY_OFF, GRANULARITY_NUMBER, GRANULARITY_BUILD, GRANULARITY_PAT
          copyLiveDataInto, gameDataExists, liveGameDataDir, isolatedGameDataDir,
          GameDataCounts, countsOf, describeCounts,
          resolveGameDataDir, resolveGameDirAndKey, GameDirForKey,
-         listInstanceKeys } from '../settings/Isolation';
+         listInstanceKeys, granularityKey, KEY_UNKNOWN } from '../settings/Isolation';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
@@ -586,6 +587,17 @@ export struct LauncherHome {
    * 反悔的地方，恰恰那时什么解释都没有。用玩家**真实的版本**算，不举 `160.5` 这种编的例子。
    * ⚠️ 在 `chooseGranularity()` 里算一次（要读每个 jar），⛔ 不在渲染里算。 */
   @State pendingPreview: string = '';
+  /* ⭐⭐ 说明那一行**存下来**，渲染只读这个字符串。
+   *
+   * ⛔ 我 2026-10-04 把它改成「算出来的」之后，忘了它被**渲染**调用（设置页 + 弹窗两处），
+   *    而它的实现要读**每一个 jar**（`gameVersionParts` 没有缓存，单个最大 88 MB）⇒
+   *    **每渲染一次就把所有 jar 读一遍**。讽刺的是我自己在下面写了「⛔ 绝不在渲染路径上」，
+   *    然后又违反了它。
+   * ⭐ 判据（本文件通用）：**凡是要读 jar 的，一律在 `refresh()` / 事件处理里算好，存进 @State**；
+   *    渲染里只允许读已经算好的值。
+   * ⚠️ 两份：设置页按 `this.granularity` 算，弹窗按 `pendingGranularity` 算，两者不同。 */
+  @State granularityHintText: string = '';
+  @State pendingHint: string = '';
 
   /* 当前选中的是**内置游戏** —— 它在任何档位下都用固定的 `bundled` 目录。
    * ⛔ 必须专门说一句：玩家这时切「大版本/构建号/小版本」，**目录名一个都不会变** ⇒
@@ -817,11 +829,38 @@ export struct LauncherHome {
     return /^[nb][0-9]/.test(key) ? key.substring(1) : '';
   }
 
+  /* 内置那份**在这一档下本来会落到哪个槽位**（`n8` / `b160`）—— ⛔ 不是它实际用的那个：
+   * 内置恒用 `bundled`，这个值只用来**告诉玩家它相当于哪一档**。
+   * ⭐ 用户 2026-10-04：「按大版本：内置游戏（v8）」「按构建号：内置游戏（b160）」。
+   * ⛔ 它读 jar（`gameVersionParts` 没有缓存）⇒ 只从 `buildGranularityPreview()` /
+   *    `isoGroupTitle()` 走，⛔ 不在渲染路径上。读不出返回 `''`（那时不显示括号）。 */
+  private bundledSlotKey(g: string): string {
+    const p: string = bundledGamePath(this.bundleCodeDir);
+    if (p === '') {
+      return '';
+    }
+    return granularityKey(g, gameVersionParts(p));
+  }
+
+  /** 一个槽位键给玩家看的写法：`n8` → `v8`，`b160` → `b160`。⛔ 不是槽位就返回空串。 */
+  private slotLabel(key: string): string {
+    if (key === '' || key === KEY_UNKNOWN) {
+      return '';
+    }
+    return key.charAt(0) === 'n' ? ('v' + key.substring(1)) : key;
+  }
+
   /** 一个组在表里的标题。⛔ `bundled` / `_unknown` **不是版本槽位**，不能当版本号念。 */
-  private isoGroupTitle(key: string): string {
+  private isoGroupTitle(g: string, key: string): string {
     if (key === 'bundled') {
-      /* ⭐ 说人话：它对应的就是「内置游戏」那一行。 */
-      return '内置游戏';
+      /* ⭐ 说人话：它对应的就是「内置游戏」那一行。
+       * ⭐⭐ 再带上它**相当于哪一档** —— 玩家看「内置游戏」不知道那一档把它分到了哪里，
+       * 而括号里那个才是他能和自己导入的 jar 对上的东西。
+       * ⚠️ 这个值是**算**出来的（读内置 jar 的版本），⛔ 不是写死的 ——
+       * 我们换内置游戏版本时它会自己跟着变（用户 2026-10-04：「文字需要是动态的，
+       * 不是固定死的，这样我们换了版本可以少改一处」）。 */
+      const sub: string = this.slotLabel(this.bundledSlotKey(g));
+      return sub === '' ? '内置游戏' : ('内置游戏（' + sub + '）');
     }
     if (key === '_unknown') {
       /* ⚠️ 同一条道理：`_unknown` 是**内部键**，不能原样念给玩家听。
@@ -899,6 +938,8 @@ export struct LauncherHome {
     this.isolationCounts = countsOf(liveGameDataDir());
     /* 选之前就把「这一档怎么分、会落到哪些目录」摆出来（原来要选完才知道是啥情况）。 */
     this.pendingPreview = this.buildGranularityPreview(g);
+    /* ⭐ 与上面同一批：要读 jar 的东西在这里一次算好（渲染只读字符串，见 `pendingHint` 的注释）。 */
+    this.pendingHint = this.granularityHint(g);
     /* 每次打开都**收起详情** —— 上一次展开过的话，这次一进来就是展开的，
      * 而那是上一次的状态（与 `MultiBar` 里那个「名单每次重新收起」同一条理由）。 */
     this.showIsolationDetail = false;
@@ -936,7 +977,7 @@ export struct LauncherHome {
       /* ⭐ 组标题（用户 2026-10-04 给的形状：「160版本 / xxx -> xxx / 159版本 / …」）。
        * ⛔ 小版本那一档**不出标题** —— 每个版本各一份，标题只会逐行重复「各自一份」。 */
       if (g !== GRANULARITY_PATCH) {
-        lines.push(this.isoGroupTitle(gr.key));
+        lines.push(this.isoGroupTitle(g, gr.key));
       }
       for (const nm of gr.versions) {
         lines.push('    ' + nm + '   →   ' + gr.key);
@@ -1171,6 +1212,9 @@ export struct LauncherHome {
     this.resolution = resolveGame(this.filesDir, this.bundleCodeDir);
     this.bundledVer = bundledGameVersion(this.bundleCodeDir);
     this.hasBundled = hasBundledGame(this.bundleCodeDir);
+    /* ⭐ 设置页那一行的说明：与版本列表同一批算好。⚠️ 它按 `this.granularity`（当前档），
+     * 而弹窗那份按 `pendingGranularity`（待确认档）—— 两者在玩家正切换时不同，不能共用。 */
+    this.granularityHintText = this.granularityHint(readGranularity(this.filesDir));
 
     /* 存档。⚠️ 目录**取决于隔离状态** —— 用与 native 算 `user.home` 同一套输入，否则这里会列出
      * 另一份存档，那是最坏的一类不一致：界面上看起来完全正常。⚠️ 两者仍可能分叉：玩家改了粒度
@@ -4702,7 +4746,7 @@ export struct LauncherHome {
           }
           .width('100%').margin({ top: 12 })
 
-          Text(this.granularityHint(this.granularity))
+          Text(this.granularityHintText)
             .fontSize(12).fontColor($r('sys.color.font_secondary'))
             .margin({ top: 10 })
 
@@ -5071,7 +5115,7 @@ export struct LauncherHome {
           if (this.showIsolationDetail) {
             /* ⭐ 这一档怎么分 —— 2026-10-02 点名要的（「必须让人选完了才知道是啥情况」）。
              * ⚠️ 给的是**用他自己的版本号算出来的**判断，不是编的例子。 */
-            Text(this.granularityHint(this.pendingGranularity))
+            Text(this.pendingHint)
               .fontSize(12).fontColor($r('sys.color.font_secondary'))
               .width('100%').margin({ top: 10 })
             /* 版本 → 目录 的对照表。⚠️ 左对齐：居中的话 `→` 会参差不齐，反而读不出对应关系。 */
