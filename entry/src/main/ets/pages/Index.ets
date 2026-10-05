@@ -633,6 +633,48 @@ struct Index {
     }
   }
 
+  /* 给游戏的 XComponent 要回焦点 —— **这是实体键盘能不能用的那个开关**。
+   *
+   * ⛔ 为什么必须有它：默认启动模式是「先显示启动器」，那一刻 `showLauncher` 为真
+   *    ⇒ XComponent **不在树里** ⇒ 它上面那句 `.defaultFocus(true)` **赶不上页面的初始构建**，
+   *    等于没设。玩家点「启动游戏」只是把 `showLauncher` 置假，组件这时才被建出来，
+   *    而全工程没有别处给它请求过焦点（`requestFocus('SDL_XComponent')` 原先只剩 `dismissIme()`
+   *    一处）⇒ ArkUI 只把按键投递给聚焦组件 ⇒ **实体键盘彻底失灵，而触摸一切正常**
+   *    （触摸按坐标投递，不看焦点）。
+   * ⚠️ 症状的指纹：**IME 能正常弹出**（它走文件桥 + 一个隐形 TextInput，与这里无关）、
+   *    游戏里按不了键、两种操控方案都一样。日志里会看到按键只落在 `onKeyPreIme[Stack]`，
+   *    **没有** `onKeyPreIme[X]` —— 就是焦点不在 XComponent 上的指纹。
+   *
+   * ⚠️ 为什么是**一串延迟请求**，而不是 `onAppear` 里请求一次：组件刚建出来那一刻还没布局完，
+   *    那一次请求会被丢掉（2026-10-05 实测：`onAppear` 里请求一次**没修好**，日志里连那行都没留）。
+   *    这是本项目已经付过代价的形状 —— IME 那个隐形文本框的注释写着「第一次请求必须等它」，
+   *    用的是 `setTimeout(..., 60)`。游戏这个目标比文本框晚得多（surface 要先挂上），所以给几档延迟兜住。
+   * ⭐ 而 `requestFocus('SDL_XComponent')` 这个调用**本身确实有效**：`dismissIme()` 一直靠它
+   *    把键盘交还给游戏，那条路是好的（那里的注释写着「否则 ESC 和 WASD 就不再到达」）——
+   *    **坏的只是时序**，所以这里补的是「什么时候要」，不是「怎么要」。
+   * ⚠️ 只在游戏树里要（`showLauncher` 为假），否则会从启动器界面上把焦点抢走。
+   * ⚠️ `focusControl.requestFocus` 返回 **void**，拿不到成败 ⇒ 唯一判据是 hilog：
+   *    **修好之后按一个键，日志里会出现 XComponent 自己那条 `onKeyPreIme[X]`。** */
+  private focusClaimPending: boolean = false;
+
+  private claimGameFocus(): void {
+    if (this.focusClaimPending) {
+      return;                     /* 同一轮里别把定时器叠起来 */
+    }
+    this.focusClaimPending = true;
+    const delays: number[] = [0, 120, 400, 900];
+    for (const d of delays) {
+      setTimeout(() => {
+        if (this.showLauncher || this.shieldBlocked) {
+          return;                 /* 已经不在游戏树里了，别去抢启动器的焦点 */
+        }
+        focusControl.requestFocus('SDL_XComponent');
+        hilog.info(DOMAIN, TAG, 'focus: asked for SDL_XComponent after %{public}dms', d);
+      }, d);
+    }
+    setTimeout(() => { this.focusClaimPending = false; }, 1000);
+  }
+
   dismissIme(): void {
     this.imeDismissedUntil = Date.now() + IME_DISMISS_MS;
     this.showIme = false;
@@ -1288,6 +1330,10 @@ struct Index {
     }
 
     this.showLauncher = false;
+    /* ⭐ 就在这一刻安排要焦点：XComponent 会在紧接着的那一帧被建出来，所以这一次排的
+     * 延迟请求正好落在它建好之后。⚠️ 不能等 `onAppear` —— 2026-10-05 实测那次没生效，
+     * 所以这里不把成败押在它身上，两处都挂着（`claimGameFocus` 内部有防重入）。 */
+    this.claimGameFocus();
   }
 
   /** 悬浮球菜单里的「启动器」：回启动器界面。
@@ -1363,6 +1409,21 @@ struct Index {
              * 去掉无损失：触摸按坐标投递、只有按键跟随焦点。 */
             .focusable(true)
             .defaultFocus(true)
+            /* ⛔⛔ **这一句是承重的，别删**（2026-10-05 修，用户 bisect 定位到本处）。
+             *   `defaultFocus` 只在【页面初始构建】那一次起作用。而默认启动模式是「先显示启动器」，
+             *   那一刻 `showLauncher` 为真 ⇒ XComponent **根本不在树里**，初始焦点就落在没有它的页面上。
+             *   玩家点「启动游戏」只是把 `showLauncher` 置假 ⇒ XComponent 【这时才被建出来】，
+             *   而没有任何地方给它请求过焦点：全工程 `requestFocus('SDL_XComponent')` 只剩
+             *   `dismissIme()` 那一处，冷启动直接进游戏时一次都走不到。
+             *   ⇒ ArkUI 只把按键投递给聚焦组件 ⇒ **实体键盘彻底失灵，而触摸一切正常**（触摸按坐标投递）。
+             * ⚠️ 症状的指纹是「IME 能正常弹出、游戏里就是按不了键、两种操控方案都一样」——
+             *   因为 IME 走的是文件桥 + 一个隐形 TextInput，与这里这个焦点无关。
+             * ⭐ 判据：**组件晚于页面初始构建才出现时，`defaultFocus` 赶不上，必须自己请求一次。**
+             * 【实测·用户 bisect】1.1（无启动器界面）键盘正常 → 1.2（引入启动器界面）键盘坏、
+             *   且 1.2 / 1.3.1 / 1.3.2 / 1.3.3 全坏；把启动模式改成「直接进游戏」（XComponent 构建时就在）
+             *   键盘立刻恢复 ⇒ 本句即修复。
+             * ⚠️ `focusControl.requestFocus` 返回 **void**（不是 boolean），别去接它的返回值。 */
+            .onAppear(() => { this.claimGameFocus(); })
             /* 最早的按键钩子，必须【拒绝】（返回 false）：在这里消费 ESC 虽然能修正系统行为，但实测会在
              * 原生代码看到之前就把它吞掉（ESC 时 SDL 一个字节都没记到，而非 ESC 的控制键仍正常到达）。
              * 所以这个断口专属于「消费」，不是键盘普遍损坏 —— 但它仍意味着游戏永远拿不到它的 ESC。 */
