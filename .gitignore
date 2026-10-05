@@ -166,3 +166,7 @@ _stderr_*.log
 # tools/probe-mod/build.sh output -- regenerated, and it is copied into
 # entry/libs/ (also ignored) where the bundle picks it up.
 tools/probe-mod/out/
+
+# scripts/asan.py 存两份被改文件的原状，供 `off` 逐字节还原。
+# 它是**临时物料**（由 `on` 生成、`off` 删除），不是源码，⛔ 不该进仓库。
+.asan-backup/

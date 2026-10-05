@@ -587,6 +587,18 @@ handler **before** `JNI_CreateJavaVM`, and HotSpot forks to it. ⚠️ That hypo
 tested. `launcher.c` already carries the switch: **put `NOHANDLERS` in `jvm.options`** and no
 handler of ours is installed at all.
 
+⚠️ **That channel was dead until 2026-10-05, so the test above has never actually run.** The
+injected options and `setupCompatMode()`'s `-Xint` shared one file, and `setupCompatMode()`
+**deletes that file** on every launch where compat mode is off -- which is every launch on a
+device whose probe passes. `NOHANDLERS` was therefore gone before `launcher.c` read it, and the
+failure looked exactly like "nothing was injected". Fixed two ways: the injection now goes to
+the app-level `DEST_ROOT/jvm.options` (a different file from the one `setupCompatMode()` owns),
+and `launcher.c` reads **every** candidate file instead of only the first one that exists.
+⭐ The judgement worth keeping: **one file with two writers whose expectations about "will this
+still be here next launch?" are opposites is a design defect, not an implementation detail.**
+The readable evidence for the injection arriving is the `read N extra option(s) from <path>`
+line in `stderr.log` -- one line per candidate file, so it says *which* file carried them.
+
 ⚠️ **Any test of it has to run for at least ~10 minutes per arm, several times**, because the
 median time to failure is 15 s and the observed maximum is 150 s. A single crash-free 30 s run
 means nothing.

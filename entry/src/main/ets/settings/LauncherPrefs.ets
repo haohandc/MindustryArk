@@ -146,6 +146,327 @@ export function writeAppearance(filesDir: string, follow: boolean, dark: boolean
 }
 
 /* ====================================================================
+ * 游戏语言是否跟随系统
+ * ==================================================================== */
+
+const GAME_LOCALE_FILE_NAME = 'game_locale.txt';
+
+/* 文件里就一个词：`auto`（跟随系统）/ `manual`（不动）。
+ * ⭐ 格式与 `AppearancePref` / `SafePref` **故意一样**（`auto` / `manual` 一族），
+ *    它们是同一类问题：「这件事由系统定还是由你定」。
+ *
+ * ⭐ **出厂 `auto`（跟随系统）** —— 用户 2026-10-04 定的。
+ *
+ * ⚠️ **这是启动器补的一个能力，不是修缺陷**（用户 2026-10-04 纠正过：「这不是缺陷，正常
+ *    mindustry 就没有跟随」）。Mindustry 本来就没有「跟随系统」这个设置项：它的语言就是
+ *    `settings.bin` 里那个值，`default` 的含义是「用 JVM 的默认 locale」。
+ *    本启动器此前没给 JVM 传 locale ⇒ C locale ⇒ 那个 `default` 落在英文上。
+ *    出厂打开，是为了让中文设备上开箱就是中文。 */
+export const GAME_LOCALE_FOLLOW: boolean = true;
+
+/** 读「游戏语言是否跟随系统」。文件不在或读不懂 ⇒ **跟随系统**（出厂值）。 */
+export function readGameLocaleFollow(filesDir: string): boolean {
+  const path: string = filesDir + '/' + GAME_LOCALE_FILE_NAME;
+  try {
+    if (!fs.accessSync(path)) {
+      return GAME_LOCALE_FOLLOW;
+    }
+    const raw: string = fs.readTextSync(path).trim();
+    if (raw === 'auto') {
+      return true;
+    }
+    if (raw === 'manual') {
+      return false;
+    }
+    /* ⚠️ 认不出的值**不静默当成某一个** —— 记一条再回退（`readLaunchMode` 那条同款）。 */
+    hilog.warn(DOMAIN, TAG, 'prefs: game locale file says "%{public}s" -- following the system', raw);
+    return GAME_LOCALE_FOLLOW;
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'prefs: reading the game locale failed (%{public}s)', err.message);
+    return GAME_LOCALE_FOLLOW;
+  }
+}
+
+/** 写「游戏语言是否跟随系统」。 */
+export function writeGameLocaleFollow(filesDir: string, follow: boolean): void {
+  const path: string = filesDir + '/' + GAME_LOCALE_FILE_NAME;
+  try {
+    const f: fs.File = fs.openSync(path,
+      fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
+    try {
+      fs.writeSync(f.fd, (follow ? 'auto' : 'manual') + '\n');
+    } finally {
+      fs.closeSync(f);
+    }
+    hilog.info(DOMAIN, TAG, 'prefs: game locale -> %{public}s', follow ? 'auto' : 'manual');
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'prefs: saving the game locale failed (%{public}s)', err.message);
+  }
+}
+
+/* ====================================================================
+ * 游戏内显示（写进游戏自己的 settings.bin）
+ * ==================================================================== */
+
+const GAME_DISPLAY_FILE_NAME = 'game_display.txt';
+
+/* ⛔⛔ **两个量程都是从游戏自己的界面抄来的，别自己编** —— 来源 `SettingsMenuDialog`：
+ *      `sliderPref("uiEdgePadding", 0, 0, 100, …)` ⇒ 默认 0、0~100
+ *      `sliderPref("uiscale", getInt("uiscale", 100), 25, 300, 5, …)` ⇒ 默认 100、25~300、步长 5
+ * ⭐ 用它的量程意味着：**启动器设不出游戏自己的 UI 都设不出的值。** */
+/* ⛔⛔ **`*_FACTORY` 与「启动器想让它是什么」是【两件不同的事】，别合并成一个常量。**
+ *    `*_FACTORY` = **游戏自己的**默认值 ⇒ 只有一个用途：判断「玩家碰过这个设置没有」。
+ *    而「启动器出厂想让它是什么」= `GAME_DISPLAY_DEFAULT`（下面）。
+ * ⚠️⚠️ 把它们当成一个数的后果是**静默失效**：一旦哪天把启动器的出厂值调成 70/200
+ *    （用户已经调好的值），`untouched` 就会拿 70 去比一份全新游戏的 `0` ⇒ 判定「玩家改过」
+ *    ⇒ **永远不写**，而现象只是「这个功能忽然不生效」，看不出因果。
+ *    ⇒ 判据：**「什么算没被碰过」只由游戏决定，与我们的偏好无关。** */
+export const GAME_EDGE_FACTORY: number = 0;
+export const GAME_SCALE_FACTORY: number = 100;
+
+/* 启动器的**基准**界面缩放（百分数）。
+ *
+ * ⭐ 用户 2026-10-04：「在我的观感下，150% 是比较合理的初始数值。」
+ * ⛔ **它不是公式推出来的，也推不出来** —— 理由写在 `GameAutoFit.ets` 那段
+ *    （游戏已经用系统密度算过一次缩放了，我们再乘一次就是叠加；而实测本机那个密度项恰好 = 1，
+ *     说明「100% 太小」不是密度问题，是观感问题）。
+ * ⭐ 它是**实测值**：游戏默认的 100 在手机上偏小。
+ * ⚠️ 它**本来**要当基准、按系统字体倍率放大（见 `systemGameScale`）—— 但**今天那个倍率恒为 1**
+ *    （我们没声明 `configuration` 标签），所以**实际就是 150**。⛔ 别在这里写成「会跟随系统」。 */
+export const GAME_SCALE_BASE: number = 150;
+
+/* 量程照抄游戏自己的滑条（见上），⛔ 别自己放宽 —— 那会让启动器设出游戏 UI 都设不出的值。 */
+export const GAME_EDGE_MIN: number = 0;
+export const GAME_EDGE_MAX: number = 100;
+export const GAME_SCALE_MIN: number = 25;
+export const GAME_SCALE_MAX: number = 300;
+export const GAME_SCALE_STEP: number = 5;
+
+/** 要写进游戏的两个值。 */
+export interface GameDisplayPref {
+  /** `uiEdgePadding`：异形屏避让。 */
+  edge: number;
+  /** `uiscale`：UI 缩放（百分数）。 */
+  scale: number;
+  /** ⭐ **实验性**：避让值由系统参数（挖孔 + 密度）自动算出，而不是用上面的 `edge`。
+   * ⛔ **出厂关闭**（用户 2026-10-04：「标注为实验性功能，这个不默认开启」）。
+   * ⚠️ 自动模式**只接管避让**，不碰缩放 —— 依据见 `GameAutoFit.ets` 的文件头。 */
+  auto: boolean;
+  /* ⛔⛔ **这两个标志是「启动器能改自己默认值」的前提，别删。**
+   *    没有它们时，**写进文件的默认值会被当成玩家的选择**：启动器把当前值存一遍
+   *    （哪怕它只是初值），下次读回来就成了「他设过 100」⇒ 启动器**再也改不动自己的默认值**。
+   *    2026-10-04 实测踩到：把 `GAME_DISPLAY_DEFAULT.scale` 从 100 改成 200 **对他完全无效**，
+   *    因为他那份 `game_display.txt` 里正存着 100（那是我写的初值，不是他选的）。
+   * ⭐ 判据：**持久化只该记「玩家显式做过的选择」**；默认值永远由代码给出。
+   *    ⇒ 读的时候 `*Set === false` 就回退到 `GAME_DISPLAY_DEFAULT`，⛔ **不是**回退文件里那个数。 */
+  edgeSet: boolean;
+  scaleSet: boolean;
+}
+
+/** 启动器的出厂值 —— ⛔ **这是「我们想要游戏是什么样」，不是「游戏自己是什么样」。**
+ *
+ * ⚠️ 上面那对 `*_FACTORY` 只用来判断「玩家碰过没有」；这里是**要写进游戏的数**。
+ *    两者**今天不相等**（`scale` 100 vs 200），而它们**必须继续分开**：
+ *    把 `untouched` 判据也改成 200 的话，一份全新的游戏（`uiscale = 100`）会被判成
+ *    「玩家改过」⇒ 永远不写 ⇒ 症状只是「这个功能忽然不生效」。
+ *
+ * `scale`：见 `GAME_SCALE_BASE`（150，实测值；系统调过字体大小则按倍率放大）。
+ *
+ * `edge = GAME_EDGE_FACTORY`：**避让的默认仍是「不改变」** —— 它由「自动适配」按本机算
+ *    （见 `GameAutoFit.autoEdgePadding`），而自动适配是**实验性、默认关闭**的。 */
+export const GAME_DISPLAY_DEFAULT: GameDisplayPref = {
+  edge: GAME_EDGE_FACTORY,
+  scale: GAME_SCALE_BASE,
+  auto: false,
+  edgeSet: false,
+  scaleSet: false,
+};
+
+/** 把数值夹进量程。⛔ 读文件与滑条两处都要走它 —— 文件是可以被改坏的。
+ * ⚠️ 两个量程**必须分开传**：边距是 0~100，缩放是 25~300。第一版我写了「下限用边距的、
+ *    上限用缩放的」那一个函数，两边都错 —— 那种一眼看不出的错正是要避免的。 */
+function clampTo(v: number, min: number, max: number): number {
+  if (!Number.isFinite(v)) {
+    return min;
+  }
+  return v < min ? min : (v > max ? max : v);
+}
+
+/** 边距的量程夹取。 */
+export function clampEdge(v: number): number {
+  return clampTo(v, GAME_EDGE_MIN, GAME_EDGE_MAX);
+}
+
+/** UI 缩放的量程夹取。 */
+export function clampScale(v: number): number {
+  return clampTo(v, GAME_SCALE_MIN, GAME_SCALE_MAX);
+}
+
+/** 读「游戏内显示」偏好。文件不在或读不懂 ⇒ 出厂值。格式一行两个词：`edge=<n> scale=<n>`。 */
+export function readGameDisplay(filesDir: string): GameDisplayPref {
+  const path: string = filesDir + '/' + GAME_DISPLAY_FILE_NAME;
+  try {
+    if (!fs.accessSync(path)) {
+      return GAME_DISPLAY_DEFAULT;
+    }
+    let edge: number = GAME_DISPLAY_DEFAULT.edge;
+    let scale: number = GAME_DISPLAY_DEFAULT.scale;
+    let auto: boolean = GAME_DISPLAY_DEFAULT.auto;
+    let edgeSet: boolean = false;
+    let scaleSet: boolean = false;
+    let sawOne: boolean = false;
+    for (const part of fs.readTextSync(path).trim().split(/\s+/)) {
+      const eq: number = part.indexOf('=');
+      if (eq <= 0) {
+        continue;
+      }
+      const k: string = part.substring(0, eq);
+      const raw: string = part.substring(eq + 1);
+      if (k === 'auto') {
+        auto = (raw === '1');
+        sawOne = true;
+        continue;
+      }
+      if (k === 'edgeSet') {
+        edgeSet = (raw === '1');
+        continue;
+      }
+      if (k === 'scaleSet') {
+        scaleSet = (raw === '1');
+        continue;
+      }
+      const n: number = Number.parseInt(raw, 10);
+      if (!Number.isFinite(n)) {
+        continue;
+      }
+      if (k === 'edge') {
+        edge = n;
+        sawOne = true;
+      } else if (k === 'scale') {
+        scale = n;
+        sawOne = true;
+      }
+    }
+    if (!sawOne) {
+      /* ⚠️ 一个词都没认出来 ⇒ 当读不懂，记一条再回出厂值（`readLaunchMode` 那条同款）。 */
+      hilog.warn(DOMAIN, TAG, 'prefs: game display file has nothing usable -- using defaults');
+      return GAME_DISPLAY_DEFAULT;
+    }
+    /* ⭐⭐ **没被玩家设过的那一项回退出厂值**（⛔ 不是回退文件里那个数）。
+     *    这一步就是「启动器能改自己的默认值」的唯一原因 —— 见接口里那段。 */
+    return {
+      edge: edgeSet ? clampEdge(edge) : GAME_DISPLAY_DEFAULT.edge,
+      scale: scaleSet ? clampScale(scale) : GAME_DISPLAY_DEFAULT.scale,
+      auto: auto,
+      edgeSet: edgeSet,
+      scaleSet: scaleSet,
+    };
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'prefs: reading the game display failed (%{public}s)', err.message);
+    return GAME_DISPLAY_DEFAULT;
+  }
+}
+
+/** 写「游戏内显示」偏好。 */
+export function writeGameDisplay(filesDir: string, p: GameDisplayPref): void {
+  const path: string = filesDir + '/' + GAME_DISPLAY_FILE_NAME;
+  try {
+    const f: fs.File = fs.openSync(path,
+      fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
+    try {
+      /* ⛔⛔ **`auto` 必须写出来 —— 漏了它会让「自动适配」整个失效，而症状是静默的。**
+       *    2026-10-04 真的漏了（那次改动经由脚本替换，替换没匹配上而 `str.replace` 不报错），
+       *    后果连锁：`readGameDisplay` 读不到 `auto` ⇒ 回退 `false` ⇒ 下一次 `refresh()`
+       *    把 `gameAuto` 复位成 false ⇒ **开关自己弹回去**，而 `applyGameDisplayNow`
+       *    于是用**手动值**（0）去比 ⇒ 永远不写。玩家看到的是「拨上去、它自己回去了、游戏没变」。
+       * ⭐ 判据：**读的那一侧加了字段，写的那一侧必须同时加** —— 两者不同步时，
+       *    失败方向是「读到默认值」，而那与「玩家没设过」长得一模一样。 */
+      /* ⭐ 两个 `*Set` 标志**必须一起写**（见接口里那段）：它们是「这一项玩家设过没有」的唯一记录。
+       * ⛔ 漏掉它们 ⇒ 写进去的默认值下次被当成「玩家的选择」⇒ 启动器**再也改不动自己的默认值**。 */
+      fs.writeSync(f.fd, 'auto=' + (p.auto ? '1' : '0')
+                       + ' edgeSet=' + (p.edgeSet ? '1' : '0')
+                       + ' scaleSet=' + (p.scaleSet ? '1' : '0')
+                       + ' edge=' + String(p.edge) + ' scale=' + String(p.scale) + '\n');
+    } finally {
+      fs.closeSync(f);
+    }
+    hilog.info(DOMAIN, TAG, 'prefs: game display -> auto=%{public}s edge=%{public}d scale=%{public}d',
+               p.auto ? 'on' : 'off', p.edge, p.scale);
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'prefs: saving the game display failed (%{public}s)', err.message);
+  }
+}
+
+/* 「**上次我们把它写成了什么**」—— ⛔ 这一个文件是「不覆盖玩家设置」那条规则的**全部依据**。
+ *
+ * ⭐ 判据（三个值一比就知道该不该动手）：
+ *     游戏里那个值 == 出厂默认        ⇒ 玩家没碰过      ⇒ **写**
+ *     游戏里那个值 == 我们上次写的     ⇒ 那是**我们的**值 ⇒ **写**（玩家改了启动器那边就该跟着变）
+ *     其它                            ⇒ 玩家在游戏里改过了 ⇒ **不碰**
+ * ⛔ 少了这个文件，就只能靠「是不是出厂默认」判断 —— 那样**启动器一旦写过一次，就再也改不动了**
+ *    （值不再是默认、也不是我们认识的，于是永远被当成「玩家改的」）。
+ * ⚠️ 它记的是**边距与缩放两个数**，不是「写过没有」这个布尔 —— 布尔分不出「我们写的是 40」与
+ *    「我们写的是 60」。 */
+const GAME_DISPLAY_APPLIED_FILE_NAME = 'game_display_applied.txt';
+
+/** 上次写进游戏的值；从没写过 ⇒ `null`。 */
+export function readAppliedGameDisplay(filesDir: string): GameDisplayPref | null {
+  const path: string = filesDir + '/' + GAME_DISPLAY_APPLIED_FILE_NAME;
+  try {
+    if (!fs.accessSync(path)) {
+      return null;
+    }
+    const raw: string = fs.readTextSync(path).trim();
+    let edge: number = -1;
+    let scale: number = -1;
+    for (const part of raw.split(/\s+/)) {
+      const eq: number = part.indexOf('=');
+      if (eq <= 0) {
+        continue;
+      }
+      const n: number = Number.parseInt(part.substring(eq + 1), 10);
+      if (!Number.isFinite(n)) {
+        continue;
+      }
+      if (part.substring(0, eq) === 'edge') {
+        edge = n;
+      } else if (part.substring(0, eq) === 'scale') {
+        scale = n;
+      }
+    }
+    if (edge < 0 || scale < 0) {
+      return null;
+    }
+    /* ⚠️ `applied` 里**不**记 auto：它记的是「我们往游戏里写了什么数」，而 auto 只是
+     * 「这个数是谁算出来的」。判据（不覆盖玩家设置）只用得上那两个数。 */
+    return { edge: edge, scale: scale, auto: false, edgeSet: false, scaleSet: false };
+  } catch (e) {
+    return null;
+  }
+}
+
+/** 记下我们刚写进游戏的值。 */
+export function writeAppliedGameDisplay(filesDir: string, p: GameDisplayPref): void {
+  const path: string = filesDir + '/' + GAME_DISPLAY_APPLIED_FILE_NAME;
+  try {
+    const f: fs.File = fs.openSync(path,
+      fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
+    try {
+      fs.writeSync(f.fd, 'edge=' + String(p.edge) + ' scale=' + String(p.scale) + '\n');
+    } finally {
+      fs.closeSync(f);
+    }
+  } catch (e) {
+    const err = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'prefs: saving the applied game display failed (%{public}s)', err.message);
+  }
+}
+
+/* ====================================================================
  * 异形屏避让（vp，四边统一一个值）
  * ==================================================================== */
 

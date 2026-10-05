@@ -76,22 +76,50 @@ export function ensureDir(path: string): boolean {
   return pathExists(path);
 }
 
+/* 每拷这么多字节**让出一帧**给界面。
+ *
+ * ⛔⛔ 为什么必须有它（2026-10-05 代码审查查出）：这两个拷贝函数原来是**纯同步**的，而调用方
+ *    是在设好「正在读取压缩包…」之后**紧接一行**调它的 ⇒ UI 线程当场被占满，
+ *    **那句话根本画不出来**。玩家看到的是「点下去卡住十几秒到几十秒，然后突然完成」——
+ *    而那正是这个进度提示唯一想避免的事。
+ * ⭐ 用 `setTimeout(0)` 让出，**不是** taskpool：本项目已经在同一个问题上用这个手法
+ *    （`LauncherHome.askStorageSwitch()` 的「先让出一帧」），行为可预期、不引入线程安全与
+ *    跨线程序列化的问题。
+ * ⚠️ 它**不让拷贝变快**，也**不是**真正的进度条 —— 我们只是在块与块之间让界面有机会刷新。
+ *    真要做进度条得先知道总字节数，而分块拷贝本来就能算（`fs.statSync(src).size`），
+ *    那是另一件事，别顺手做。 */
+const YIELD_EVERY_BYTES: number = 4 * 1024 * 1024;
+
+function yieldToUi(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    setTimeout(() => { resolve(); }, 0);
+  });
+}
+
 /** 把一个沙箱文件拷到**另一个沙箱路径**（两边都是路径，不是 URI）。
  *
  * ⭐ 导出用它，**不按 picker 返回的 URI 当文件写**：`DOWNLOAD` 模式的 picker 返回的是**目录** URI，
  *    文件名得我们自己拼上去 —— 所以拿到的已经是「目录路径」，剩下就是普通文件复制。
  * ⚠️ 仍然是分块读写而不是 `fs.copyFileSync`：这个文件可能几百 MB，
- *    而 `copyFileSync` 没有进度、也没有失败位置。 */
-export function copyLocalFile(srcPath: string, dstPath: string): string {
+ *    而 `copyFileSync` 没有进度、也没有失败位置。
+ * ⚠️ 它现在**是 async 的**（见 `YIELD_EVERY_BYTES`）⇒ 调用方必须 `await`，
+ *    ⛔ 不 await 的话会同时跑两份拷贝、还可能让提示在成功之后才出现。 */
+export async function copyLocalFile(srcPath: string, dstPath: string): Promise<string> {
   let out: fs.File | undefined = undefined;
   try {
     const inF: fs.File = fs.openSync(srcPath, fs.OpenMode.READ_ONLY);
     out = fs.openSync(dstPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
     try {
       const buf: ArrayBuffer = new ArrayBuffer(64 * 1024);
+      let sinceYield: number = 0;
       let n: number = fs.readSync(inF.fd, buf);
       while (n > 0) {
         fs.writeSync(out.fd, buf, { length: n });
+        sinceYield += n;
+        if (sinceYield >= YIELD_EVERY_BYTES) {
+          sinceYield = 0;
+          await yieldToUi();
+        }
         n = fs.readSync(inF.fd, buf);
       }
     } finally {
@@ -110,8 +138,9 @@ export function copyLocalFile(srcPath: string, dstPath: string): string {
   }
 }
 
-/** 把一个 picker URI 拷进沙箱 —— **因为 zlib 只吃沙箱路径**（见文件头）。 */
-export function readUriToFile(uri: string, dstPath: string): string {
+/** 把一个 picker URI 拷进沙箱 —— **因为 zlib 只吃沙箱路径**（见文件头）。
+ * ⚠️ 同 `copyLocalFile`：它是 async 的（会中途让出），调用方必须 `await`。 */
+export async function readUriToFile(uri: string, dstPath: string): Promise<string> {
   let src: fs.File | undefined = undefined;
   try {
     src = fs.openSync(uri, fs.OpenMode.READ_ONLY);
@@ -119,10 +148,16 @@ export function readUriToFile(uri: string, dstPath: string): string {
       fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
     try {
       const buf: ArrayBuffer = new ArrayBuffer(64 * 1024);
+      let sinceYield: number = 0;
       let n: number = fs.readSync(src.fd, buf);
       while (n > 0) {
         /* ⛔ **必须带 `length`**：不带的话会把整个 64KB 缓冲区写出去。 */
         fs.writeSync(out.fd, buf, { length: n });
+        sinceYield += n;
+        if (sinceYield >= YIELD_EVERY_BYTES) {
+          sinceYield = 0;
+          await yieldToUi();
+        }
         n = fs.readSync(src.fd, buf);
       }
     } finally {
@@ -279,7 +314,28 @@ export function countPackable(dataDir: string): string {
 /** 解压到一个**已经存在**的目录。
  * ⚠️ `decompressFile` 的两个硬约束（核过 SDK）：`inFile` 扩展名**必须是 `.zip`**、
  *    `outFile` **必须已经存在**（它是目标目录，不是要创建的文件）。
- *    ⇒ 所以调用方先 `ensureDir(staging)`，别指望它替你建。 */
+ *    ⇒ 所以调用方先 `ensureDir(staging)`，别指望它替你建。
+ *
+ * ⭐⭐ **Zip Slip 不用我们自己防 —— 平台挡了**（2026-10-05 代码审查时去核的，一手来源是
+ *    本机 SDK 的 `sdk/default/openharmony/ets/api/@ohos.zlib.d.ts` 第 1005-1009 行，原文：
+ *    「To avoid path traversal, the input parameters of **inFile** and **outFile** cannot contain
+ *     two consecutive periods and a slash (../) since API version 13… **The name of the zipped
+ *     file or zipped folder cannot contain two consecutive periods and a slash (../)**.
+ *     Otherwise, the error code 900003 is returned.」）。
+ *    ⇒ 一个条目名里带 `../` 的包**解压会直接失败**（900003），不会写到 `staging` 外面。
+ *    ⚠️ 这条从 **API 13** 起生效，而本应用的目标 API 更高 ⇒ 适用。
+ *    ⭐ 所以**没有**在这里加「逐条目校验路径」那种自实现 ——
+ *      **平台已经保证的事不要自己再实现一遍**（自己做还会引入新的解析漏洞）。
+ *
+ * ⛔⛔ **但由此暴露了一个【文案】问题，要记着**：`900003` 的官方含义是
+ *    「不是 ZIP 格式或已损坏」—— 而**它同时也是「条目名带 `../` 被拒」的返回码**。
+ *    于是下面那句给玩家的话（`这个文件不是 zip，或者已经损坏。`）会**把一个恶意包说成坏包**。
+ *    ⇒ 不影响安全（解压照样失败、结果是对的），只是**说法不准**。
+ *    ⚠️ 用户立过规矩「界面文案默认一条都不加，他同意了才加」，所以**我没有擅自改那句话** ——
+ *      要改得他点头。这里的注释就是留给那一刻的。
+ * ⚠️ 仍未确认：条目名用**绝对路径**（`/etc/x`）或 Windows 盘符时平台怎么处置 ——
+ *    官方文档只写了 `../` 这一种。不过 `outFile` 本身**必须是沙箱路径**，
+ *    所以即便写得出去也只落在**本应用自己的沙箱内**，越不出应用。 */
 export async function unpackZip(zipPath: string, stagingDir: string): Promise<string> {
   if (!pathExists(zipPath)) {
     return '找不到压缩包：' + zipPath;

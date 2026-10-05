@@ -23,8 +23,17 @@ export function enterFade(duration: number = 150): TransitionEffect {
 }
 
 /** 淡入 + 轻微放大。给**卡片**用 —— 遮罩单独淡入时，卡片只是跟着变亮，读起来是「整块亮起来」；
- *  叠一点点缩放才读得出「这张卡出现了」。⚠️ 只给 scale、**不叠 opacity**：
- *  卡片在遮罩里面，两边都淡会让卡片明显滞后于底下的遮罩。 */
+ *  叠一点点缩放才读得出「这张卡出现了」。
+ *
+ * ⛔⛔ **这段注释与代码曾是矛盾的**（2026-10-05 代码审查查出，**下面已改成代码的真实行为**）。
+ *    原文写着「⚠️ 只给 scale、**不叠 opacity**：卡片在遮罩里面，两边都淡会让卡片明显滞后于
+ *    底下的遮罩」—— 而代码里 `.combine(TransitionEffect.OPACITY)` **一直在**。
+ * ⭐ **改的是注释，不是动画。** 判据：这段动效**用户已经看过并接受**（2026-10-03 定的那套
+ *    入场动效），而「卡片到底该不该叠淡入」是**观感**问题 —— 观感不由我单方面改，
+ *    那是他的决定。⛔ 所以这里如实记下代码在做什么，并把被搁置的那个取舍留在注释里，
+ *    而不是把它当成 bug 顺手「修」掉。
+ * ⚠️ 若哪天决定去掉那一层 opacity：这一行删掉 `.combine(TransitionEffect.OPACITY)` 即可，
+ *    上面那段原文的理由（卡片会滞后于遮罩）就是那时的依据。 */
 export function enterPop(duration: number = 180): TransitionEffect {
   return TransitionEffect.asymmetric(
     TransitionEffect.scale({ x: 0.96, y: 0.96 })

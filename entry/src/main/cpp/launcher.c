@@ -138,13 +138,21 @@
  * granularity（native 不用，只留痕）。⛔ 文件不在 ⇒ enabled=0 ⇒ 用 DEST_ROOT ⇒【与今天逐字节相同】。 */
 #define ISOLATION_FILE "/data/storage/el2/base/haps/entry/files/isolation.txt"
 
-/* 隔离根。⛔ 在 DEST_ROOT 之下、但在游戏那棵树【之外】：游戏的数据目录是 user.home 拼上 ARC
- * 强加的 ".local/share/Mindustry"，所以 instances/ 永远不会被游戏当成数据看。布局：
- *     DEST_ROOT/instances/<粒度键>/sets/default/  ← -Duser.home 指到这里；游戏建的是 …/.local/share/Mindustry/
+/* 隔离根的那一层子目录。⛔ 在数据根之下、但在游戏那棵树【之外】：游戏的数据目录是 user.home
+ * 拼上 ARC 强加的 ".local/share/Mindustry"，所以 instances/ 永远不会被游戏当成数据看。布局：
+ *     <数据根>/instances/<粒度键>/sets/default/  ← -Duser.home 指到这里；游戏建的是 …/.local/share/Mindustry/
  * ⚠️ A 阶段 sets 恒为 default（界面看不见）；现在就铺这层，是为以后加「集合」时不必搬玩家数据。
- * ⛔ ISOLATION_ROOT / ISOLATION_SET 的字面必须与 ArkTS 侧逐字一致，改一处不会报错、只会落错地方。 */
-#define ISOLATION_ROOT  DEST_ROOT "/instances"
-#define ISOLATION_SET   "sets/default"
+ * ⛔ ISOLATION_SUBDIR / ISOLATION_SET 的字面必须与 ArkTS 侧逐字一致，改一处不会报错、只会落错地方。
+ *
+ * ⛔⛔ **这里曾经是一个编译期常量 `ISOLATION_ROOT = DEST_ROOT "/instances"`，2026-10-04 拆掉了。**
+ *    存储根可以在运行期切到外置，而只要这个前缀还钉在 DEST_ROOT 上，就会出现：
+ *      隔离开 + 外置 ⇒ launcher 在【沙箱】里 mkdir、把 user.home 指向【沙箱】那棵树，
+ *      而 `record_user_home()` 照样写 `reason=on` ⇒ **界面上显示「外置、正常」，游戏却写在沙箱**。
+ *    ⇒ 根改成运行期决定（`resolve_user_home` 里那个 `base`），这里只留那一段**相对**后缀。
+ *    ⭐ 拆掉常量而不是「让调用点记得用 base」，是为了让**错误写法根本写不出来** ——
+ *      留下那个宏，任何人（包括以后的我）都可能顺手再用它一次，而那一次是无声的。 */
+#define ISOLATION_SUBDIR "/instances"
+#define ISOLATION_SET    "sets/default"
 
 /* read_kv 的定义在下面（与 read_user_dir 同处，共用解析规则）。这里先声明是因为
  * resolve_user_home() 要用它 —— ⚠️ 少了这一行会造出【非 static】的隐式声明，后面那个
@@ -169,48 +177,133 @@ static void record_user_home(const char *reason, const char *home)
     fclose(f);
 }
 
+/* 一个数据根能不能用。⛔ 这是**native 自己的闸门** —— ArkTS 那边也校验，但那是防写坏，
+ * 这里防读坏，与 `key` 的处理同一套道理（两边都要有）。
+ * ⚠️ 判据故意**从严**：路径是我们自己拼出来的，没有任何理由出现相对形式或 `..`；
+ *    一条不该出现的路径出现了，说明上游出了别的问题，回退沙箱比照着用更安全。 */
+static int root_is_usable(const char *p)
+{
+    if (p[0] != '/') {
+        return 0;                       /* 必须绝对 —— 相对路径会被当成 cwd 的兄弟 */
+    }
+    if (strstr(p, "..") != NULL) {
+        return 0;
+    }
+    return 1;
+}
+
+/* 去掉结尾的斜杠。⛔ 不因为「有结尾斜杠」就**拒绝**这个根：拼后缀时双斜杠在 Linux 上合法，
+ * 为这点小事把玩家的设置判死，代价不对等。 */
+static void strip_trailing_slashes(char *p)
+{
+    size_t n = strlen(p);
+    while (n > 1 && p[n - 1] == '/') {
+        p[n - 1] = 0;
+        n--;
+    }
+}
+
 static void resolve_user_home(char *out, size_t outlen)
 {
     char enabled[8];
     char key[128];
+    /* ⚠️ root 用 512，**不是**像 key 那样的 128：外置路径本身就有 ~61 字符，再拼上
+     * `/instances/<key>/sets/default` 会超过 128 —— 而 `read_kv` 遇到放不下的值是
+     * 「整行当作不存在」（`n >= outlen` ⇒ break）⇒ **静默回退沙箱**。
+     * ⭐ 一个尺寸写错、症状是「设置没生效」的洞。 */
+    char root[512];
 
     enabled[0] = 0;
     key[0] = 0;
+    root[0] = 0;
     read_kv(ISOLATION_FILE, "enabled", enabled, sizeof(enabled));
     read_kv(ISOLATION_FILE, "key", key, sizeof(key));
+    read_kv(ISOLATION_FILE, "root", root, sizeof(root));
 
-    if (strcmp(enabled, "1") != 0 || key[0] == 0) {
+    /* ⭐⭐ **① 先定根，再进隔离分支。顺序是承重的。**
+     * ⛔ 原来「隔离关着」那条早退直接返回 `DEST_ROOT`（编译期常量）。如果把读 root 塞进
+     *    「隔离开着」那一支里，**隔离关着时外置就不生效** —— 而出厂就是不隔离，
+     *    也就是说**最常见的那条路会静默忽略玩家的设置**。
+     * ⚠️ root 缺省（老桥文件、或玩家选的就是沙箱）时 `base` 落回 DEST_ROOT
+     *    ⇒ **与从前逐字节相同**（那条不变量：隔离关着 ⇒ 结果等于 DEST_ROOT）。 */
+    const char *base = DEST_ROOT;
+    if (root[0] != 0) {
+        if (root_is_usable(root)) {
+            strip_trailing_slashes(root);
+            base = root;
+        } else {
+            SDL_Log("storage: rejecting root '%s' (not absolute, or contains '..') -- using %s",
+                    root, DEST_ROOT);
+        }
+    }
+
+    /* ⭐⭐ **先把根本身建出来。**
+     * ⛔ `mkdir()` **不建父目录**，而外置的根是 `Download/<包名>/data` —— 它下面才是
+     *    `instances/<键>/…`。不先建这一层，下面那几层会以 `ENOENT` 全部失败，
+     *    于是回退 `DEST_ROOT`、记 `reason=mkdir-failed`，症状是「切到外置、重启又回到沙箱」。
+     * ⚠️ ArkTS 那边（`ensureGameDataRoot`）也会建，但**这里也要建**：native 不该假设
+     *    ArkTS 跑过 —— 这条路径在应用启动后第一次跑游戏时就要能用。
+     * ⚠️ 失败即回退（`EEXIST` 不算失败）：建不出根就没有理由继续往下拼。 */
+    if (mkdir(base, 0755) != 0 && errno != EEXIST) {
+        SDL_Log("storage: cannot create root '%s' (errno=%d), falling back to %s",
+                base, errno, DEST_ROOT);
         SDL_strlcpy(out, DEST_ROOT, outlen);
-        SDL_Log("isolation: off, user.home=%s", out);
+        record_user_home("root-mkdir-failed", out);
+        return;
+    }
+
+    /* ② 隔离关着 ⇒ 就是根本身。 */
+    if (strcmp(enabled, "1") != 0 || key[0] == 0) {
+        SDL_strlcpy(out, base, outlen);
+        SDL_Log("storage: isolation off, root=%s, user.home=%s", base, out);
         record_user_home("off", out);
         return;
     }
 
-    /* ⚠️ key 会进路径。只允许 [A-Za-z0-9._-]，别的一律回退 ——
-     * 它由 ArkTS 从版本号拼出来，本该干净，但「本该」不是一道闸门。 */
+    /* ③ key 会进路径。只允许 [A-Za-z0-9._-]，别的一律回退 ——
+     * 它由 ArkTS 从版本号拼出来，本该干净，但「本该」不是一道闸门。
+     * ⚠️ 回退到 `base` 而不是 DEST_ROOT：这是「不隔离，但用你选的那个根」，
+     *    比把玩家扔回沙箱更贴他的意图。 */
     for (const char *p = key; *p; p++) {
         int ok = (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
                  (*p >= '0' && *p <= '9') || *p == '.' || *p == '_' || *p == '-';
         if (!ok) {
-            SDL_Log("isolation: rejecting key '%s' (bad character), user.home=%s", key, DEST_ROOT);
-            SDL_strlcpy(out, DEST_ROOT, outlen);
+            SDL_Log("isolation: rejecting key '%s' (bad character), user.home=%s", key, base);
+            SDL_strlcpy(out, base, outlen);
             record_user_home("bad-key", out);
             return;
         }
     }
 
+    /* ④ 拼路径，**显式查长度**。
+     * ⛔⛔ `SDL_snprintf` 会**静默截断**成一个「看起来合法的短路径」，而下面紧接着就
+     *    `mkdir` 那个被截断的路径、并把它当 `user.home` 返回 ⇒ **游戏在一个错的但存在的
+     *    目录里启动，而记录里写着 `reason=on`**。量过：最坏 ~224 字符 vs 512 缓冲，
+     *    **今天不会触发** —— 但这是「以后换个更深的路径就静默变错」的那种洞，所以现在就按住。
+     * ⚠️ `SDL_snprintf` 返回的是**本该写入的长度**（同 snprintf）⇒ 拿它对比缓冲区大小即可。 */
     char home[512];
-    SDL_snprintf(home, sizeof(home), "%s/%s/%s", ISOLATION_ROOT, key, ISOLATION_SET);
+    {
+        int n = SDL_snprintf(home, sizeof(home), "%s%s/%s/%s", base, ISOLATION_SUBDIR, key,
+                             ISOLATION_SET);
+        if (n < 0 || (size_t) n >= sizeof(home)) {
+            SDL_Log("storage: user.home would need %d bytes (buffer %d) -- falling back to %s",
+                    n, (int) sizeof(home), DEST_ROOT);
+            SDL_strlcpy(out, DEST_ROOT, outlen);
+            record_user_home("path-too-long", out);
+            return;
+        }
+    }
 
     /* mkdir -p：连着建 instances、<key>、sets、default 四层（mkdir() 不建父目录）。
-     * ⚠️ 前三层失败【不算错】—— 可能是刚被别处建好（EEXIST），最后那一层才说明问题。 */
+     * ⚠️ 前三层失败【不算错】—— 可能是刚被别处建好（EEXIST），最后那一层才说明问题。
+     * ⚠️ 前两层建在 `base` 之下 ⇒ **外置时它们也建在外置**，这正是「根跟着走」的全部内容。 */
     {
         char partial[512];
-        SDL_snprintf(partial, sizeof(partial), "%s", ISOLATION_ROOT);
+        SDL_snprintf(partial, sizeof(partial), "%s%s", base, ISOLATION_SUBDIR);
         mkdir(partial, 0755);
-        SDL_snprintf(partial, sizeof(partial), "%s/%s", ISOLATION_ROOT, key);
+        SDL_snprintf(partial, sizeof(partial), "%s%s/%s", base, ISOLATION_SUBDIR, key);
         mkdir(partial, 0755);
-        SDL_snprintf(partial, sizeof(partial), "%s/%s/sets", ISOLATION_ROOT, key);
+        SDL_snprintf(partial, sizeof(partial), "%s%s/%s/sets", base, ISOLATION_SUBDIR, key);
         mkdir(partial, 0755);
         if (mkdir(home, 0755) != 0 && errno != EEXIST) {
             SDL_Log("isolation: cannot create '%s' (errno=%d), falling back to %s",
@@ -222,8 +315,258 @@ static void resolve_user_home(char *out, size_t outlen)
     }
 
     SDL_strlcpy(out, home, outlen);
-    SDL_Log("isolation: on, key=%s, user.home=%s", key, out);
+    SDL_Log("isolation: on, root=%s, key=%s, user.home=%s", base, key, out);
     record_user_home("on", out);
+}
+
+/* 游戏语言（`-Duser.language=` / `-Duser.country=`），2026-10-04。
+ *
+ * ⭐⭐ **这是在补一个本来没有的能力，不是修缺陷**（用户 2026-10-04 纠正过：「这不是缺陷，
+ *    正常 mindustry 就没有跟随」）。Mindustry **没有**「跟随系统」这个设置项：它的语言就是
+ *    `settings.bin` 里那个值，而 **`default` 的含义是「用 JVM 的默认 locale」** ——
+ *    桌面版看起来「跟着系统」，只是因为桌面 JVM 的默认 locale 跟着操作系统环境走。
+ *    本启动器此前没给 JVM 传过 locale ⇒ HotSpot 的 C locale 是 `C` ⇒ 那个 `default` 落在
+ *    **英文**上（随后 `LanguageDialog.findClosestLocale()` 还会把结果写死进 `settings.bin`）。
+ *    这里做的就是**告诉 JVM 设备语言是什么**，出厂打开。
+ *
+ * ⭐ 局部实测（JDK17，宿主 zh_CN）：不给 `-D` ⇒ `zh_CN`（宿主）；`-Duser.language=ja -Duser.country=JP`
+ *    ⇒ `ja_JP`；**只给 language** ⇒ `de_CN`（**地区跟着宿主走了**）⇒ **两个都要给，别只给一个。**
+ * ⚠️ 值是 ArkTS 侧翻译好的（`GameLocale.systemGameLocale()`），已是游戏认得的写法（`zh_CN`）；
+ *    这里只做**形状**校验，不重做翻译 —— 那份知识（游戏认哪些 locale）在 ArkTS 那边。
+ * ⚠️ 空串 ⇒ 两个选项都留 NULL、由末尾那次压缩丢掉，**行为与本功能存在之前逐字节相同**。 */
+static char opt_language[32];
+/* ⛔⛔ **32，不是 16 —— 16 让这个功能【完全失效】，而它一声不响。**
+ *    实测踩到：`-Duser.country=` 这个前缀本身 **15 个字符**，加 `CN` 再加结尾 NUL 需要 18。
+ *    给 16 ⇒ `SDL_snprintf` **静默截断**成 `-Duser.country=`（值被切掉）⇒ JVM 收到一个国家为空的
+ *     locale ⇒ `Locale("zh","")` ⇒ 游戏找 `bundle_zh.properties`（**不存在**）⇒ 落到英文根包。
+ *    ⇒ 中文设备上照样是英文，而**日志看起来一切正常**（那句 `locale: …` 是我自己拼的，不经过缓冲区）。
+ *    ⭐ 判据同 `read_kv` 那条：**缓冲区尺寸写错，症状是「设置没生效」，不是崩溃。** */
+static char opt_country[32];
+
+/* ⚠️⚠️ **诊断用，不是功能。** 在**游戏启动之前**把 `<user.home>/.local/share/Mindustry/settings.bin`
+ * 里的两个值读出来打日志 —— 「游戏到底读到了什么」否则**只有它自己的设置界面能回答**，
+ * 而那是玩家用眼睛看、我读不到的。有这一行之后，`stderr.log` 就能直接给出答案。
+ *
+ * ⛔⛔ **它故意只认 int 类型、遇到别的类型就跳过**（而不是完整实现 ARC 的格式）：
+ *    完整的解析器在 ArkTS 那边（`GameSettings.ets`），已经用真实文件逐字节验证过。
+ *    在这里再写一份完整的 = **两份会分叉的格式实现** —— 本项目为此付过代价。
+ *    ⭐ 所以这里只做「够用的那一点」：读条目数，逐条读键名+类型，是 int 就记下来，
+ *      不是 int 就按已知长度跳过。⚠️ 跳不过去（遇到字符串/字节数组）就**放弃并说出来** ——
+ *      **半个解析结果比不解析更危险**（它会让人以为读到了真值）。
+ *
+ * 输出形如：`settings-probe: uiEdgePadding=89 uiscale=100 entries=19` */
+static void log_game_settings_probe(const char *home)
+{
+    char path[768];
+    /* ⚠️ ARC 的数据目录是 `<user.home>/.local/share/Mindustry`（见 `Vars.dataDirectory`）。 */
+    SDL_snprintf(path, sizeof(path), "%s/.local/share/Mindustry/settings.bin", home);
+
+    FILE *f = fopen(path, "rb");
+    if (f == NULL) {
+        SDL_Log("settings-probe: cannot open %s", path);
+        return;
+    }
+    /* 头两字节是 zlib 魔数 ⇒ 压缩流（游戏自己从不写这种，见 GameSettings.ets）。
+     * ⛔ 这里不解压：那种情况直接报出来，别装作读到了。 */
+    int b0 = fgetc(f);
+    int b1 = fgetc(f);
+    if (b0 == 0x78 && (b1 == 1 || b1 == 94 || b1 == 0x9c || b1 == 0xda)) {
+        fclose(f);
+        SDL_Log("settings-probe: the file is zlib-compressed (the game never writes that) -- skipped");
+        return;
+    }
+    /* ⛔ 回到开头：上面那两个字节就是条目数的前两字节。 */
+    fseek(f, 0, SEEK_SET);
+
+    unsigned char hdr[4];
+    if (fread(hdr, 1, 4, f) != 4) {
+        fclose(f);
+        SDL_Log("settings-probe: the file is shorter than its own header");
+        return;
+    }
+    const int count = (hdr[0] << 24) | (hdr[1] << 16) | (hdr[2] << 8) | hdr[3];
+    if (count <= 0 || count > 4096) {
+        fclose(f);
+        SDL_Log("settings-probe: implausible entry count %d -- refused", count);
+        return;
+    }
+
+    long edge = -1;
+    long scale = -1;
+    int  read_entries = 0;
+    int  skipped_kinds = 0;
+
+    for (int i = 0; i < count; i++) {
+        int n0 = fgetc(f);
+        int n1 = fgetc(f);
+        if (n0 < 0 || n1 < 0) {
+            break;
+        }
+        const int klen = (n0 << 8) | n1;
+        if (klen <= 0 || klen > 200) {
+            SDL_Log("settings-probe: implausible key length %d at entry %d -- stopped", klen, i);
+            break;
+        }
+        char key[208];
+        if ((int) fread(key, 1, (size_t) klen, f) != klen) {
+            break;
+        }
+        key[klen] = 0;
+        const int type = fgetc(f);
+        if (type < 0) {
+            break;
+        }
+        /* 类型字节（与 ARC 的 tableswitch 一致）：0 bool / 1 int / 2 long / 3 float / 4 UTF / 5 byte[] */
+        if (type == 0) {
+            fgetc(f);
+        } else if (type == 1) {
+            unsigned char v[4];
+            if (fread(v, 1, 4, f) != 4) {
+                break;
+            }
+            const long value = (long) ((v[0] << 24) | (v[1] << 16) | (v[2] << 8) | v[3]);
+            if (strcmp(key, "uiEdgePadding") == 0) {
+                edge = value;
+            } else if (strcmp(key, "uiscale") == 0) {
+                scale = value;
+            }
+        } else if (type == 2) {
+            fseek(f, 8, SEEK_CUR);
+        } else if (type == 3) {
+            fseek(f, 4, SEEK_CUR);
+        } else if (type == 4 || type == 5) {
+            /* ⚠️ 变长的两种。**只读长度前缀再跳过** —— 这一步很小，但不做的话探针会停在
+             *    第一个字符串上（本项目实测：文件里 `lastBuildString` 排在第 16 条，
+             *    于是 `uiscale` 永远读不到、报 -1）。⛔ 别在这里解析字符串内容：
+             *    那是「再实现一份格式」，而完整实现已经在 ArkTS 那边（`GameSettings.ets`）。
+             *    这里只需要**知道有多长**：type 4 是 `writeUTF`（2 字节长度），
+             *    type 5 是 `int` 长度 + 内容（4 字节）。 */
+            unsigned char lb[4];
+            if (type == 4) {
+                if (fread(lb, 1, 2, f) != 2) {
+                    break;
+                }
+                const int n = (lb[0] << 8) | lb[1];
+                if (n < 0 || fseek(f, n, SEEK_CUR) != 0) {
+                    skipped_kinds++;
+                    break;
+                }
+            } else {
+                if (fread(lb, 1, 4, f) != 4) {
+                    break;
+                }
+                const long n = (long) ((lb[0] << 24) | (lb[1] << 16) | (lb[2] << 8) | lb[3]);
+                if (n < 0 || fseek(f, n, SEEK_CUR) != 0) {
+                    skipped_kinds++;
+                    break;
+                }
+            }
+        } else {
+            SDL_Log("settings-probe: unknown type %d for '%s' -- stopped", type, key);
+            break;
+        }
+        read_entries++;
+    }
+    fclose(f);
+
+    if (skipped_kinds == 0 && read_entries == count) {
+        SDL_Log("settings-probe: what the game will read -- uiEdgePadding=%ld uiscale=%ld (%d entries)",
+                edge, scale, count);
+    } else {
+        /* ⚠️ 读到一半停下来时**照样报已知的那两个**，但**说清是残缺的** ——
+         * 「89」与「只读到第 12 条所以 89 可能是旧的」是两件不同的事。 */
+        SDL_Log("settings-probe: PARTIAL (%d of %d entries; the file is malformed or truncated) -- "
+                "uiEdgePadding=%ld uiscale=%ld", read_entries, count, edge, scale);
+    }
+}
+
+/* 算出这次启动要给 JVM 的 locale，写进 opt_language / opt_country（空串 = 不设）。
+ *
+ * ⭐ 值由 ArkTS 翻译好（`GameLocale.systemGameLocale()`）后写进同一个桥文件 ——
+ *    「游戏认哪些 locale」那份知识（35 个 ID，抄自 jar 的 `locales` 资产）**只有一处**。
+ *    ⚠️ **不要**把那份清单抄到这里来：两份清单会分叉，而分叉的症状是「某个语言静默变英文」。
+ *    这里**只校验形状**，不重做翻译：重做一遍就是两份会分叉的实现。
+ *
+ * ⛔ 校验是必须的，虽然来源是我们自己：值要拼进 `-D` 字符串，而且它来自一个**文件**
+ *    （可以被改、可以被写坏）。判据与 `key` 那里同款（那份要进路径，这份要进属性值）。
+ * ⚠️ 只在**两个**部分都合法时才用：`zh` 这种没有地区的是合法的（`bundle_ja` / `bundle_en`
+ *    这些确实是裸语言），但如果带了 `_` 而地区部分不合法，整条丢掉 —— 半个值会让
+ *    `Locale("zh", "")` 与 ArkTS 那边的意图不符。 */
+static void resolve_game_locale(void)
+{
+    char loc[32];
+    loc[0] = 0;
+    opt_language[0] = 0;
+    opt_country[0] = 0;
+
+    if (read_kv(ISOLATION_FILE, "locale", loc, sizeof(loc)) <= 0) {
+        return;                         /* 没写 / 空 / 读不出 —— 全部「不设」，与从前一致 */
+    }
+
+    /* 切成 language 与 country（可选）。格式 `ll` 或 `ll_CC`。 */
+    char lang[16];
+    char country[16];
+    country[0] = 0;
+    const char *us = strchr(loc, '_');
+    if (us != NULL) {
+        size_t llen = (size_t) (us - loc);
+        if (llen == 0 || llen >= sizeof(lang)) {
+            SDL_Log("locale: rejecting '%s' (bad language part)", loc);
+            return;
+        }
+        memcpy(lang, loc, llen);
+        lang[llen] = 0;
+        SDL_strlcpy(country, us + 1, sizeof(country));
+    } else {
+        SDL_strlcpy(lang, loc, sizeof(lang));
+    }
+
+    /* 只允许 [A-Za-z] 于语言、[A-Za-z] 于地区（`id_ID` 里的 `ID` 也在这个集合里）。
+     * ⛔ 不许数字、下划线、点 —— 游戏那 35 个 ID 一个都不需要它们，而多出来的字符
+     *    只会让「这是不是我们生成的」变得说不清。 */
+    for (const char *p = lang; *p; p++) {
+        if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z'))) {
+            SDL_Log("locale: rejecting '%s' (bad character in language)", loc);
+            return;
+        }
+    }
+    const size_t langlen = strlen(lang);
+    if (langlen < 2 || langlen > 3) {
+        SDL_Log("locale: rejecting '%s' (language length %d)", loc, (int) langlen);
+        return;
+    }
+    if (country[0] != 0) {
+        const size_t clen = strlen(country);
+        if (clen != 2) {
+            SDL_Log("locale: rejecting '%s' (country length %d)", loc, (int) clen);
+            return;
+        }
+        for (const char *p = country; *p; p++) {
+            if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z'))) {
+                SDL_Log("locale: rejecting '%s' (bad character in country)", loc);
+                return;
+            }
+        }
+    }
+
+    /* ⭐ 显式查截断返回值（`SDL_snprintf` 返回「本该写多少个字符」）。
+     *    ⛔ 这不是防御性编程：**上面那个 16 字节的 bug 就是这个类别的**，而它的症状是静默失效。
+     *    校验过的输入（2~3 + `_` + 2）撞不到这个上限，所以这里只该在有人改了校验时响。 */
+    if (SDL_snprintf(opt_language, sizeof(opt_language), "-Duser.language=%s", lang)
+            >= (int) sizeof(opt_language) ||
+        (country[0] != 0 &&
+         SDL_snprintf(opt_country, sizeof(opt_country), "-Duser.country=%s", country)
+            >= (int) sizeof(opt_country))) {
+        SDL_Log("locale: option string would be truncated -- NOT setting the locale");
+        opt_language[0] = 0;
+        opt_country[0] = 0;
+        return;
+    }
+    /* ⚠️ 打**桥里那个原值**（`loc`），不要自己拿 lang+country 拼一个 ——
+     *    第一版就是这么拼的，漏了 `_`，打出来 `zhCN`，**把上面那个截断 bug 藏了一轮**。
+     *    原值同时也证明了「翻译出来的值是什么」。 */
+    SDL_Log("locale: game language follows the system -- %s (-Duser.language=%s%s%s)",
+            loc, lang, country[0] != 0 ? ", -Duser.country=" : "", country);
 }
 
 /* 在 ArkTS 写下的文件里查一行 "key=value"。返回拷贝的字节数（键不存在或文件不可读时为 0），
@@ -641,6 +984,14 @@ static void on_fatal_signal(int sig, siginfo_t *info, void *uctx)
                 int hn = SDL_snprintf(hdr, sizeof(hdr),
                     "PC=0x%lx BASE=0x%lx LEN=%llu MAP=%s\n",
                     (unsigned long)pc, base, (unsigned long long)len, map);
+                /* ⛔⛔ `hn` 是**本该写入的长度**，⛔ 不是实际写进去的（标准 `vsnprintf` 语义，
+                 *    见 `SDL_snprintf` → `SDL_vsnprintf`，以及本文件 283 行那段）——
+                 *    **截断时它【大于】`sizeof(hdr)`**。直接拿它当 `write` 的长度，
+                 *    就是从 `hdr` 后面**越界读**最多约 440 字节写进 `cc_dump.bin`
+                 *    （`map` 可到 511，而这里只有 128）。
+                 * ⭐ 内容长度取 `min(hn, sizeof(hdr) - 1)`：`snprintf` 保证最多写
+                 *    `sizeof - 1` 个字符 + 一个 `NUL`，所以这个长度就是**实际有效内容**。 */
+                if (hn > (int)sizeof(hdr) - 1) hn = (int)sizeof(hdr) - 1;
                 ssize_t w = write(fd, hdr, (size_t)hn); (void)w;
                 w = write(fd, (const void *)base, len); (void)w;
                 close(fd);
@@ -662,6 +1013,15 @@ static void on_fatal_signal(int sig, siginfo_t *info, void *uctx)
         sig, info ? info->si_code : -1, info ? info->si_addr : NULL, name, map,
         pcinfo, regs, insn);
     if (n > 0) {
+        /* ⛔⛔ **`n` 是「本该写入的长度」，⛔ 不是实际写进去的**（与上面 `hdr` 那处同一个坑）。
+         *    这里拼进去的四段最坏是 `map` 511 + `pcinfo` 599 + `regs` 1399 + `insn` 399 ≈ 2900，
+         *    而 `buf` 只有 1600 ⇒ 截断时 `n` 可达 2900
+         *    ⇒ `write(fd, buf, 2900)` **从栈上越界读约 1.4 KB**，写进 `crash.txt` 与 stderr。
+         * ⚠️ 为什么不是「反正已经崩了，无所谓」：
+         *    ① 越界读是**未定义行为**，可能**二次崩溃** ⇒ 把本来要留下的那份报告一起弄丢；
+         *    ② 本项目**崩溃是常态**（一口气抓过 18 条 faultlog），这条路不冷。
+         * ⭐ 内容长度取 `min(n, sizeof(buf) - 1)` —— 理由同上面那一处。 */
+        if (n > (int)sizeof(buf) - 1) n = (int)sizeof(buf) - 1;
         int fd = open(DEST_ROOT "/crash.txt", O_WRONLY | O_CREAT | O_APPEND, 0644);
         if (fd >= 0) { ssize_t w = write(fd, buf, (size_t)n); (void)w; close(fd); }
         ssize_t w2 = write(2, buf, (size_t)n); (void)w2;
@@ -1050,31 +1410,57 @@ static void diagnose_loading(void)
  * 每行一个选项；空行和以 # 开头的行被忽略。 */
 /* 本启动器自己提供多少个选项，在运行时选项文件追加的东西之前。它被用作数组上界和索引基点，共
  * 五处，所以是具名常量：漏掉一处就会悄悄丢掉选项、或读过数组已填充的部分。 */
-#define BASE_OPTS 18
+#define BASE_OPTS 20
 #define MAX_EXTRA_OPTS 32
 static char g_extra[MAX_EXTRA_OPTS][256];
 
-/* 候选位置，按顺序尝试。这里【曾经】有第三个条目 "/data/local/tmp/jvm.options"，2026-09-22
+/* 候选位置。这里【曾经】有第三个条目 "/data/local/tmp/jvm.options"，2026-09-22
  * 移除 —— 它不可能工作：文件推到了那里、从 shell 可读，启动器仍报 "no options file found; tried
  * 3 locations"，每次 fopen 都失败（该路径对应用的 uid 不可达），一个永远打不开的条目只会误导。
- * 真正管用的是第二个条目 DEST_ROOT：hdc 能【读】但不能写它，所以是应用写、shell 读。 */
+ *
+ * ⭐⭐ **两个条目各有【一个】写入者 —— 这一点是承重的**（2026-10-05 才分清，见 load_extra_options）：
+ *   · 第 1 条（ability 级 `/data/storage/el2/base/haps/entry/files`）—— **启动器自己**：
+ *     `Index.setupCompatMode()` 每次启动**双向重写**它（写 `-Xint`，或**把整个文件删掉**）。
+ *     低于 API 26 的手机 JVM 拿不到匿名可执行内存、必须解释执行，故写 `-Xint`
+ *     （RELEASE-MAINTENANCE.md 2.12），且必须双向重写，否则手机升过 26 后 -Xint 会留下、
+ *     游戏永久以解释模式跑。⚠️ probe_exec_mem() 不可用时启动器也强制 -Xint（覆盖 API 26
+ *     商店签名机与无 ACL 平板）：文件是请求，探测才是权威。
+ *   · 第 2 条（应用级 DEST_ROOT）—— **人工注入**：`EntryAbility.writeJvmOptions()`，入口是
+ *     `aa start … --ps jvmoptN <flag>`。**没有任何东西删它** —— 它要持有到有人显式清掉。
+ *   ⛔ 两者共用一个文件时，启动器每次启动都会把注入的 flag 删掉（见 load_extra_options 的说明）。
+ *   ⭐ DEST_ROOT 那一份 hdc 能【读】但不能写（沙箱），所以是「应用写、shell 读」。 */
 static const char *OPTION_PATHS[] = {
-    /* ArkTS 从启动参数写到这里（见 EntryAbility.ets）；context.filesDir 是 ability 自己的 files
-     * 目录，【不是】DEST_ROOT。低于 API 26 的手机 JVM 拿不到匿名可执行内存、必须解释执行，故 ArkTS
-     * 在此写 -Xint（RELEASE-MAINTENANCE.md 2.12），且每次启动必须【双向重写】，否则手机升过 26 后
-     * -Xint 会留下、游戏永久以解释模式跑。⚠️ probe_exec_mem() 不可用时启动器也强制 -Xint（覆盖
-     * API 26 商店签名机与无 ACL 平板）：文件是请求，探测才是权威。 */
     "/data/storage/el2/base/haps/entry/files/jvm.options",
     DEST_ROOT "/jvm.options",
 };
 
-static const char *open_options_file(void)
+/* 读【一个】选项文件，追加到 out[base..]。返回读到的条数（≤ room）。 */
+static int read_options_file(const char *path, JavaVMOption *out, int base, int room)
 {
-    for (unsigned i = 0; i < sizeof(OPTION_PATHS) / sizeof(OPTION_PATHS[0]); i++) {
-        FILE *f = fopen(OPTION_PATHS[i], "r");
-        if (f) { fclose(f); return OPTION_PATHS[i]; }
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        return 0;
     }
-    return NULL;
+    int n = 0;
+    char line[256];
+    while (n < room && fgets(line, sizeof(line), f)) {
+        size_t L = SDL_strlen(line);
+        while (L && (line[L - 1] == '\n' || line[L - 1] == '\r'
+                     || line[L - 1] == ' ' || line[L - 1] == '\t')) {
+            line[--L] = '\0';
+        }
+        if (L == 0 || line[0] == '#') continue;
+        SDL_strlcpy(g_extra[base + n], line, sizeof(g_extra[base + n]));
+        out[base + n].optionString = g_extra[base + n];
+        out[base + n].extraInfo = NULL;
+        n++;
+    }
+    fclose(f);
+    /* ⭐ **每个文件各报一行**，不是合成一句总和 —— 「注入的那条 flag 到底到没到」的
+     *    唯一判据就是这个 `from <路径>`，而本应用的 hilog 读不到、只有 stderr.log 能读
+     *    （hdc 直接可取）。合成一句就把「是哪一份起作用」这个信息丢掉了。 */
+    SDL_Log(" read %d extra option(s) from %s", n, path);
+    return n;
 }
 
 /* 任何一个候选选项文件里含有这个标记吗？（非 static：main 里要用） */
@@ -1092,32 +1478,42 @@ int options_contain(const char *needle)
     return 0;
 }
 
+/* 读【全部候选文件】，按 OPTION_PATHS 的顺序拼接。
+ *
+ * ⛔⛔ 2026-10-05：这里原来是 `open_options_file()` —— **只读第一个存在的**文件。那不只是
+ *    一个优先级细节：它毁掉了一条功能通道，而且是**静默地**毁掉的。
+ *   · ability 级那份由 `Index.setupCompatMode()` 拥有，每次启动**双向重写**（写 `-Xint`，
+ *     或**删掉整个文件**）—— 这是有意的，见 OPTION_PATHS 上面那段。
+ *   · 人工注入的 flag 原先也写在**那一份**里 ⇒ 启动器下一次启动就把它删了。
+ *     `RELEASE-MAINTENANCE.md` §2.10 正是拿这条路去测那个悬着的 SIGSEGV
+ *     （原文：「put `NOHANDLERS` in `jvm.options`」）—— 那条命令**从来不可能生效**。
+ *     ⚠️ 而它失败的样子是「日志里没有 handler」，与「注入没写进去」「选项没被读到」
+ *     **长得一模一样** —— 门从来不触发，和门查了但没查到，区分不开。
+ *   ⇒ 修法两半：**① 两个写入者各用一个文件**（注入搬到 DEST_ROOT 那份，见 EntryAbility.ets）；
+ *     **② 这里读全部候选**（否则「先找到的那个」仍是单点）。
+ *   ⭐ 判据：**一个文件两个写入者、而两者对「下次启动还在不在」的期望相反 ⇒ 那是设计缺陷，
+ *     不是实现细节。** 换掉实现（合并、加标记）都不如把两件事分开来得干净。
+ * ⚠️ 顺序仍然是候选表的顺序：同名选项时**后者生效**（HotSpot 对重复参数的规则）。 */
 static int load_extra_options(JavaVMOption *out, int base)
 {
-    const char *path = open_options_file();
-    if (!path) {
-        SDL_Log(" (no options file found; tried %d locations)",
-                (int)(sizeof(OPTION_PATHS) / sizeof(OPTION_PATHS[0])));
-        return 0;
-    }
-    FILE *f = fopen(path, "r");
-    if (!f) return 0;
+    const unsigned count = (unsigned) (sizeof(OPTION_PATHS) / sizeof(OPTION_PATHS[0]));
     int n = 0;
-    char line[256];
-    while (n < MAX_EXTRA_OPTS && fgets(line, sizeof(line), f)) {
-        size_t L = SDL_strlen(line);
-        while (L && (line[L - 1] == '\n' || line[L - 1] == '\r'
-                     || line[L - 1] == ' ' || line[L - 1] == '\t')) {
-            line[--L] = '\0';
+    int found = 0;
+    for (unsigned i = 0; i < count && n < MAX_EXTRA_OPTS; i++) {
+        FILE *probe = fopen(OPTION_PATHS[i], "r");
+        if (!probe) {
+            continue;
         }
-        if (L == 0 || line[0] == '#') continue;
-        SDL_strlcpy(g_extra[n], line, sizeof(g_extra[n]));
-        out[base + n].optionString = g_extra[n];
-        out[base + n].extraInfo = NULL;
-        n++;
+        fclose(probe);
+        found = 1;
+        n += read_options_file(OPTION_PATHS[i], out, base + n, MAX_EXTRA_OPTS - n);
     }
-    fclose(f);
-    SDL_Log(" read %d extra option(s) from %s", n, path);
+    /* ⛔ 这一行是**既有判据**（RELEASE-MAINTENANCE.md 里多处引用它）：只有【一个文件都不存在】
+     *    时才报。⚠️ 别改成「读到的条数为 0 就报」—— 一个只含注释的选项文件是**存在**的，
+     *    而「没有文件」与「文件在但没有选项」对排查是两件不同的事。 */
+    if (!found) {
+        SDL_Log(" (no options file found; tried %d locations)", (int) count);
+    }
     return n;
 }
 
@@ -1916,6 +2312,14 @@ static int start_jvm(void)
     /* 去问那个文件而不是用常量：玩家可能自上次启动以来已切到桌面操作方案。见 read_control_mode_mobile()。 */
     SDL_snprintf(opt_mobile, sizeof(opt_mobile), "-Darc.sdl.mobile=%s",
                  read_control_mode_mobile() ? "true" : "false");
+    /* 游戏语言。⚠️ 必须在 `create()` **之前**填好 —— 与 user.home 同理：JVM 在启动那一刻读。 */
+    resolve_game_locale();
+    /* 诊断：把**游戏即将读到的那两个值**打进日志。 */
+    {
+        char probe_home[512];
+        resolve_user_home(probe_home, sizeof(probe_home));
+        log_game_settings_probe(probe_home);
+    }
 
     {
         /* 读平台自己的答案而不是猜路径；没有答案时【完全略去】这个选项。过去传空字面量
@@ -1960,6 +2364,15 @@ static int start_jvm(void)
      * 字符串会设置该属性，那不是同一回事 —— 见 opt_chooser 上的说明。 */
     options[17].optionString = (opt_chooser[0] != '\0') ? opt_chooser : NULL;
     options[17].extraInfo = NULL;
+    /* ⭐ 游戏语言（`-Duser.language` / `-Duser.country`，2026-10-04）。
+     * ⛔⛔ **刻意追加在【末尾】（18、19），不是插进中间**：下面那条最小模式用的是
+     *    **写死的下标**（`options[0]` / `[2]` / `[8]`），插进中间会让那三个下标全部错位、
+     *    而错位的后果是**最小模式静默换掉了它传的参数**。追加则 0..17 的含义完全不变。
+     * ⚠️ 两个都可能为空（关掉「跟随系统」时）⇒ 用 NULL 交给末尾那次压缩丢掉。 */
+    options[18].optionString = (opt_language[0] != '\0') ? opt_language : NULL;
+    options[18].extraInfo = NULL;
+    options[19].optionString = (opt_country[0] != '\0') ? opt_country : NULL;
+    options[19].extraInfo = NULL;
 
     /* 最小模式 —— 运行时选项文件里的一行开关（一行恰好写着 MINIMAL）。有几个内置 -D flag 是在告诉
      * HotSpot 它本会自己算出的东西（java.home、sun.boot.library.path、java.library.path）；提供它们

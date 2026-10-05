@@ -1,7 +1,7 @@
-/* 存档垃圾站 —— 删除**不是**抹掉，是搬到一个游戏看不见的地方（用户 2026-10-02 定的形态）。
+/* 存档回收站 —— 删除**不是**抹掉，是搬到一个游戏看不见的地方（用户 2026-10-02 定的形态）。
  * ⭐⭐ **存放位置是关键**：`DEST_ROOT/save-vault/`，**在游戏那棵树【外面】**（`…/files/.local/share/Mindustry/` 之外）。
  * ⛔ 放在游戏数据目录里会同时坏两件事：① 游戏把它当自己的数据扫（`Saves` 会列出所有 `.msav`）；② 隔离一开
- * `user.home` 一换，垃圾站就**跟着版本走** ⇒ 放在 level-2 应用目录下，天然跨版本共享。
+ * `user.home` 一换，回收站就**跟着版本走** ⇒ 放在 level-2 应用目录下，天然跨版本共享。
  * 布局：`<DEST_ROOT>/save-vault/<条目 id>/{meta.txt, files/}`；⚠️ id = `<时间戳>-<安全化标签>`（时间戳保唯一、
  * 标签保人能认出）—— 标签进路径而来源是**玩家给的存档名**。⛔ **不挑文件**：`files[]` 原样全搬（含 `-backup`），
  * 筛掉备份会让「放回去」得到**与删除前不同**的存档。
@@ -12,11 +12,14 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { SaveEntry } from './SaveLibrary';
 import { copyTreeInto, removeTree, newTreeStat, TreeStat, listFiles, sizeOf, pathExists }
   from '../utils/FsTree';
+/* ⭐ 只为了 `currentGameDataRoot()`：回收站记的是**删除时**的绝对路径，而数据根是可以换的。
+ * ⛔ 不成环：`Isolation` 只依赖 `FsTree` / `GameLibrary` / `StorageRoot`，不依赖本文件。 */
+import { currentGameDataRoot } from '../settings/Isolation';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
 
-/* 垃圾站的根。⭐ `NATIVE_FILES` 与 `Isolation.ets` 里那个是同一个值（`launcher.c` 的 `DEST_ROOT`），
+/* 回收站的根。⭐ `NATIVE_FILES` 与 `Isolation.ets` 里那个是同一个值（`launcher.c` 的 `DEST_ROOT`），
  * ⛔ 不是 ArkTS 的 `ctx.filesDir`（那是 HAP 级目录，两处不通用）。 */
 const NATIVE_FILES: string = '/data/storage/el2/base/files';
 export const VAULT_ROOT: string = NATIVE_FILES + '/save-vault';
@@ -36,7 +39,7 @@ const DAY_MS: number = 24 * 60 * 60 * 1000;
 /** 保留期存哪。与别的跨启动状态一样，一个纯文本文件。 */
 const DAYS_FILE_NAME = 'save_vault_days.txt';
 
-/** 垃圾站里的一个条目。 */
+/** 回收站里的一个条目。 */
 export interface VaultEntry {
   /** 目录名，同时是它的稳定标识。 */
   id: string;
@@ -44,7 +47,7 @@ export interface VaultEntry {
   label: string;
   /** 原来那个 `saves/` 目录 —— 「放回」会放回**这里**。 */
   from: string;
-  /* ⭐⭐ **它原来属于哪个（些）版本** —— 用户 2026-10-02 报「细分后，放到垃圾站区分不出来原来那个存档
+  /* ⭐⭐ **它原来属于哪个（些）版本** —— 用户 2026-10-02 报「细分后，放到回收站区分不出来原来那个存档
    * 属于哪个版本」。⚠️ 这是**删除那一刻的快照**不是现算（玩家可能早把那个 jar 删了）：⭐ `owner` 给人看
    * （「内置游戏（v8 Build 160.5）」），`key` 给排查用（`b160.5`）。 */
   owner: string;
@@ -151,9 +154,9 @@ function slug(label: string): string {
  * 删除 / 放回 / 彻底删 / 归档
  * ==================================================================== */
 
-/* 把 `save` 这一组文件**搬进**垃圾站。返回 '' 表示成功，否则是一句给玩家看的话。
+/* 把 `save` 这一组文件**搬进**回收站。返回 '' 表示成功，否则是一句给玩家看的话。
  * ⚠️ 是**搬**（复制成功后删源）不是纯复制 —— 玩家的意思是「删掉它」，留一份在 `saves/` 等于没删。
- * ⚠️ 顺序必须**先复制、成功了再删源**：反过来一旦复制失败，那些文件就只存在于垃圾站
+ * ⚠️ 顺序必须**先复制、成功了再删源**：反过来一旦复制失败，那些文件就只存在于回收站
  *    （数据没丢，但存档列表里没了）。 */
 export function vaultDelete(save: SaveEntry, savesDir: string, days: number, nowMs: number,
                            owner: string, key: string): string {
@@ -181,7 +184,7 @@ export function vaultDelete(save: SaveEntry, savesDir: string, days: number, now
     dir = VAULT_ROOT + '/' + id;
   }
   if (pathExists(dir)) {
-    return '垃圾站里这个名字已经用过太多次了，请稍后再试。';
+    return '回收站里这个名字已经用过太多次了，请稍后再试。';
   }
   const filesDst: string = dir + '/' + FILES_DIR;
 
@@ -202,7 +205,7 @@ export function vaultDelete(save: SaveEntry, savesDir: string, days: number, now
     removeTree(dir, 0, rb);
     hilog.error(DOMAIN, TAG, 'vault: copy failed (%{public}s), rolled back %{public}d file(s)',
                 cp.firstError, rb.files);
-    return '没能复制到垃圾站：' + cp.firstError;
+    return '没能复制到回收站：' + cp.firstError;
   }
 
   /* ---- ② 写 meta ---- */
@@ -219,7 +222,7 @@ export function vaultDelete(save: SaveEntry, savesDir: string, days: number, now
   if (wrote !== '') {
     const rb: TreeStat = newTreeStat();
     removeTree(dir, 0, rb);
-    return '没能写下垃圾站的记录：' + wrote;
+    return '没能写下回收站的记录：' + wrote;
   }
 
   /* ---- ③ 删源 ---- */
@@ -234,11 +237,11 @@ export function vaultDelete(save: SaveEntry, savesDir: string, days: number, now
     }
   }
   if (rm.failed > 0) {
-    /* ⚠️ 这时**两边都有**（垃圾站 + 源里剩下的）。数据没丢，但要说出来 ——
+    /* ⚠️ 这时**两边都有**（回收站 + 源里剩下的）。数据没丢，但要说出来 ——
      * ⛔ 不能默默当成功：玩家的存档列表里可能还留着几个文件。 */
     hilog.error(DOMAIN, TAG, 'vault: source cleanup had %{public}d failure(s) (%{public}s)',
                 rm.failed, rm.firstError);
-    return '已经放进垃圾站了，但原来的文件有 ' + String(rm.failed) + ' 个没删掉：' + rm.firstError;
+    return '已经放进回收站了，但原来的文件有 ' + String(rm.failed) + ' 个没删掉：' + rm.firstError;
   }
 
   hilog.info(DOMAIN, TAG, 'vault: deleted %{public}s (%{public}d file(s)) -> %{public}s',
@@ -282,7 +285,7 @@ function writeText(path: string, body: string): string {
   }
 }
 
-/** 列出垃圾站里所有条目，新的在前。目录不在 ⇒ 空数组（不是错误）。 */
+/** 列出回收站里所有条目，新的在前。目录不在 ⇒ 空数组（不是错误）。 */
 export function listVault(): VaultEntry[] {
   const out: VaultEntry[] = [];
   for (const id of listFiles(VAULT_ROOT)) {
@@ -294,7 +297,7 @@ export function listVault(): VaultEntry[] {
     try {
       text = fs.readTextSync(dir + '/' + META_NAME);
     } catch (e) {
-      /* 没有 meta 的目录**不当成条目** —— 那是垃圾站弄坏了的残留，
+      /* 没有 meta 的目录**不当成条目** —— 那是回收站弄坏了的残留，
        * 列出来会让玩家以为里面还有东西，而「放回」根本不知道往哪放。 */
       hilog.warn(DOMAIN, TAG, 'vault: %{public}s has no meta, skipped', id);
       continue;
@@ -345,9 +348,23 @@ function isDirName(path: string): boolean {
 export function vaultRestore(entry: VaultEntry, fallbackDir: string): string {
   const dir: string = VAULT_ROOT + '/' + entry.id;
   /* meta 里记着它原来在哪个目录；那个目录已经不在了（比如整个版本被删了）就退到调用方给的
-   * 当前版本目录 —— 总比放不回去强，但要在界面里说出来。 */
+   * 当前版本目录 —— 总比放不回去强，但要在界面里说出来。
+   *
+   * ⛔⛔ **2026-10-04 补的一道判据：那个目录还得在【当前】数据根底下。**
+   *    存储位置可以切到外置，而**源从不删除** ⇒ 切根之后旧路径**依然存在**，
+   *    于是下面 `pathExists` 这一关照样通过、存档被放回**游戏已经不读的那个根**。
+   *    症状是「放回去了，但游戏里看不到」—— 不丢数据，而玩家会以为丢了。
+   * ⚠️ 判据是**前缀**而不是「相等」：`from` 指向的是 `…/Mindustry/saves`，
+   *    比根深好几层（隔离那一份更深）。 */
+  const root: string = currentGameDataRoot();
   let dst: string = entry.from;
-  if (!pathExists(dst)) {
+  const underCurrentRoot: boolean = dst.startsWith(root + '/');
+  if (!underCurrentRoot) {
+    hilog.info(0x0000, 'MindustryLauncher',
+               'vault: %{public}s was deleted from %{public}s, which is not under the current root %{public}s -- restoring to %{public}s instead',
+               entry.id, dst, root, fallbackDir);
+    dst = fallbackDir;
+  } else if (!pathExists(dst)) {
     dst = fallbackDir;
   }
   if (dst === '') {
@@ -386,8 +403,8 @@ export function vaultRestore(entry: VaultEntry, fallbackDir: string): string {
     return '没能放回：' + cp.firstError;
   }
 
-  /* 放回成功后**把条目本身删掉** —— 否则它会一直在垃圾站里，
-   * 直到到期再「删」一份已经不在那儿的数据（无害，但会让垃圾站里的数字骗人）。 */
+  /* 放回成功后**把条目本身删掉** —— 否则它会一直在回收站里，
+   * 直到到期再「删」一份已经不在那儿的数据（无害，但会让回收站里的数字骗人）。 */
   const rm: TreeStat = newTreeStat();
   removeTree(dir, 0, rm);
   hilog.info(DOMAIN, TAG, 'vault: restored %{public}s -> %{public}s (%{public}d file(s))',
@@ -411,6 +428,36 @@ export function vaultPurge(entryId: string): string {
   return '';
 }
 
+/* 永久删除：把这份存档的文件**直接抹掉**，不进回收站。
+ * ⭐ 2026-10-05 用户新增的**第三个去向**（原来是「回收」与「归档」两个）：界面上三者**并列在同一行**
+ *    —— `永久删除` / `回收` / `归档`，让它们能被放在一起比较。
+ * ⛔⛔ **它是唯一不可撤销的那个**：没有回滚可退，删掉就是删掉。
+ *    ⇒ 界面必须让玩家明确选它，⛔ 不能在任何「顺手删一下」的路径上用它。
+ * ⚠️ 与 `vaultDelete` 的另一处区别：那个是**搬走**（目标写成功才删源，失败能整个回滚），
+ *    这里是**直接删源**，所以只能**逐个报失败**，没有第二条路可退。
+ * ⚠️ 仍然**不挑文件**：`save.files` 原样全删（含 `-backup`）—— 与搬走时同一套清单，
+ *    否则「永久删除」和「回收」删掉的东西不是同一批。 */
+export function vaultPermanentDelete(save: SaveEntry, savesDir: string): string {
+  const acc: TreeStat = newTreeStat();
+  for (const n of save.files) {
+    const one: TreeStat = newTreeStat();
+    removeTree(savesDir + '/' + n, 0, one);
+    acc.files += one.files;
+    acc.failed += one.failed;
+    if (acc.firstError === '' && one.firstError !== '') {
+      acc.firstError = one.firstError;
+    }
+  }
+  if (acc.failed > 0) {
+    /* ⛔ 不能默默当成功：玩家的存档列表里可能还留着几个文件。 */
+    hilog.error(DOMAIN, TAG, 'vault: permanent delete had %{public}d failure(s) (%{public}s)',
+                acc.failed, acc.firstError);
+    return '有 ' + String(acc.failed) + ' 个文件没删掉：' + acc.firstError;
+  }
+  hilog.info(DOMAIN, TAG, 'vault: permanently deleted %{public}d file(s)', acc.files);
+  return '';
+}
+
 /* 归档 / 取消归档。⭐ 归档的含义（用户 2026-10-02 定）：**不自动清理**，只能手动删或放回
  * ⇒ 实现上就是把 `archived` 置 1、把 `expires` 写成 **0**。
  * ⚠️ 取消归档时**重新起算**保留期（而非恢复原到期时刻）—— 那个时刻可能早就过去了。
@@ -428,11 +475,22 @@ export function vaultSetArchived(entryId: string, archived: boolean, days: numbe
   }
   const label: string = metaOf(text, 'label');
   const from: string = metaOf(text, 'from');
+  /* ⛔⛔ **`owner` / `key` 必须原样带走。** 它们记的是「这个存档原来属于哪个版本」，
+   *    是用户 2026-10-02 专门要求加的信息，而 `vaultDelete` 写 meta 时是有这两行的。
+   * ⚠️ 2026-10-05 之前这里漏了它们（代码审查发现）：玩家对某个条目点一次「归档」或
+   *    「取消归档」，`listVault` 读回的 `owner`/`key` 就**永久变成空串且不可恢复** ——
+   *    UI 上那一行版本信息静默消失。
+   * ⭐ 一般化：meta 的「读-改-写」必须覆盖**全部**字段，漏一个就是静默丢一个。
+   *    ⛔ 这里与 `vaultDelete` 的字段顺序保持**逐字一致**，免得两份格式慢慢分叉。 */
+  const owner: string = metaOf(text, 'owner');
+  const key: string = metaOf(text, 'key');
   const deleted: string = String(numberOrZero(metaOf(text, 'deleted')));
   const count: string = String(numberOrZero(metaOf(text, 'count')));
   const expires: number = archived ? 0 : (nowMs + days * DAY_MS);
   const body: string = 'label=' + sanitizeValue(label) + '\n'
                      + 'from=' + sanitizeValue(from) + '\n'
+                     + 'owner=' + sanitizeValue(owner) + '\n'
+                     + 'key=' + sanitizeValue(key) + '\n'
                      + 'deleted=' + deleted + '\n'
                      + 'expires=' + String(expires) + '\n'
                      + 'archived=' + (archived ? '1' : '0') + '\n'
@@ -446,7 +504,7 @@ export function vaultSetArchived(entryId: string, archived: boolean, days: numbe
 }
 
 /* 清掉到期的条目。返回**清掉几个**。
- * ⚠️ 在哪里调：打开垃圾站时、以及每次 `refresh()`。⛔ 它不该在渲染路径上跑 —— 那会每帧都扫目录。
+ * ⚠️ 在哪里调：打开回收站时、以及每次 `refresh()`。⛔ 它不该在渲染路径上跑 —— 那会每帧都扫目录。
  * ⭐ 归档的（`archived=1`，或 `expires=0`）**永不**在这里被清掉。 */
 export function purgeExpired(nowMs: number): number {
   let n: number = 0;

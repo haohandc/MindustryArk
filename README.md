@@ -9,7 +9,7 @@
   <h1>Mindustry Ark (Ark Launcher)</h1>
   <p><strong>Mindustry 的 HarmonyOS 启动器</strong></p>
   <p>
-    <img src="https://img.shields.io/badge/HarmonyOS-7%20%2F%20API%2026-008577?style=flat-square" alt="HarmonyOS 7 / API 26">
+    <img src="https://img.shields.io/badge/HarmonyOS-6.1.1%20%2F%20API%2024-008577?style=flat-square" alt="HarmonyOS 6.1.1 / API 24">
     <img src="https://img.shields.io/github/v/release/haohandc/MindustryArk?style=flat-square&label=release" alt="最新版本">
     <img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="许可证">
     <img src="https://img.shields.io/github/stars/haohandc/MindustryArk?style=flat-square&label=stars" alt="GitHub stars">
@@ -26,68 +26,67 @@
 
 ## 项目简介
 
-在 HarmonyOS / OpenHarmony 上运行 **Mindustry**：内嵌一套 JDK，从 native 代码创建 JVM，
-再把一个真正的 SDL3 窗口交给游戏。
+在 HarmonyOS / OpenHarmony 上运行 **Mindustry**。
 
-**游戏本体是上游原版，未做任何修改。** 改造的是它下层的框架，编译后装进一份独立的补丁 jar，
-在游戏之前加载。
+**未对Mindustry游戏本体做任何修改。** 通过加载`jar`补丁到Mindustry的游戏运行框架Arc实现兼容.
 
-| 形态 | 分支 | 带游戏本体 |
-|---|---|---|
-| **Mindustry Ark** | `master` | ✅ 内置一份 Mindustry |
-| **Ark Launcher** | [`lite`](https://github.com/haohandc/MindustryArk/tree/lite) | ⛔ 玩家自备 `.jar` |
+| 形态                | 分支                                                           | 带游戏本体          |
+|-------------------|--------------------------------------------------------------|----------------|
+| **Mindustry Ark** | `master`                                                     | ✅ 内置 Mindustry |
+| **Ark Launcher**  | [`lite`](https://github.com/haohandc/MindustryArk/tree/lite) | ⛔ 玩家自备 `.jar`  |
 
-同一个启动器的两种分发形态，差别只在包里带不带游戏本体。Ark Launcher 装上后，
-把自备的 `.jar` 放进启动器显示的文件夹即可。
+Ark Launcher 只是去除了游戏本体。安装后，
+把自备的 `Mindustry.jar` 放进启动器显示的文件夹即可。`jar`文件名称可以随意更改。
 
 ## 仓库内容
 
-| 路径 | 用途 |
-|---|---|
-| [`entry/`](entry/) | 应用本体：ArkTS 界面、native（C）启动器、打包进来的运行时与游戏 |
-| [`AppScope/`](AppScope/) | 应用级配置与图标 |
-| [`scripts/`](scripts/) | 构建、打包与校验脚本 |
-| [`docs/`](docs/) | 常见问题 / 已知限制 / 构建 / 权限 / 目录导览 |
-| [`payload-src/`](payload-src/) | 构建输入的说明与清单 |
-| [`helper-src/`](helper-src/) | 启动器辅助 jar 的源码 |
-| [`tools/`](tools/) | 探针模组 |
-| [`release-notes/`](release-notes/) | 各版本的英文发布说明 |
-| [`assets/`](assets/) | 图标 |
-| [`RELEASE.md`](RELEASE.md) | 下载与安装 |
-| [`RELEASE-MAINTENANCE.md`](RELEASE-MAINTENANCE.md) | 维护者手册 |
-| [`THIRD-PARTY.md`](THIRD-PARTY.md) | 逐组件的许可义务 |
+| 路径                                                 | 用途                                     |
+|----------------------------------------------------|----------------------------------------|
+| [`entry/`](entry/)                                 | 应用本体：ArkTS 界面、native（C）启动器、打包进来的运行时与游戏 |
+| [`AppScope/`](AppScope/)                           | 应用级配置与图标                               |
+| [`scripts/`](scripts/)                             | 构建、打包与校验脚本                             |
+| [`docs/`](docs/)                                   | 常见问题 / 已知限制 / 构建 / 权限 / 目录导览           |
+| [`payload-src/`](payload-src/)                     | 构建输入的说明与清单                             |
+| [`helper-src/`](helper-src/)                       | 启动器辅助 jar 的源码                          |
+| [`tools/`](tools/)                                 | 探针模组                                   |
+| [`release-notes/`](release-notes/)                 | 各版本的英文发布说明                             |
+| [`assets/`](assets/)                               | 图标                                     |
+| [`RELEASE.md`](RELEASE.md)                         | 下载与安装                                  |
+| [`RELEASE-MAINTENANCE.md`](RELEASE-MAINTENANCE.md) | 维护者手册                                  |
+| [`THIRD-PARTY.md`](THIRD-PARTY.md)                 | 逐组件的许可义务                               |
 
 ## 功能
 
-| 项目 | 状态 |
-|---|---|
-| JVM 启动 | 可用 |
-| 图形 | OpenGL ES，经 SDL3 |
-| 音频 | OHAudio，经自编的 `libarcarm64.so` |
-| 触屏 | 可用，含双指捏合缩放 |
-| 键盘 | 物理键盘可用；游戏内输入走弹出式输入框 |
-| 鼠标 / 手柄 | 鼠标可用；手柄未测试 |
-| 存档导入导出 | 走「下载」里的应用文件夹往返 |
-| 模组 | 用游戏自带的「导入模组」按钮导入，不用重启 |
-| 桌面 / 移动模式切换 | 可切换，需要重启应用 |
-| 网络 / 联机 | 局域网与公网联机可用 |
+| 项目          | 状态                            |
+|-------------|-------------------------------|
+| JVM 启动      | 可用                            |
+| 图形          | OpenGL ES，经 SDL3              |
+| 音频          | OHAudio，经自编的 `libarcarm64.so` |
+| 触屏          | 可用，含双指捏合缩放                    |
+| 键盘          | 物理键盘可用；游戏内输入走弹出式输入框           |
+| 鼠标 / 手柄     | 鼠标可用；手柄未测试                    |
+| 存档导入导出      | 走「下载」里的应用文件夹往返                |
+| 模组          | 用游戏自带的「导入模组」按钮导入，不用重启         |
+| 桌面 / 移动模式切换 | 可切换，需要重启应用                    |
+| 网络 / 联机     | 局域网与公网联机可用                    |
 
-**设备要求**：鸿蒙 7 / API 26 及以上，平板与手机均可。
+**设备要求**：鸿蒙 6.1.1 / API 24 及以上，平板与手机均可。
 
 ## 启动器：多版本与存档管理
 
-启动器有独立界面（**首页 / 存档 / 设置**），与游戏无关，**不启动游戏也能用**。
+启动器拥有独立界面（**首页 / 存档 / 设置**）。
 
-| 能做什么 | 说明 |
-|---|---|
-| 选游戏版本 | 内置一份，也可把任意多个 jar 放进 `Download/Mindustry Ark/games/` 逐个选 |
-| **版本隔离** | 每个游戏版本各用一套游戏数据，四档粒度 |
-| **存档管理** | 列出所有版本的存档，看元数据，复制、移动、跨版本搬 |
-| 删除 = 垃圾站 | 删除是搬进垃圾站，保留 3 / 7 / 30 天或归档，随时可以放回 |
-| 启动模式 | 每次启动先进启动器，或直接进游戏 |
+| 功能            | 说明                                                                 |
+|---------------|--------------------------------------------------------------------|
+| 自选Mindustry版本 | 内置一份，可把任意多个 `Mindustry.jar` 放进 `Download/Mindustry Ark/games/`自选版本 |
+| **版本隔离**      | 每个游戏版本各用一套游戏数据，四档粒度                                                |
+| **存档管理**      | 列出所有版本的存档，看元数据，复制、移动、跨版本搬                                          |
+| 删除存档          | 可以选择回收（放进回收站）或直接永久删除，保留 3 / 7 / 30 天或归档。                           |
+| 启动模式          | 每次启动先进启动器，或直接进游戏                                                   |
 
 > [!NOTE]
-> 隔离由玩家主动打开，出厂为「不隔离」。
+> 版本隔离：默认「不隔离」
+> 启动模式：默认先进启动器
 
 ## 下载与安装
 
@@ -104,20 +103,16 @@
 | [小白调试助手](https://github.com/likuai2010/auto-installer/releases/latest) | 免费的跨平台鸿蒙调试工具，签名 + 安装一步到位 |
 | [HoKit](https://github.com/yabi-zzh/HoKit/releases/latest) | 一键重签名、设备投屏、性能监控、文件管理 |
 
-> ⚠️ 用它们**签名 / 安装**没问题，但**不要用它们打开应用的「游戏模式」** ——
-> 那会把应用锁在 60 帧，动画会顿。装好后用正常方式启动。
+> ![CAUTION]
+> 不要通过任何调试助手打开应用的「游戏模式」，这将导致应用锁60帧
 
-本项目也收录在 [Zitann/HarmonyOS-Haps](https://github.com/Zitann/HarmonyOS-Haps)（鸿蒙 Next HAP 安装包合集）中。
+**② 用 DevEco Studio 自己（编译）签名**
 
-**② 用 DevEco Studio 自己签名**
-
-用 DevEco Studio 打开本项目 → **File → Project Structure → Signing Configs →
-Automatically generate signature** → `bash deploy.sh`。
+用 DevEco Studio 打开本项目 → 项目结构 → 签名配置 →
+自动生成签名文件 → `bash deploy.sh`。
 
 > ⚠️ `bash deploy.sh` 会**先卸载再安装**（`hdc uninstall`）⇒ **应用数据会被清空**（存档、
 > 以及对下载目录的授权）。想更新而不丢数据，用 `hdc install -r <已签名的 hap>`。
-
-> 只想装、不想构建：把下载的 HAP 放进 `entry/build/default/outputs/default/`，再跑 `bash deploy.sh`。
 
 **应用商店（计划中）**：按地区与设备分为三种包。
 
@@ -126,13 +121,13 @@ Automatically generate signature** → `bash deploy.sh`。
 | 中国大陆 | **Ark Launcher 工具版** —— 管理工具，**不能运行游戏** | **Ark Launcher** |
 | 海外 | 同上 | **Mindustry Ark** |
 
-手机版不带游戏运行时，只能管理存档与模组；能运行游戏的包需要一条**仅覆盖平板与
-PC / 2in1** 的系统权限，装不到手机上。
+手机版不带游戏运行时，只有管理功能。原因：可执行匿名内存权限**只支持平板与
+PC / 2in1** 。
 
 ## 从源码构建
 
-工程根目录就是本仓库，用 DevEco Studio 打开即可。构建完整包需要先按
-[`payload-src/`](payload-src/) 凑齐构建输入 —— Releases 里的载荷包正是为此准备的。
+本仓库就是工程根目录，用 DevEco Studio 打开Git后的项目即可。构建完整包需要先按
+[`payload-src/`](payload-src/) 凑齐构建输入。
 
 工具链版本、步骤与常见错误见 [`docs/BUILDING.md`](docs/BUILDING.md)。
 
@@ -140,17 +135,16 @@ PC / 2in1** 的系统权限，装不到手机上。
 
 `docs/` 下的文件是双语的（中文段在前、英文段在后，同一个文件）。
 
-| 文档 | 什么时候看 |
-|---|---|
-| **[docs/FAQ.md](docs/FAQ.md)** | 有具体疑问 |
-| **[docs/LIMITATIONS.md](docs/LIMITATIONS.md)** | 报 bug 之前，先确认是不是已知行为 |
-| **[docs/BUILDING.md](docs/BUILDING.md)** | 要从源码构建 |
-| **[docs/PERMISSIONS.md](docs/PERMISSIONS.md)** | 想知道要什么权限 |
-| **[PRIVACY.md](PRIVACY.md)** | 想知道收集什么数据（什么都不收集）|
-| **[docs/LAYOUT.md](docs/LAYOUT.md)** | 刚克隆下来，不知道东西在哪 |
-| [RELEASE.md](RELEASE.md) | 要发下一个版本 |
-| [THIRD-PARTY.md](THIRD-PARTY.md) | 要审计许可证 |
-| [payload-src/README.md](payload-src/README.md) | 在凑构建的输入 |
+| 文档 | 说明             |
+|---|----------------|
+| **[docs/FAQ.md](docs/FAQ.md)** | 常见问题与回答        |
+| **[docs/LIMITATIONS.md](docs/LIMITATIONS.md)** | 已知错误，不要当作bug上报 |
+| **[docs/BUILDING.md](docs/BUILDING.md)** | 从源码构建的文档       |
+| **[docs/PERMISSIONS.md](docs/PERMISSIONS.md)** | 应用权限使用说明       |
+| **[PRIVACY.md](PRIVACY.md)** | 隐私政策（不收集任何信息）  |
+| **[docs/LAYOUT.md](docs/LAYOUT.md)** | 项目文件结构说明       |
+| [RELEASE.md](RELEASE.md) | 下载与安装说明        |
+| [THIRD-PARTY.md](THIRD-PARTY.md) | 许可证信息          |
 
 ## 代码与许可证
 
@@ -163,7 +157,7 @@ PC / 2in1** 的系统权限，装不到手机上。
 
 ## 致谢
 
-- [**Mindustry**](https://github.com/Anuken/Mindustry) —— Anuken 开发，游戏本体
+- [**Mindustry**](https://github.com/Anuken/Mindustry) —— Anuken 开发，游戏本体作者
 - [**Arc**](https://github.com/Anuken/Arc) —— Anuken 开发的游戏框架
 - [**SDL3**](https://github.com/libsdl-org/SDL) —— 窗口 / 输入 / 音频层
 - [**LWJGL**](https://github.com/LWJGL/lwjgl3) —— OpenGL 与 SDL 的 JNI 绑定

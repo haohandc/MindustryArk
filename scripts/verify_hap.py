@@ -387,9 +387,23 @@ def main():
         if "NEEDED" in l or "SONAME" in l:
             print("   %s" % l.strip())
     blob = open(real, "rb").read()
+    # 模块镜像的改名补丁：改后的格式串里是 jimg.so，改之前是 modules。
+    #
+    # 这里原来是两个只 print、不参与判定的布尔值 —— 也就是第 5 条检查
+    # （本文件开头 docstring 自己列的那一条）**恒真**。后果很具体：一个**没打过补丁**
+    # 的 libjvm_real.so（运行时找不到那个改名成 jimg.so 的模块镜像）只要还导出
+    # JNI_CreateJavaVM 且 .dynamic 完整，就会打出 RESULT: PASS。
+    #
+    # 这正是本项目反复记下的那一条：「每次都报 PASS 的检查等于没有检查」。
+    # 而它对着的是整个自建启动器最核心的那个补丁，所以这个洞比它看起来贵。
+    img_ok = (b"%s%slib%sjimg.so" in blob) and (b"%s%slib%smodules" not in blob)
     print("   '%s' present  : %s" % ("%s%slib%sjimg.so",
                                      b"%s%slib%sjimg.so" in blob))
     print("   old 'modules' gone : %s" % (b"%s%slib%smodules" not in blob))
+    # SONAME 的**值**也要是 libjvm.so（锚库靠它被找到）——
+    # 原来 dyn_ok 只要求存在 (SONAME) 这个 tag，不要求它的值，所以这一行也是只 print。
+    soname_ok = ("(SONAME)" in out_d) and ("libjvm.so" in out_d)
+    print("   dynamic: SONAME is libjvm.so      : %s" % soname_ok)
 
     # 动态表必须是完整的，而不只是能解析。一个只检查
     # "我改的字符串改了没" 的闸门曾经过关，而 23 个条目 --
@@ -398,10 +412,9 @@ def main():
     n_entries = out_d.count("(NEEDED)") + out_d.count("(SONAME)")
     for tag in ("(RELA)", "(JMPREL)", "(SYMTAB)", "(STRTAB)", "(GNU_HASH)", "(INIT)"):
         n_entries += out_d.count(tag)
-    print("   dynamic: SONAME=libjvm.so present : %s"
-          % ("libjvm.so" in out_d and "(SONAME)" in out_d))
     print("   dynamic: required tags found      : %d" % n_entries)
-    dyn_ok = ("(SONAME)" in out_d and "(RELA)" in out_d and "(JMPREL)" in out_d
+    # ⚠️ `soname_ok` 收进来（原来那行只是又一次 print 了同一个判断）。
+    dyn_ok = (soname_ok and "(RELA)" in out_d and "(JMPREL)" in out_d
               and "(SYMTAB)" in out_d and "(STRTAB)" in out_d
               and "(GNU_HASH)" in out_d)
     print()
@@ -669,7 +682,10 @@ def main():
                      "" if ok_h else got_h))
     print()
 
-    ok = (got and has_create and not bad and got_shim in WANT_SHIM and dyn_ok
+    # ⛔ `img_ok` 是必须的：模块镜像改名那个补丁**只有它**在把关。
+    #    在它进来之前，第 5 条检查只 print、不参与判定 ⇒ **恒真**
+    #    （一个没打补丁的 libjvm_real.so 照样 PASS）。
+    ok = (got and has_create and img_ok and not bad and got_shim in WANT_SHIM and dyn_ok
           and game_ok and patch_ok and lwjgl_ok and helper_ok and ok_ref[0])
     print("RESULT: %s" % ("PASS" if ok else "FAIL"))
     return 0 if ok else 1
