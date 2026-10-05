@@ -103,7 +103,7 @@ Ark Launcher 只是去除了游戏本体。安装后，
 | [小白调试助手](https://github.com/likuai2010/auto-installer/releases/latest) | 免费的跨平台鸿蒙调试工具，签名 + 安装一步到位 |
 | [HoKit](https://github.com/yabi-zzh/HoKit/releases/latest) | 一键重签名、设备投屏、性能监控、文件管理 |
 
-> ![CAUTION]
+> [!CAUTION]
 > 不要通过任何调试助手打开应用的「游戏模式」，这将导致应用锁60帧
 
 **② 用 DevEco Studio 自己（编译）签名**
@@ -116,10 +116,10 @@ Ark Launcher 只是去除了游戏本体。安装后，
 
 **应用商店（计划中）**：按地区与设备分为三种包。
 
-| 地区 | 手机 | 平板 / PC · 2in1 |
-|---|---|---|
-| 中国大陆 | **Ark Launcher 工具版** —— 管理工具，**不能运行游戏** | **Ark Launcher** |
-| 海外 | 同上 | **Mindustry Ark** |
+| 地区   | 手机                                      | 平板 / PC · 2in1    |
+|------|-----------------------------------------|-------------------|
+| 中国大陆 | **Ark Launcher 工具版** —— 管理工具，**不能运行游戏** | **Ark Launcher**  |
+| 海外   | 同上                                      | **Mindustry Ark** |
 
 手机版不带游戏运行时，只有管理功能。原因：可执行匿名内存权限**只支持平板与
 PC / 2in1** 。
@@ -135,16 +135,16 @@ PC / 2in1** 。
 
 `docs/` 下的文件是双语的（中文段在前、英文段在后，同一个文件）。
 
-| 文档 | 说明             |
-|---|----------------|
-| **[docs/FAQ.md](docs/FAQ.md)** | 常见问题与回答        |
+| 文档                                             | 说明             |
+|------------------------------------------------|----------------|
+| **[docs/FAQ.md](docs/FAQ.md)**                 | 常见问题与回答        |
 | **[docs/LIMITATIONS.md](docs/LIMITATIONS.md)** | 已知错误，不要当作bug上报 |
-| **[docs/BUILDING.md](docs/BUILDING.md)** | 从源码构建的文档       |
+| **[docs/BUILDING.md](docs/BUILDING.md)**       | 从源码构建的文档       |
 | **[docs/PERMISSIONS.md](docs/PERMISSIONS.md)** | 应用权限使用说明       |
-| **[PRIVACY.md](PRIVACY.md)** | 隐私政策（不收集任何信息）  |
-| **[docs/LAYOUT.md](docs/LAYOUT.md)** | 项目文件结构说明       |
-| [RELEASE.md](RELEASE.md) | 下载与安装说明        |
-| [THIRD-PARTY.md](THIRD-PARTY.md) | 许可证信息          |
+| **[PRIVACY.md](PRIVACY.md)**                   | 隐私政策（不收集任何信息）  |
+| **[docs/LAYOUT.md](docs/LAYOUT.md)**           | 项目文件结构说明       |
+| [RELEASE.md](RELEASE.md)                       | 下载与安装说明        |
+| [THIRD-PARTY.md](THIRD-PARTY.md)               | 许可证信息          |
 
 ## 代码与许可证
 
