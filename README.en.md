@@ -9,7 +9,7 @@
   <h1>Mindustry Ark (Ark Launcher)</h1>
   <p><strong>A Mindustry launcher for HarmonyOS</strong></p>
   <p>
-    <img src="https://img.shields.io/badge/HarmonyOS-7%20%2F%20API%2026-008577?style=flat-square" alt="HarmonyOS 7 / API 26">
+    <img src="https://img.shields.io/badge/HarmonyOS-6.1.1%20%2F%20API%2024-008577?style=flat-square" alt="HarmonyOS 6.1.1 / API 24">
     <img src="https://img.shields.io/github/v/release/haohandc/MindustryArk?style=flat-square&label=release" alt="Latest release">
     <img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="Licence">
     <img src="https://img.shields.io/github/stars/haohandc/MindustryArk?style=flat-square&label=stars" alt="GitHub stars">
