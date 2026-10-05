@@ -26,19 +26,18 @@
 
 ## About
 
-Runs **Mindustry** on HarmonyOS / OpenHarmony: the launcher embeds a JDK, creates a JVM
-from native code, and hands the game a real SDL3 window.
+Runs **Mindustry** on HarmonyOS / OpenHarmony.
 
-**The game is the upstream build, unmodified.** What is patched is the framework beneath it;
-the patch is compiled into a separate jar that is loaded before the game.
+**Nothing in Mindustry itself is modified.** The compatibility work targets **Arc**, the
+framework the game runs on: it is a jar patch loaded before the game.
 
 | Form | Branch | Ships the game |
 |---|---|---|
 | **Mindustry Ark** | `master` | Yes — a bundled Mindustry |
 | **Ark Launcher** | [`lite`](https://github.com/haohandc/MindustryArk/tree/lite) | No — you supply the `.jar` |
 
-Two distributions of the same launcher; the difference is only whether the game is in the
-package. With Ark Launcher, put your own `.jar` into the folder the launcher shows.
+Ark Launcher is the same thing with the game removed. After installing it, put your own
+`Mindustry.jar` into the folder the launcher shows. The file name does not matter.
 
 ## Repository contents
 
@@ -48,7 +47,7 @@ package. With Ark Launcher, put your own `.jar` into the folder the launcher sho
 | [`AppScope/`](AppScope/) | App-level configuration and icons |
 | [`scripts/`](scripts/) | Build, packaging and verification scripts |
 | [`docs/`](docs/) | FAQ / limitations / building / permissions / layout |
-| [`payload-src/`](payload-src/) | What the build inputs are, and a manifest |
+| [`payload-src/`](payload-src/) | Where the build inputs are described, and what they are |
 | [`helper-src/`](helper-src/) | Source for the launcher's helper jar |
 | [`tools/`](tools/) | A probe mod |
 | [`release-notes/`](release-notes/) | English release notes per version |
@@ -72,23 +71,23 @@ package. With Ark Launcher, put your own `.jar` into the folder the launcher sho
 | Desktop / mobile mode | Switchable; needs a restart |
 | Networking | LAN and internet multiplayer work |
 
-**Requires** HarmonyOS 7 / API 26 or newer. Tablet and phone both work.
+**Requires** HarmonyOS 6.1.1 / API 24 or newer. Tablet and phone both work.
 
 ## The launcher: versions and saves
 
-The launcher has its own screens (**Home / Saves / Settings**) and is independent of the game —
-**it works without ever launching the game**.
+It has its own screens (**Home / Saves / Settings**).
 
 | What you can do | How it works |
 |---|---|
-| Pick a game version | One is bundled, and any number of jars can be dropped into `Download/Mindustry Ark/games/` |
+| Pick your own Mindustry version | One is bundled, and any number of `Mindustry.jar` files can be dropped into `Download/Mindustry Ark/games/` |
 | **Version isolation** | Each game version gets its own set of game data, at one of four granularities |
 | **Save management** | Every version's saves in one list, with metadata, copied or moved across versions |
-| Delete means vault | Deleting moves a save into a vault: kept 3 / 7 / 30 days or archived, restorable at any time |
+| Delete a save | Choose the vault (kept 3 / 7 / 30 days, or archived) or delete it permanently |
 | Startup mode | Either the launcher first, or straight into the game |
 
 > [!NOTE]
-> Isolation is turned on by the player; it is off out of the box.
+> Version isolation: off by default
+> Startup mode: launcher first by default
 
 ## Download and install
 
@@ -106,12 +105,10 @@ build it from the [`lite`](https://github.com/haohandc/MindustryArk/tree/lite) b
 | [小白调试助手](https://github.com/likuai2010/auto-installer/releases/latest) | A free cross-platform HarmonyOS debug tool: signs and installs in one step |
 | [HoKit](https://github.com/yabi-zzh/HoKit/releases/latest) | Re-signing, screen mirroring, performance monitoring, file management |
 
-> ⚠️ Using them to **sign or install** is fine — but **do not use them to open the app's "game
-> mode"**: that pins the app to 60 fps and the interface will look choppy. Start it normally.
+> [!CAUTION]
+> Do not open the app's "game mode" through any of these tools: it pins the app to 60 fps.
 
-This project is also listed in [Zitann/HarmonyOS-Haps](https://github.com/Zitann/HarmonyOS-Haps).
-
-**② Sign it yourself in DevEco Studio**
+**② Sign it yourself in DevEco Studio (compile it yourself)**
 
 Open this project in DevEco Studio → **File → Project Structure → Signing Configs →
 Automatically generate signature** → `bash deploy.sh`.
@@ -120,9 +117,6 @@ Automatically generate signature** → `bash deploy.sh`.
 > is wiped** — saves, and the Downloads-folder authorisation. To update without losing data,
 > use `hdc install -r <the signed hap>`.
 
-> To install without building: drop the downloaded HAP into
-> `entry/build/default/outputs/default/` and run `bash deploy.sh`.
-
 **App stores (planned)**: three packages, by region and device.
 
 | Region | Phone | Tablet / PC · 2-in-1 |
@@ -130,15 +124,13 @@ Automatically generate signature** → `bash deploy.sh`.
 | Mainland China | **Ark Launcher, tool build** — a management tool; **cannot run the game** | **Ark Launcher** |
 | Elsewhere | same as above | **Mindustry Ark** |
 
-The phone build carries no game runtime, so it manages saves and mods only. A build that can
-run the game needs a system permission that **covers tablets and PC / 2-in-1 only**, and so
-cannot be installed on a phone.
+The phone build carries no game runtime, so it can only manage. The reason: the anonymous
+executable memory permission **covers tablets and PC / 2-in-1 only**.
 
 ## Building from source
 
-The repository root is the project — open it in DevEco Studio. Building a complete package
-needs the build inputs gathered first, as described in [`payload-src/`](payload-src/);
-the payload zip on the releases page exists for exactly that.
+The repository root is the project — open what you cloned in DevEco Studio. Building a complete
+package needs the build inputs gathered first, as described in [`payload-src/`](payload-src/).
 
 Toolchain versions, steps and common errors are in [`docs/BUILDING.md`](docs/BUILDING.md).
 
@@ -149,14 +141,13 @@ Files under `docs/` are bilingual — Chinese first, English after, in the same 
 | Document | When to read it |
 |---|---|
 | **[docs/FAQ.md](docs/FAQ.md)** | You have a specific question |
-| **[docs/LIMITATIONS.md](docs/LIMITATIONS.md)** | Before reporting a bug, to check it is not known behaviour |
+| **[docs/LIMITATIONS.md](docs/LIMITATIONS.md)** | Known defects — not to be reported as bugs |
 | **[docs/BUILDING.md](docs/BUILDING.md)** | You want to build from source |
 | **[docs/PERMISSIONS.md](docs/PERMISSIONS.md)** | You want to know what it asks for |
 | **[PRIVACY.md](PRIVACY.md)** | You want to know what it collects (nothing) |
-| **[docs/LAYOUT.md](docs/LAYOUT.md)** | You just cloned it and cannot find things |
-| [RELEASE.md](RELEASE.md) | You are cutting the next release |
+| **[docs/LAYOUT.md](docs/LAYOUT.md)** | You want the project's file layout explained |
+| [RELEASE.md](RELEASE.md) | Downloading and installing |
 | [THIRD-PARTY.md](THIRD-PARTY.md) | You are auditing licences |
-| [payload-src/README.md](payload-src/README.md) | You are gathering build inputs |
 
 ## Code and licence
 
