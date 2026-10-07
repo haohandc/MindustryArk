@@ -48,7 +48,7 @@ SDL 头用**仓库自带**的 `entry/src/main/cpp/SDL/include`（实测与原先
 
 | 缺的 | 为什么 |
 | --- | --- |
-| `libarcarm64_fixed.so`（490152 字节） | 它是**构建产物**，不是配方；而发运的那一份已经在载荷 `mindustry-1.0-audio.jar` 里。⚠️ 两者**不是同一个构建**（产物 490152 / sha1 `7deb18e1`，载荷里 498800 / `db9d78b1`），所以这个产物**不能当作发运物的对照** |
+| `libarcarm64_fixed.so`（490152 字节） | 它是**构建产物**，不是配方；而发运的那一份已经在载荷 `mindustry-1.0-audio.jar` 里。⚠️ 两者**不是同一个构建**（产物 490152 / sha1 `7deb18e1`，载荷里 498800 / `db9d78b1`），所以这个产物**不能当作发运物的对照**。⚠️ **它没有被删**，还在原处：`../MindustryArkDocs/mindustry-ohos/audio-build/libarcarm64_fixed.so`（本次只拷贝、未改动原件）。⇒ 它是目前那个构建**唯一留存的输出**，而 SoLoud 源码要另外下载 ⇒ 在配方跑通之前，**别把那份原件清掉** |
 | SoLoud 源码 | 上游项目，公开可下载（见上表）。源码目录 `soloud-src/` 与工作树 `soloudbuild/` 由 `build.sh` 与 `ARK_SOLOUD_SRC` 决定 |
 
 ## ⚠️ 移入仓库时改动了什么（**未实测**）
@@ -100,6 +100,11 @@ the script used before.
 `libarcarm64_fixed.so` is a build output, not part of the recipe, and the shipped one is already
 inside the payload jar. Note the two are **different builds** (490152 / sha1 `7deb18e1` versus
 498800 / `db9d78b1`), so the output here is **not** a reference for what ships.
+
+It was **not deleted** -- it is still where it always was, at
+`../MindustryArkDocs/mindustry-ohos/audio-build/libarcarm64_fixed.so` (this move copied; it did
+not touch the original). That makes it the only surviving output of that build, and the SoLoud
+sources have to be downloaded again -- so **do not clear that copy away** until the recipe runs.
 
 ## What changed on the way in -- and what was not verified
 

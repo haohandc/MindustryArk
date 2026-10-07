@@ -5,9 +5,19 @@
 #   2. include the jni/ dir (the NDK has no jni.h, so we carry our own)
 #   3. link dl (we dlopen libjvm.so out of the bundled JDK)
 #
-# Two hard requirements from docs/README-harmonyos.md:
-#   - the artifact MUST be a shared library named libmain.so (not an executable)
-#   - SDL's source tree must be compiled into the project (add_subdirectory("SDL"))
+# Two hard requirements, both enforced by the platform rather than by the compiler,
+# and neither one reports an error when you get it wrong:
+#   - the artifact MUST be a shared library named libmain.so (not an executable).
+#     SDL's openharmony shim carries that name as a string literal and dlopens it
+#     when the XComponent is created; nothing else is ever loaded. See
+#     SDL/src/main/openharmony/SDL_sysmain_runapp.c and docs/paper.md 3.3.
+#   - SDL's source tree must be compiled into this project: see the
+#     add_subdirectory("SDL") at the bottom of this file.
+#
+# ⚠️ 2026-10-07: this header used to read "from docs/README-harmonyos.md". That path
+# has never existed in this repository -- it appears in no commit, in any branch --
+# so the citation pointed nowhere and could not be recovered from history. The two
+# requirements above are the ones it described; they live here and in paper.md now.
 
 cmake_minimum_required(VERSION 3.5.0)
 project(mindustry_launcher)
