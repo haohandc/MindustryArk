@@ -102,9 +102,10 @@ def ship(check):
     if actual != SRC_SHA1:
         print("FAIL this is NOT the pinned artifact.")
         print("     expected %s" % SRC_SHA1)
-        print("     Rebuild it through build_variants.py rather than using it as is.")
+        print("     This slot takes the upstream release byte-for-byte. Re-download it")
+        print("     rather than building or patching a jar into it -- see the note on SRC.")
         return 1
-    print("       -> matches the pinned variant")
+    print("       -> matches the pinned upstream release")
 
     if check:
         if os.path.isfile(DEST):

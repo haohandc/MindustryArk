@@ -18,8 +18,8 @@
 
 ### 一、把输入放进 `payload-src/`
 
-`payload-src/README.md` 列了清单 —— 三个 jar、两个 LWJGL 原生库、JDK 里的两个文件 ——
-并写明每一个从哪来。那里面的东西**都不进 git**。
+`payload-src/README.md` 列了清单 —— 上游游戏 jar、三个 LWJGL jar、两个 LWJGL 原生库、
+JDK 里的两个文件，共 8 个 —— 并写明每一个从哪来。那里面的东西**都不进 git**。
 
 工具链用到的**每一个路径都在 `scripts/config.py` 里**，可以用 `ARK_*` 环境变量覆盖，
 所以换一台机器不需要改任何脚本。查看它解析成什么：
@@ -270,8 +270,9 @@ project will build, because the HAP embeds all of the payload.
 
 ### 1. Put the inputs in `payload-src/`
 
-`payload-src/README.md` lists them — three jars, two LWJGL natives and two files
-out of the JDK — with where each comes from. Nothing there is committed.
+`payload-src/README.md` lists them — the upstream game jar, three LWJGL jars, two LWJGL
+natives and two files out of the JDK, eight in all — with where each comes from. Nothing
+there is committed.
 
 Every path the toolchain uses is in **`scripts/config.py`**, overridable from the
 environment with `ARK_*` variables, so a different machine does not have to edit
