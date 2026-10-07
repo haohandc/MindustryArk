@@ -48,7 +48,7 @@
 | `Mindustry-160.4.jar` | 已被 160.5 取代。**实测没有任何脚本引用它** |
 | `Mindustry-160.5.jar` | 与 `Mindustry.jar` **逐字节相同**（sha256 一致）⇒ 纯冗余 |
 
-## 四、⭐ `libarcarm64.so` —— 配方**在**，但在仓库外
+## 四、⭐ `libarcarm64.so` —— 配方已收进仓库
 
 这份 `.so` 是**我们自编的 Arc 原生库**：官方那份走 miniaudio，在鸿蒙上没有可用的音频后端，
 所以我们用 SDL3 后端重编了一版。
@@ -56,26 +56,26 @@
 - ✅ **要发运的二进制**：包在 `mindustry-1.0-audio.jar` 里（498800 字节，
   sha1 `db9d78b196beaa237a153b622b781e06be973462` —— 钉子写在 `scripts/prep_arc.py` 的 `NATIVES`）。
   `prep_arc.py` 从这份 jar 里把它解出来。⇒ **你不需要自己编译它**，但二进制得你在。
-- ⭐ **配方完整保存在仓库外**：`MindustryArkDocs/mindustry-ohos/audio-build/`（23 个文件）——
+- ⭐ **配方在 `tools/audio-build/`**（19 个配方文件 + 它自己的 `README.md`）——
   `build.sh`（一键重建：生成 JNI → 编译 41 个目标 → 链接 → 自检）、
   `soloud_sdl3.cpp`（自写的 SDL3 后端）、`patch_soloud.py`（给 SoLoud 打 4 处补丁，幂等）、
   `gen_jni.py` / `gen_all_jni.py` / `jni/*.cpp`（4 个类的 83 个绑定）、
   `fix_needed.py`（把 `DT_NEEDED` 从 `libSDL3.so.0` 改写成 `libSDL3.so`，等长替换）、
   `repack.py` / `verify_so.py` / `check_undef.py` / `verify_from_jar.py`、
   `ArcJniTest.java` + `build_test.sh`（24 项本地真 JVM 功能测试）。
-  说明文档：`MindustryArkDocs/mindustry-ohos/README-音频修复说明.md`（22 KB）。
-- ⛔ **重建还缺一样，而它是公开的**：SoLoud 上游源码。`build.sh` 从 `%TEMP%/soloud-src` 读它，
-  而该目录 2026-10-07 实测**已空（0 个文件）**。取法写在上面那份 README 的「来源申报」里：
-  `Anuken/soloud` 的 tag **`2026.09.04`**（与 Arc 的 `build.gradle` 里 `versions.soloud` 一致）。
-  `%TEMP%/soloudbuild` 工作树同样已空，但它由 `build.sh` 自己重建。
+  ⚠️ 2026-10-07 从仓库外的 `MindustryArkDocs/mindustry-ohos/audio-build/` 移入，
+  移入时把 ~35 处带用户名的绝对路径换成了环境变量 + 推导（理由见那个目录的 README）。
+- ⛔ **重建还缺一样，而它是公开的**：SoLoud 上游源码。`build.sh` 默认从 `%TEMP%/soloud-src` 读它，
+  而该目录 2026-10-07 实测**已空（0 个文件）**。取法：`Anuken/soloud` 的 tag
+  **`2026.09.04`**（与 Arc 的 `build.gradle` 里 `versions.soloud` 一致），
+  可用 `ARK_SOLOUD_SRC` 指过去。`%TEMP%/soloudbuild` 工作树同样已空，但它由 `build.sh` 自己重建。
 - ✅ **其余依赖都还在**：SDL 官方的 include 目录（本机上有 98 个文件，`build.sh` 里指向它）、
   `MindustryArkDocs/sdl3-ohos/libSDL3.so`（链接期解析 `SDL_*` 用，1.8 MB）、OHOS NDK。
-- ⚠️ **别把 `audio-build/libarcarm64_fixed.so` 当成「发运的那一份」**：它是 490152 字节 /
-  sha1 `7deb18e1249c63ad636ba44a3853acb935d3f3c2`，与 jar 里那份（498800 / `db9d78b1…`）
-  **不是同一个构建**（README 里描述的是 490152 那一版）。
-- ⇒ **结论**：`mindustry-1.0-audio.jar` 仍是**你必须提供的输入**；
-  但**配方没有丢，它只是不在仓库里**。要真正做到「从仓库可重建」，
-  那件事是**把 `audio-build/` 搬进仓库** —— 一件独立的工作。
+  另外 `ARK_ARC_SRC`（Arc 检出）是 `gen_all_jni.py` 的必需输入，**故意没有默认值**。
+- ⚠️ **那个 490152 字节的产物没有进仓库**：它是构建产物，不是配方；而它与 jar 里发运的那份
+  （498800 / `db9d78b1…`）**不是同一个构建**，所以它也不能当作发运物的对照。
+- ⇒ **结论**：`mindustry-1.0-audio.jar` 仍是**你必须提供的输入**（你不需要编译它，但得有）；
+  **配方已可从仓库取得**。真正还挡在「完全从仓库重建」前面的，只剩**公开可下载的 SoLoud 源码**。
 
 ## 五、缺件会怎样
 
@@ -127,7 +127,7 @@ They live here for historical reasons; they are pipeline outputs.
 `Mindustry-160.4.jar` (superseded, referenced by nothing) and `Mindustry-160.5.jar`
 (byte-identical to `Mindustry.jar`).
 
-## 4. `libarcarm64.so` -- the recipe exists, outside the repository
+## 4. `libarcarm64.so` -- the recipe is in the repository now
 
 Our own Arc native library: upstream's uses miniaudio, which has no usable audio backend on
 HarmonyOS, so this one was rebuilt against SDL3.
@@ -135,28 +135,30 @@ HarmonyOS, so this one was rebuilt against SDL3.
 - **The shipped binary** is inside `mindustry-1.0-audio.jar` (498800 bytes, sha1
   `db9d78b196beaa237a153b622b781e06be973462`, pinned in `scripts/prep_arc.py`), which
   `prep_arc.py` unpacks. You do not have to compile it -- but you do have to have it.
-- **The recipe is preserved**, outside the repository, at
-  `MindustryArkDocs/mindustry-ohos/audio-build/` (23 files): `build.sh` (one-click rebuild),
-  `soloud_sdl3.cpp` (the SDL3 backend), `patch_soloud.py` (four idempotent patches to SoLoud),
-  `gen_jni.py` / `gen_all_jni.py` / `jni/*.cpp` (83 bindings across four classes),
-  `fix_needed.py` (rewrites `DT_NEEDED` from `libSDL3.so.0` to `libSDL3.so`),
+- **The recipe lives at `tools/audio-build/`** (19 files plus its own `README.md`): `build.sh`
+  (one-click rebuild), `soloud_sdl3.cpp` (the SDL3 backend), `patch_soloud.py` (four idempotent
+  patches to SoLoud), `gen_jni.py` / `gen_all_jni.py` / `jni/*.cpp` (83 bindings across four
+  classes), `fix_needed.py` (rewrites `DT_NEEDED` from `libSDL3.so.0` to `libSDL3.so`),
   `repack.py` / `verify_so.py` / `check_undef.py` / `verify_from_jar.py`, and
   `ArcJniTest.java` + `build_test.sh` (24 on-host tests against a real JVM).
-  The write-up is `MindustryArkDocs/mindustry-ohos/README-音频修复说明.md` (22 KB).
+  It was moved in on 2026-10-07 from `MindustryArkDocs/mindustry-ohos/audio-build/`, and about
+  35 username-bearing absolute paths were replaced with environment variables and derived
+  defaults on the way (see that directory's README).
 - **One input is still missing, and it is public**: the upstream SoLoud sources. `build.sh`
-  reads them from `%TEMP%/soloud-src`, which measured **empty (0 files)** on 2026-10-07.
-  Where to get them is recorded in that README's source declaration: tag **`2026.09.04`** of
-  `Anuken/soloud`, matching `versions.soloud` in Arc's `build.gradle`. The `%TEMP%/soloudbuild`
-  work tree is empty too, but `build.sh` recreates it.
-- **Everything else is still present**: SDL's own include directory (98 files on this
-  machine; `build.sh` points at it), `MindustryArkDocs/sdl3-ohos/libSDL3.so` (1.8 MB, used at
-  link time to resolve `SDL_*`), and the OHOS NDK.
-- **Do not treat `audio-build/libarcarm64_fixed.so` as "the shipped one"**: it is 490152 bytes,
-  sha1 `7deb18e1249c63ad636ba44a3853acb935d3f3c2` -- a different build from the jar's copy
-  (498800 / `db9d78b1...`). The README describes the 490152 one.
-- Conclusion: `mindustry-1.0-audio.jar` is still **an input you must provide**, but the recipe
-  is **not lost -- it is only outside the repository**. Making this genuinely reproducible from
-  the repository means **moving `audio-build/` in**, which is a separate job.
+  reads them from `%TEMP%/soloud-src`, which measured **empty (0 files)** on 2026-10-07. Get tag
+  **`2026.09.04`** of `Anuken/soloud` (matching `versions.soloud` in Arc's `build.gradle`) and
+  point `ARK_SOLOUD_SRC` at it. The `%TEMP%/soloudbuild` work tree is empty too, but `build.sh`
+  recreates it.
+- **Everything else is still present**: SDL's own include directory (98 files on this machine;
+  `build.sh` points at it), `MindustryArkDocs/sdl3-ohos/libSDL3.so` (1.8 MB, used at link time to
+  resolve `SDL_*`), and the OHOS NDK. `ARK_ARC_SRC` (an Arc checkout) is a required input for
+  `gen_all_jni.py` and deliberately has **no default**.
+- **The 490152-byte build output did not come along**: it is an artifact, not part of the recipe,
+  and it is a **different build** from the jar's copy (498800 / `db9d78b1...`) -- so it is not a
+  reference for what ships either.
+- Conclusion: `mindustry-1.0-audio.jar` is still **an input you must provide** (you need not
+  compile it, but you must have it). The recipe is now obtainable from the repository; the only
+  remaining obstacle to a full from-repo rebuild is the publicly downloadable SoLoud sources.
 
 ## 5. When something is missing
 

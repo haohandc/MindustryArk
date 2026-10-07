@@ -150,7 +150,8 @@ def build(out_name, so_path, official_syms):
             print("        %s" % n)
         print()
         print("  中止：拒绝用它派生 jar（否则设备上会没声音，而且看不出原因）")
-        print("  修法：进 soloudbuild/ 清掉 obj/ 重跑 build.sh -> llvm-strip -> fix_needed.py")
+        print("  修法：进 soloudbuild/ 清掉 obj/ 重跑 tools/audio-build/build.sh"
+              " -> llvm-strip -> tools/audio-build/fix_needed.py")
         return {"name": out_name, "sha1": "-", "size": 0,
                 "fails": ["%s 未被调用: %s" % (out_name, calls_bad)]}
     for n in calls_ok:

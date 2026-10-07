@@ -40,11 +40,13 @@ set(NATIVEAPP_ROOT_PATH ${CMAKE_CURRENT_SOURCE_DIR})
 # which together are 382 of those 395. It does not cover the other two, and they
 # are not oversights:
 #
-#   libarcarm64.so     the command that compiles it is not in this repository.
-#                      The .so is an intermediate built by hand in a temp tree
-#                      (see scripts/build_variants.py, which consumes it through
-#                      the AUDIO_SO override). Fixing it means first putting that
-#                      build into the repository, which is a separate job.
+#   libarcarm64.so     the recipe IS in the repository as of 2026-10-07
+#                      (tools/audio-build/ -- build.sh, the SDL3 backend, the
+#                      JNI generators and the verification scripts). What is
+#                      still external is the upstream SoLoud source tree it
+#                      compiles against (Anuken/soloud, tag 2026.09.04). The .so
+#                      itself is an intermediate consumed by
+#                      scripts/build_variants.py through the AUDIO_SO override.
 #   libcxxabi_shim.so  built in a different project (sdl-template), and shipped
 #                      byte-for-byte on purpose -- verify_hap.py checks its SHA-1
 #                      against the original. Rewriting it to drop a path string
