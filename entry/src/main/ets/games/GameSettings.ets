@@ -308,52 +308,78 @@ export function setIntSetting(rows: GameSetting[], key: string, value: number): 
   return true;
 }
 
-/* ====================================================================
- * 落盘
- * ==================================================================== */
 
-/** 把整份设置写回。返回 `''` 成功，否则一句给日志用的话。
- * ⛔⛔ **三道闸门**（这是**玩家的游戏数据**）：① 写之前把序列化结果重新解析、逐条比对；
- *    ② 写临时文件再 `rename` 覆盖（原子，不留半个文件）；③ 写完读回来再验那个键的值。
- * ⚠️ 游戏的 `settings_backups/` 归它自己管，这里**不碰**；可恢复性就靠 ②③。 */
-export function writeGameSettings(path: string, rows: GameSetting[]): string {
-  const bytes: Uint8Array = serializeGameSettings(rows);
-  const check: GameSetting[] | null = parseGameSettings(bytes);
-  if (check === null || check.length !== rows.length) {
-    return '写回前的自检没过（序列化出来的东西读不回来）—— 没有动文件';
+/**
+ * 写入游戏设置文件（原子替换写入，含自检与回读校验）。
+ * 实际写入Mindustry中直接生效的`Mindustry/settings.bin`文件，
+ * 目录`settings_backups/`，`Mindustry/settings_backup.bin`与该函数无关。
+ * **两处的文件用于兜底，防止设置出现错误，启动器无需处理。**
+ * @param targetPath 目标文件路径
+ * @param settings   要写入的设置条目列表
+ * @returns 成功返回空字符串，失败返回错误描述
+ */
+export function writeGameSettings(targetPath: string, settings: GameSetting[]): string {
+  // 1. 序列化-解析自检：保证可逆
+  const rawBytes: Uint8Array = serializeGameSettings(settings);
+  const parsedRows: GameSetting[] | null = parseGameSettings(rawBytes);
+  if (!parsedRows || parsedRows.length !== settings.length) {
+    return '自检失败：序列化-解析不可逆（文件未修改）';
   }
-  for (let i = 0; i < rows.length; i++) {
-    if (check[i].key !== rows[i].key || check[i].type !== rows[i].type) {
-      return '写回前的自检没过（第 ' + String(i + 1) + ' 条对不上）—— 没有动文件';
+  for (let i = 0; i < settings.length; i++) {
+    if (parsedRows[i].key !== settings[i].key || parsedRows[i].type !== settings[i].type) {
+      return `自检失败：第 ${i + 1} 条数据不一致（文件未修改）`;
     }
   }
 
-  const tmp: string = path + '.launchertmp';
+  // 2. 写入临时文件
+  const tempSuffix: string = '.launchertmp';
+  const tempPath: string = targetPath + tempSuffix;
   try {
-    const f: fs.File = fs.openSync(tmp,
+    const tempFile = fs.openSync(tempPath,
       fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
     try {
-      fs.writeSync(f.fd, bytes.buffer as ArrayBuffer);
+      fs.writeSync(tempFile.fd, rawBytes.buffer as ArrayBuffer);
     } finally {
-      fs.closeSync(f);
+      fs.closeSync(tempFile);
     }
-  } catch (e) {
-    const err = e as BusinessError;
-    return '写临时文件失败：' + err.message;
+  } catch (error) {
+    return `写入临时文件失败：${(error as BusinessError).message}`;
   }
+
+  // 3. 原子替换（重命名）
   try {
-    fs.renameSync(tmp, path);
-  } catch (e) {
-    const err = e as BusinessError;
-    /* ⚠️ 收尾清掉临时文件，别在游戏目录里留垃圾 —— 那个目录是给游戏看的。 */
-    try {
-      fs.unlinkSync(tmp);
-    } catch (e2) {
-      /* 收不掉也只能算了；下面那句已经把病因说清楚了。 */
-    }
-    return '替换失败：' + err.message;
+    fs.renameSync(tempPath, targetPath);
+  } catch (error) {
+    // 清理残留的临时文件，避免污染游戏目录
+    try { fs.unlinkSync(tempPath); } catch { /* 清除失败可忽略 */ }
+    return `替换文件失败：${(error as BusinessError).message}`;
   }
-  return '';
+
+  // 4. 回读校验
+  try {
+    const expectedLength: number = rawBytes.length;
+    const readBuffer = new ArrayBuffer(expectedLength);
+    const readHandle = fs.openSync(targetPath, fs.OpenMode.READ_ONLY);
+    let actualReadLength: number;
+    try {
+      actualReadLength = fs.readSync(readHandle.fd, readBuffer);
+    } finally {
+      fs.closeSync(readHandle);
+    }
+    if (actualReadLength !== expectedLength) {
+      return `回读长度不符：期望 ${expectedLength}，实际 ${actualReadLength}`;
+    }
+    const readData = new Uint8Array(readBuffer, 0, actualReadLength);
+    for (let i = 0; i < expectedLength; i++) {
+      if (readData[i] !== rawBytes[i]) {
+        return `回读字节验证失败，位置 ${i}`;
+      }
+    }
+  } catch (error) {
+    return `回读校验异常：${(error as BusinessError).message}`;
+  }
+
+  return ''; // 成功
 }
 
 /** 读并解析一个 `settings.bin`；打不开/解析不了 ⇒ `null`。 */
