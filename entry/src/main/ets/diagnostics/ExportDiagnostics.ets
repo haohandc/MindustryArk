@@ -1,11 +1,9 @@
 /* 把崩溃报告从沙箱里弄出来，送到玩家能把它发出去的地方。
- *
  * native 侧（launcher.c 的 on_fatal_signal()）已经写好转储；缺的是把它弄【出】设备的方法 ——
  * 发布签名安装下 hdc / pidof / 故障日志器都读不了沙箱（全实测过）。
  * 两步，两个时钟方向相反：第 1 步 stashIfAny() 尽量早 —— launcher.c 每次进 main() 都 unlink
- * crash.txt，而 ArkTS onCreate 在 native main() **之前**跑，所以那是「上次崩溃仍在磁盘上」的
- * 唯一窗口；第 2 步 publish() 尽量晚，在页面确认 Download 文件夹可用之后。
- * 幂等：发布文件按**崩溃**命名，同名已存在就放着不动 ⇒ 每次启动都崩也只产出一份。
+ * crash.txt，而 ArkTS onCreate 在 native main() **之前**跑，那是「上次崩溃仍在磁盘上」的唯一窗口；
+ * 第 2 步 publish() 尽量晚。幂等：发布文件按**崩溃**命名，同名已存在就放着不动 ⇒ 每次启动都崩也只产出一份。
  * ⚠️ 暂存放 ctx.filesDir（HAP 级，始终可写）；它【不是】/data/storage/el2/base/files。
  */
 import { bundleManager } from '@kit.AbilityKit';

@@ -50,12 +50,9 @@ function isBackup(n: string): boolean {
   return n.includes('-backup');
 }
 
-/* ⛔⛔ 这里错过了两次。实测文件名有 `0.msav` / `0.msav-backup.msav`（⭐ 原名自带 `.msav`）⇒ ⭐ **`-backup.msav`
- * 必须当整体先剥，再剥 `.msav`。**
- * ⚠️ 错法一（先剥 `.msav` 再剥 `-backup`）⇒ 与本体裂成两组；错法二（原串 `rfind('-')` 取星球）⇒ 星球变成
- * `serpulo-101.msav`，每样东西出现两次。⭐ 两次都是用脚本在**真实文件列表**上跑一遍才发现的。 */
-/* 导出它是因为**转移**（SaveTransfer）要按基名改名复制。⛔ 别在那边再写一份 ——
- * 那两次搞错的就是这个函数（见上面那段记录）。 */
+/* ⛔ 实测文件名有 `0.msav-backup.msav`（原名自带 `.msav`）⇒ `-backup.msav` 必须**整体先剥**再剥 `.msav`；
+ * 先剥 `.msav` 会让备份与本体裂成两组（错过两次，用脚本在真实文件列表上才跑出来）。
+ * ⭐ 导出是给**转移**（SaveTransfer）按基名改名复制用 —— ⛔ 别在那边再写一份。 */
 export function saveBaseName(n: string): string {
   return baseName(n);
 }

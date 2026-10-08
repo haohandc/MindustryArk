@@ -163,18 +163,9 @@ export function vaultDelete(save: SaveEntry, savesDir: string, days: number, now
   if (save.files.length === 0) {
     return '这个存档里没有文件。';
   }
-  /* ⭐ 撞名**不拒绝，加序号**。
-   *
-   * ⛔ 这里原来对已存在的目录直接返回「请稍后再试」—— 但那条路在多选删除里是**必然**触发的：
-   *    `deleteMultiToVault()` 在循环【外】只取一次 `Date.now()`（LauncherHome.ets:1669），
-   *    所以同一批里每个条目共用同一个毫秒戳；两个**同名**存档拼出同一个 id，第二个就被拒。
-   *    而「同名」在本应用里是常态（每个版本下都有 `0.msav` / `1.msav` …）
-   *    ⇒ 跨版本多选删除必中，用户 2026-10-03 报的正是它。
-   * ⚠️ 顺带解掉另一个较少见的撞法：`slug()` 把标签截到 40 字符（见它自己的注释），
-   *    两个前 40 字符相同的长标签也会撞 —— 加序号同样管用。
-   * ⭐ 原来那条注释的**意图**（绝不覆盖别人的条目）照旧成立：始终新建兄弟目录，只是名字多个序号。
-   * ⚠️ id 只被本文件解析 —— UI 那边明确不解析它（LauncherHome.ets:1720 的注释写明了），
-   *    所以改拼法是安全的。 */
+  /* ⭐ 撞名不拒绝、加序号：多选删除在循环外只取一次 `Date.now()`（LauncherHome.ets:1669），
+   * 同批同名存档拼出同一个 id，原来直接拒绝 ⇒ 必然撞（用户 2026-10-03 报的）；
+   * `slug()` 截到 40 字符也让长标签可能撞。id 只被本文件解析，UI 不解析它。 */
   const stem: string = String(nowMs) + '-' + slug(save.label);
   let id: string = stem;
   let dir: string = VAULT_ROOT + '/' + id;
@@ -347,15 +338,9 @@ function isDirName(path: string): boolean {
  * 而跳过那个文件则会得到一个**半个存档**。⇒ 拒绝并把**撞上的文件名**报出来，让玩家自己决定。 */
 export function vaultRestore(entry: VaultEntry, fallbackDir: string): string {
   const dir: string = VAULT_ROOT + '/' + entry.id;
-  /* meta 里记着它原来在哪个目录；那个目录已经不在了（比如整个版本被删了）就退到调用方给的
-   * 当前版本目录 —— 总比放不回去强，但要在界面里说出来。
-   *
-   * ⛔⛔ **2026-10-04 补的一道判据：那个目录还得在【当前】数据根底下。**
-   *    存储位置可以切到外置，而**源从不删除** ⇒ 切根之后旧路径**依然存在**，
-   *    于是下面 `pathExists` 这一关照样通过、存档被放回**游戏已经不读的那个根**。
-   *    症状是「放回去了，但游戏里看不到」—— 不丢数据，而玩家会以为丢了。
-   * ⚠️ 判据是**前缀**而不是「相等」：`from` 指向的是 `…/Mindustry/saves`，
-   *    比根深好几层（隔离那一份更深）。 */
+  /* meta 记的原目录若不在【当前】数据根底下就退到 fallback：切根后源从不删除、旧路径仍在，
+   * `pathExists` 照样通过，会放回游戏已不读的那个根（症状「放回去了但看不见」）。
+   * ⚠️ 判据用**前缀**不是相等 —— `from` 比根深好几层。 */
   const root: string = currentGameDataRoot();
   let dst: string = entry.from;
   const underCurrentRoot: boolean = dst.startsWith(root + '/');
@@ -428,15 +413,10 @@ export function vaultPurge(entryId: string): string {
   return '';
 }
 
-/* 永久删除：把这份存档的文件**直接抹掉**，不进回收站。
- * ⭐ 2026-10-05 用户新增的**第三个去向**（原来是「回收」与「归档」两个）：界面上三者**并列在同一行**
- *    —— `永久删除` / `回收` / `归档`，让它们能被放在一起比较。
- * ⛔⛔ **它是唯一不可撤销的那个**：没有回滚可退，删掉就是删掉。
- *    ⇒ 界面必须让玩家明确选它，⛔ 不能在任何「顺手删一下」的路径上用它。
- * ⚠️ 与 `vaultDelete` 的另一处区别：那个是**搬走**（目标写成功才删源，失败能整个回滚），
- *    这里是**直接删源**，所以只能**逐个报失败**，没有第二条路可退。
- * ⚠️ 仍然**不挑文件**：`save.files` 原样全删（含 `-backup`）—— 与搬走时同一套清单，
- *    否则「永久删除」和「回收」删掉的东西不是同一批。 */
+/* 永久删除：直接抹掉文件，不进回收站 —— 与「回收」「归档」并列的第三个去向。
+ * ⛔⛔ **唯一不可撤销的一个** —— 界面必须让玩家明确选它，不能挂在任何「顺手删一下」的路径上。
+ * ⚠️ 与 `vaultDelete` 不同：那个先写目标成功才删源、能整体回滚，这里直接删源 ⇒ 只能逐个报失败。
+ * ⚠️ 不挑文件：`save.files` 原样全删（含 `-backup`），与搬走时同一套清单。 */
 export function vaultPermanentDelete(save: SaveEntry, savesDir: string): string {
   const acc: TreeStat = newTreeStat();
   for (const n of save.files) {
@@ -475,13 +455,8 @@ export function vaultSetArchived(entryId: string, archived: boolean, days: numbe
   }
   const label: string = metaOf(text, 'label');
   const from: string = metaOf(text, 'from');
-  /* ⛔⛔ **`owner` / `key` 必须原样带走。** 它们记的是「这个存档原来属于哪个版本」，
-   *    是用户 2026-10-02 专门要求加的信息，而 `vaultDelete` 写 meta 时是有这两行的。
-   * ⚠️ 2026-10-05 之前这里漏了它们（代码审查发现）：玩家对某个条目点一次「归档」或
-   *    「取消归档」，`listVault` 读回的 `owner`/`key` 就**永久变成空串且不可恢复** ——
-   *    UI 上那一行版本信息静默消失。
-   * ⭐ 一般化：meta 的「读-改-写」必须覆盖**全部**字段，漏一个就是静默丢一个。
-   *    ⛔ 这里与 `vaultDelete` 的字段顺序保持**逐字一致**，免得两份格式慢慢分叉。 */
+  /* ⛔ `owner`/`key` 必须原样带走（2026-10-05 前漏了它们，归档一次就永久变空串、静默丢版本信息）。
+   * ⭐ meta 的读-改-写必须覆盖全部字段；字段顺序与 `vaultDelete` **逐字一致**，免得两份格式分叉。 */
   const owner: string = metaOf(text, 'owner');
   const key: string = metaOf(text, 'key');
   const deleted: string = String(numberOrZero(metaOf(text, 'deleted')));

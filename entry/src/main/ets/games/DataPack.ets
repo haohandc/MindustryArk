@@ -1,27 +1,11 @@
 /* 整包数据：把一个版本的**全部游戏数据**打成一个 zip，或从 zip 恢复回来。
- *
- * ── 它替代的是什么 ──────────────────────────────────────────────────────────
- * 游戏自带的「导入存档」走的是它的文件浏览器，而那个浏览器在本平台是**坏的**
- * （Arc 的 `libarc-filedialogs` 是 glibc 链接，加载不了）⇒ 玩家换机 / 恢复备份没有路。
- * ⛔ 用户明确要的是「**导入完整的数据，不只是 msav**」—— 所以这是整包，不是单存档导入器。
- *
- * ── ⭐ 为什么整包能保住存档名，单存档不能 ────────────────────────────────────
- * Mindustry 的存档**显示名不在 `.msav` 里**，在 `settings.bin` 的 `save-<文件名>-name` 上
- * （反编译 `Saves$SaveSlot.getName()` 确认：`settings.getString(index + "-name", "untitled")`）。
- * ⇒ 只搬一个 `.msav` 进去，游戏显示 `untitled`；**整包带上 `settings.bin`，名字就跟着来了。**
- * ⇒ 这也是「不自己写 settings.bin」这条取舍成立的原因（见下）。
- *
- * ── 格式（都经 SDK 与实测核对）──────────────────────────────────────────────
- * · `.msav` = **纯 zlib 流**；解压后 `[0..3]="MSAV"` ⇒ `savemeta.c` 已经在查这个魔数，
- *   于是**校验器是现成的**（`readSaveMeta()` 给 `NO_META` = 不是存档）。
- * · ⛔ `compressFiles(paths[], out, opts)` **不能用来打数据包** —— 实测它把各目录的文件
- *   **全部拍平到 zip 根**（一个带 `/` 的条目都没有），层级全丢。详见 `packDataDir` 的说明。
- *   ⇒ 必须**先暂存成目录、再 `compressFile(目录, zip)`**。
- * · ⚠️ `decompressFile(inFile, outFile, …)` 的两个约束：`inFile` 扩展名**必须是 `.zip`**、
- *   `outFile` **必须已经存在**（它是解压目标目录）。
- * · ⚠️ 文档写明这些 API 要的是**应用沙箱路径**。⚠️ 所以**暂存一律在沙箱里做**，
- *   跨边界（用户选的位置）用 fd 拷 —— 与参考项目 AMCL 的做法一致。
- */
+ * ⛔ 游戏自带的「导入存档」用的文件浏览器在本平台是**坏的**（`libarc-filedialogs` 是 glibc 链接）⇒ 玩家
+ *    换机/恢复备份没有路。用户要的是**整包数据，不只是 msav**。⭐ 存档**显示名不在 `.msav` 里**，在
+ *    `settings.bin` 的 `save-<文件名>-name` 上（`Saves$SaveSlot.getName()`）⇒ 整包带上它名字才跟着来。
+ * ── 格式（经 SDK 与实测核对）── · `.msav` = **纯 zlib 流**，解压后 `[0..3]="MSAV"` ⇒ `savemeta.c`
+ * 的 `readSaveMeta()` 是现成校验器。· ⛔ `compressFiles(paths[], out, opts)` 实测**把文件全拍平到 zip
+ * 根**（层级全丢）⇒ 必须**先暂存成目录、再 `compressFile(目录, zip)`**。· ⚠️ `decompressFile`：
+ * `inFile` 扩展名必须是 `.zip`、`outFile` **必须已存在**；这些 API 都要**沙箱路径**。 */
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
@@ -35,11 +19,9 @@ import {
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
 
-/* ── 包里装什么 ──────────────────────────────────────────────────────────────
- * ⛔ **刻意不装** `cache/`、`previews/`、`assetCache/`：它们是可再生的（游戏会重建），
- *    而 `cache/` 里是几 MB 一个的 ogg，装进去会让包大出一大截、且对「恢复」毫无价值。
- * ⚠️ 这是**体积 vs 完整性**的取舍，不是遗漏。缺了它们游戏照样起得来（实测过多次：删掉
- *    `cache/` 之后游戏自己重新导出了音频缓存）。 */
+/* ── 包里装什么 ── ⛔ **刻意不装** `cache/`、`previews/`、`assetCache/`：可再生的（游戏会重建），
+ *    而 `cache/` 里是几 MB 一个的 ogg ⇒ 会让包大出一大截、对「恢复」毫无价值。
+ * ⚠️ 是**体积 vs 完整性**的取舍，不是遗漏：实测删掉 `cache/` 后游戏照样起得来（自己重导了音频缓存）。 */
 const WANTED: string[] = [
   'saves',            /* 存档 —— 核心 */
   'mods',             /* 模组 —— 与存档强相关（存档会记录它用了哪些 mod） */
@@ -76,18 +58,10 @@ export function ensureDir(path: string): boolean {
   return pathExists(path);
 }
 
-/* 每拷这么多字节**让出一帧**给界面。
- *
- * ⛔⛔ 为什么必须有它（2026-10-05 代码审查查出）：这两个拷贝函数原来是**纯同步**的，而调用方
- *    是在设好「正在读取压缩包…」之后**紧接一行**调它的 ⇒ UI 线程当场被占满，
- *    **那句话根本画不出来**。玩家看到的是「点下去卡住十几秒到几十秒，然后突然完成」——
- *    而那正是这个进度提示唯一想避免的事。
- * ⭐ 用 `setTimeout(0)` 让出，**不是** taskpool：本项目已经在同一个问题上用这个手法
- *    （`LauncherHome.askStorageSwitch()` 的「先让出一帧」），行为可预期、不引入线程安全与
- *    跨线程序列化的问题。
- * ⚠️ 它**不让拷贝变快**，也**不是**真正的进度条 —— 我们只是在块与块之间让界面有机会刷新。
- *    真要做进度条得先知道总字节数，而分块拷贝本来就能算（`fs.statSync(src).size`），
- *    那是另一件事，别顺手做。 */
+/* 每拷这么多字节**让出一帧**给界面。⛔⛔ 为什么必须有它（2026-10-05 代码审查查出）：拷贝函数原来
+ *    **纯同步**，而调用方在设好「正在读取压缩包…」之后**紧接一行**调它 ⇒ UI 线程当场占满，那句话
+ *    根本画不出来。⭐ 用 `setTimeout(0)` 让出，**不是** taskpool（同 `LauncherHome.askStorageSwitch()`）。
+ * ⚠️ 它**不让拷贝变快**、也不是真进度条 —— 只是在块与块之间让界面刷新。 */
 const YIELD_EVERY_BYTES: number = 4 * 1024 * 1024;
 
 function yieldToUi(): Promise<void> {
@@ -97,13 +71,9 @@ function yieldToUi(): Promise<void> {
 }
 
 /** 把一个沙箱文件拷到**另一个沙箱路径**（两边都是路径，不是 URI）。
- *
  * ⭐ 导出用它，**不按 picker 返回的 URI 当文件写**：`DOWNLOAD` 模式的 picker 返回的是**目录** URI，
- *    文件名得我们自己拼上去 —— 所以拿到的已经是「目录路径」，剩下就是普通文件复制。
- * ⚠️ 仍然是分块读写而不是 `fs.copyFileSync`：这个文件可能几百 MB，
- *    而 `copyFileSync` 没有进度、也没有失败位置。
- * ⚠️ 它现在**是 async 的**（见 `YIELD_EVERY_BYTES`）⇒ 调用方必须 `await`，
- *    ⛔ 不 await 的话会同时跑两份拷贝、还可能让提示在成功之后才出现。 */
+ *    文件名得我们自己拼 ⇒ 剩下就是普通文件复制。⚠️ 分块读写而非 `copyFileSync`（可能几百 MB，
+ *    而它没有进度也没有失败位置）。⚠️ 它是 async 的（见 `YIELD_EVERY_BYTES`）⇒ 调用方必须 `await`。 */
 export async function copyLocalFile(srcPath: string, dstPath: string): Promise<string> {
   let out: fs.File | undefined = undefined;
   try {
@@ -189,21 +159,10 @@ export function packableItems(dataDir: string): string[] {
   return out;
 }
 
-/** 打包一个数据目录。返回 `''` = 成功，否则是可读的失败原因。
- *
- * ⛔⛔ **必须「先暂存、再压目录」，不能用 `compressFiles(paths[])`。**
- *    我第一版用的就是 `compressFiles`，理由是「它能只挑想要的子目录、省一次拷贝」——
- *    **那是错的**：实测（把包拉下来 `unzip -l`）它把 `saves/`、`mods/`、`schematics/` 的
- *    文件**全部拍平到 zip 根**，**一个带 `/` 的条目都没有** ⇒ 目录层级全丢
- *    ⇒ 导入端再也分不出哪个 `.msav` 属于 `saves/`、哪个 `.msch` 属于 `schematics/`
- *    ⇒ **包不可恢复**。而且 `settings.bin` 与别的同名文件会互相覆盖。
- *    ⇒ 现在：把想要的项**按名字拷进暂存目录**，再 `compressFile(暂存目录, zip)`
- *       —— 压「一个目录」才会保留它内部的层级。
- *
- * ⚠️ 暂存的代价很小：要的东西合起来约 3 MB（实测），而 `cache/` 单独就 28 MB。
- *
- * ⚠️ 耗时 ⇒ 调用方**必须**在异步上下文里调它，且给进度提示。
- *    ⛔ 不要在 UI 线程里同步做（本项目刚为「探针在 UI 线程写文件」吃过亏）。 */
+/** 打包一个数据目录。返回 `''` = 成功，否则是可读的失败原因。⛔⛔ **必须「先暂存、再压目录」，
+ *    不能用 `compressFiles(paths[])`** —— 实测（`unzip -l`）它把 `saves/`、`mods/`、`schematics/` 的
+ *    文件**全部拍平到 zip 根**、**一个带 `/` 的条目都没有** ⇒ 层级全丢、不可恢复，同名还会互相覆盖。
+ *    ⚠️ 暂存代价很小（约 3 MB，`cache/` 单独 28 MB）；耗时 ⇒ 调用方必须在异步上下文里调。 */
 export async function packDataDir(dataDir: string, tmpDir: string, outZip: string): Promise<string> {
   if (!isDir(dataDir)) {
     return '数据目录不存在：' + dataDir;
@@ -215,13 +174,9 @@ export async function packDataDir(dataDir: string, tmpDir: string, outZip: strin
   if (!ensureDir(tmpDir)) {
     return '建不出临时目录：' + tmpDir;
   }
-  /* ⛔⛔ **暂存目录必须与导入用的那个分开** —— 这是踩过的真 bug，不是洁癖：
-   *    导入把 zip 解压到 `<tmp>/incoming`，而打包原先也用 `<tmp>/staging` 当暂存。
-   *    于是「目标已有数据 ⇒ 先备份」那条路上：`packDataDir` 一进来就
-   *    `removeTree(自己的暂存)` ⇒ **把刚解压好的导入数据删掉** ⇒ 随后从那个已不存在的
-   *    路径复制 ⇒ 报「列目录失败 <路径>」。
-   *    ⭐ 症状看起来像「路径不对」，病根是**两个动作抢同一个目录**。
-   *    ⇒ 打包用 `packing`，导入用 `incoming`，两者永不交叉。 */
+  /* ⛔⛔ **暂存目录必须与导入用的那个分开** —— 踩过的真 bug：导入解压到 `<tmp>/incoming`，打包原先
+   *    也用 `<tmp>/staging`，于是「目标已有数据 ⇒ 先备份」那条路上 `removeTree(暂存)` **把刚解压好的
+   *    导入数据删掉** ⇒ 报「列目录失败 <路径>」。⇒ 打包用 `packing`、导入用 `incoming`，永不交叉。 */
   const staging: string = tmpDir + '/packing';
   /* 每次重来：残留的旧暂存/旧 zip 会让「打包失败」看起来像成功（文件在、但是上一次的）。 */
   const accWipe: TreeStat = newTreeStat();
@@ -263,10 +218,9 @@ export async function packDataDir(dataDir: string, tmpDir: string, outZip: strin
   }
 
   try {
-    /* ⭐ `BEST_SPEED` 而不是 `BEST_COMPRESSION`：**包里的大部分内容已经是压缩过的**
-     * （`.msav` 是 zlib 流、`mods/*.zip` 是 zip），再压一遍几乎榨不出体积 ⇒ 高级别纯等。
-     * ⚠️ `CompressLevel` 只有 `NO_COMPRESSION=0 / BEST_SPEED=1 / BEST_COMPRESSION=9`
-     *   三个成员（核过 SDK）—— ⛔ 没有 `DEFAULT_COMPRESSION`，别照直觉写那个名字。 */
+    /* ⭐ `BEST_SPEED` 而不是 `BEST_COMPRESSION`：**包里大部分内容已经压缩过**（`.msav` 是 zlib 流、
+     * `mods/*.zip` 是 zip），再压一遍几乎榨不出体积 ⇒ 高级别纯等。
+     * ⚠️ `CompressLevel` 只有 `NO_COMPRESSION=0 / BEST_SPEED=1 / BEST_COMPRESSION=9` 三个成员（核过 SDK）。 */
     await zlib.compressFile(staging, outZip, {
       level: zlib.CompressLevel.COMPRESS_LEVEL_BEST_SPEED,
     });
@@ -311,31 +265,10 @@ export function countPackable(dataDir: string): string {
  * 导入
  * ========================================================================== */
 
-/** 解压到一个**已经存在**的目录。
- * ⚠️ `decompressFile` 的两个硬约束（核过 SDK）：`inFile` 扩展名**必须是 `.zip`**、
- *    `outFile` **必须已经存在**（它是目标目录，不是要创建的文件）。
- *    ⇒ 所以调用方先 `ensureDir(staging)`，别指望它替你建。
- *
- * ⭐⭐ **Zip Slip 不用我们自己防 —— 平台挡了**（2026-10-05 代码审查时去核的，一手来源是
- *    本机 SDK 的 `sdk/default/openharmony/ets/api/@ohos.zlib.d.ts` 第 1005-1009 行，原文：
- *    「To avoid path traversal, the input parameters of **inFile** and **outFile** cannot contain
- *     two consecutive periods and a slash (../) since API version 13… **The name of the zipped
- *     file or zipped folder cannot contain two consecutive periods and a slash (../)**.
- *     Otherwise, the error code 900003 is returned.」）。
- *    ⇒ 一个条目名里带 `../` 的包**解压会直接失败**（900003），不会写到 `staging` 外面。
- *    ⚠️ 这条从 **API 13** 起生效，而本应用的目标 API 更高 ⇒ 适用。
- *    ⭐ 所以**没有**在这里加「逐条目校验路径」那种自实现 ——
- *      **平台已经保证的事不要自己再实现一遍**（自己做还会引入新的解析漏洞）。
- *
- * ⛔⛔ **但由此暴露了一个【文案】问题，要记着**：`900003` 的官方含义是
- *    「不是 ZIP 格式或已损坏」—— 而**它同时也是「条目名带 `../` 被拒」的返回码**。
- *    于是下面那句给玩家的话（`这个文件不是 zip，或者已经损坏。`）会**把一个恶意包说成坏包**。
- *    ⇒ 不影响安全（解压照样失败、结果是对的），只是**说法不准**。
- *    ⚠️ 用户立过规矩「界面文案默认一条都不加，他同意了才加」，所以**我没有擅自改那句话** ——
- *      要改得他点头。这里的注释就是留给那一刻的。
- * ⚠️ 仍未确认：条目名用**绝对路径**（`/etc/x`）或 Windows 盘符时平台怎么处置 ——
- *    官方文档只写了 `../` 这一种。不过 `outFile` 本身**必须是沙箱路径**，
- *    所以即便写得出去也只落在**本应用自己的沙箱内**，越不出应用。 */
+/** 解压到一个**已经存在**的目录（`decompressFile` 的 `outFile` 必须是目录，见文件头）。
+ * ⭐⭐ **Zip Slip 不用我们自己防 —— 平台挡了**（`@ohos.zlib.d.ts`：自 API 13 起，`inFile`/`outFile` 及条目名含
+ *    `../` 即返回 900003）⇒ 恶意包**解压直接失败**、写不出 `staging` 外，故未自实现逐条目校验。
+ * ⛔ 但那句给玩家的文案（900003 ⇒ 「不是 zip 或已损坏」）会**把恶意包说成坏包**；用户立过「文案默认不加」故不擅改。 */
 export async function unpackZip(zipPath: string, stagingDir: string): Promise<string> {
   if (!pathExists(zipPath)) {
     return '找不到压缩包：' + zipPath;
@@ -370,12 +303,9 @@ function looksLikeDataRoot(dir: string): boolean {
 }
 
 /** 在解压结果里**定位数据根**。
- *
- * ⭐ 为什么要它：包是我们自己打的（根就是数据根），但**别人的包形态不定** ——
- *    可能外面套着 `Mindustry/`、也可能套着 `.local/share/Mindustry/`。
+ * ⭐ 为什么要它：包是我们自己打的（根就是数据根），但**别人的包形态不定** —— 可能外面套着 `Mindustry/`。
  * ⛔ **找不到就返回 `''`（拒绝），不要猜。** 猜错 = 把数据放错地方，而且看起来像成功。
- * ⚠️ 往下走只在「恰好只有一个子目录」时进行，且限深 —— 否则会把 `saves/` 里面的目录
- *    当成新的根一路钻下去。 */
+ * ⚠️ 往下走只在「恰好只有一个子目录」时进行，且限深 —— 否则会把 `saves/` 里面的目录当成新的根。 */
 export function locateDataRoot(dir: string, depth: number = 0): string {
   if (looksLikeDataRoot(dir)) {
     return dir;
@@ -403,10 +333,8 @@ export function locateDataRoot(dir: string, depth: number = 0): string {
 }
 
 /** 校验一个候选数据根。返回 `''` = 可以导入，否则是拒绝理由。
- *
- * ⭐ **校验器是现成的**：`.msav` 是纯 zlib 流、解压后以 `MSAV` 开头，
- *    而 `savemeta.c` 已经在查这个魔数（`readSaveMeta` 给 `NO_META`）。
- *    ⇒ 拿一个真存档验一次，就能把「随便一个 zip」和「Mindustry 数据包」分开。 */
+ * ⭐ **校验器是现成的**：`.msav` 是纯 zlib 流、解压后以 `MSAV` 开头，而 `savemeta.c` 已经在查这个魔数
+ *    （`readSaveMeta` 给 `NO_META`）⇒ 拿一个真存档验一次，就能把「随便一个 zip」和「Mindustry 数据包」分开。 */
 export function validatePack(root: string): string {
   const savesDir: string = root + '/saves';
   if (!looksLikeDataRoot(root)) {

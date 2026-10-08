@@ -39,10 +39,9 @@
 #include <sys/eventfd.h>
 
 /* JDK 住在 HAP 原生库区（整件事的关键）：只有 HAP 的 lib 区可执行，可写沙箱不行，即使持有
- * ALLOW_WRITABLE_CODE_MEMORY（2026-09-22：一台 API 24 设备跑 release 签名的商店包时
- * mmap(RWX) 被 errno=22 拒绝，该权限只覆盖匿名可执行内存，见 RELEASE-MAINTENANCE.md 2.11）。
- * HotSpot 从 libjvm.so 位置剥三层分量推 java.home（要 <java.home>/lib/modules；-Djava.home
- * 被无条件覆盖），所以 JDK 递归分发在 entry/libs/arm64-v8a/jdk21/，落点即 <java.home>。 */
+ * ALLOW_WRITABLE_CODE_MEMORY（2026-09-22：一台 API 24 设备跑 release 签名的商店包时 mmap(RWX)
+ * 被 errno=22 拒绝，该权限只覆盖匿名可执行内存，见 RELEASE-MAINTENANCE.md 2.11）。
+ * HotSpot 从 libjvm.so 位置剥三层分量推 java.home（要 <java.home>/lib/modules，-Djava.home 被无条件覆盖），故 JDK 递归分发在 entry/libs/arm64-v8a/jdk21/。 */
 #define JDK_HOME    "/data/storage/el1/bundle/libs/arm64/jdk21"
 #define JDK_LIB     JDK_HOME "/lib"
 /* 真正的 JVM，嵌套在 <java.home>/lib/server/ 下，好让 HotSpot 推导出正确 java.home。
@@ -57,8 +56,7 @@
 /* 游戏本体，以「名字看起来像共享库」的 jar 形式交付。hvigor 把 entry/libs/arm64-v8a/** 拷进
  * HAP 只有一个条件：文件名以 ".so" 结尾，内容不检查（实测 140,523,131 字节的 module image
  * 以 jimg.so 分发、25,322,128 字节的 JVM 以 libjvm_real.so 分发，都逐字节一致，而 jdk21/conf/
- * 下不以 .so 结尾的名字被无声丢弃）。JVM 按内容而非扩展名打开 classpath 条目。
- * 放在子目录里（与 module image 同级），免得被平台当作原生库对待。 */
+ * 下不以 .so 结尾的名字被无声丢弃）。JVM 按内容而非扩展名打开 classpath 条目；放子目录免得被当原生库。 */
 #define GAME_JAR    BUNDLE_LIBS "/game/mindustry.so"
 
 /* 我们的 Arc 修改，独立 jar，排在 classpath 的【最前】。JVM 按 classpath 顺序解析类、先命中
@@ -69,9 +67,8 @@
 
 /* LWJGL 分两半，因为两个不同的原因去了两个地方（见 prep_lwjgl.py）：游戏 jar 不含 LWJGL，而
  * Arc 的 SDL3 后端要经 org.lwjgl.opengl.* 与 sdl.* 调平台。LWJGL_LIBS 是真 ELF（dyncall 分发与
- * GL 绑定），必须在可执行区；LWJGL_JARS 不是 ELF，改 .so 只为过 hvigor 的过滤。
- * ⛔ 这里【不放】libSDL3.so：一个进程两份独立 SDL3 映射会有两个事件队列（窗口建在一份、surface
- * 回调投给另一份），本项目栽过 —— loader 只指向本项目自建的那份。 */
+ * GL 绑定），必须在可执行区；LWJGL_JARS 不是 ELF，改 .so 只为过 hvigor 的过滤。⛔ 这里【不放】
+ * libSDL3.so：一个进程两份独立 SDL3 映射会有两个事件队列（窗口建在一份、surface 回调投给另一份）。 */
 #define LWJGL_LIBS  BUNDLE_LIBS "/lwjgl"
 #define LWJGL_JARS  BUNDLE_LIBS "/lwjgl-java"
 
@@ -108,9 +105,8 @@
 
 /* 告诉 ArkTS「游戏结束了，关掉 ability」。两边对路径常量并不一致：native 写在 DEST_ROOT
  * (/data/storage/el2/base/files) 下，而 ArkTS 的 context.filesDir 是模块作用域的
- * /data/storage/el2/base/haps/entry/files，所以标记写两处、ArkTS 也检查两处。
- * 非存在不可：直接杀进程会让系统把这次退出归档成 "Cpp Crash"（native 进程在 ability 仍活着时
- * 死掉）；先终止 ability、让框架把进程带下去，才是正常结束的唯一办法 —— 而 native 没有那个 API。 */
+ * /data/storage/el2/base/haps/entry/files，所以标记写两处、ArkTS 也检查两处。非存在不可：直接
+ * 杀进程会让系统把这次退出归档成 "Cpp Crash"；先终止 ability、让框架把进程带下去才是正常结束。 */
 #define EXIT_MARKER_SANDBOX DEST_ROOT "/native_exit"
 #define EXIT_MARKER_MODULE  "/data/storage/el2/base/haps/entry/files/native_exit"
 
@@ -120,37 +116,31 @@
  * ⛔ 它不是对本次启动的判决：残留绝不能拦住一次本可以成功的运行。 */
 #define JVM_INCOMPLETE_MARKER DEST_ROOT "/jvm_incomplete"
 
-/* 探测这个应用到底能不能【读】平台称为用户可见的那些目录 —— 玩家往里丢存档文件的地方。路径
- * 不是猜的：ArkTS 问平台（getUserDownloadDir / getUserDocumentDir）后写进 USER_DIRS_FILE，但
- * 只有 native 能用与游戏相同的 libc 测可读性 ——「API 返回了路径」说明不了 open() 能否成功。
- * 这很重要：游戏的「导入存档」浏览器以从 user.home 推导的外部存储路径为根，而 user.home 是沙箱。 */
+/* 探测这个应用到底能不能【读】平台称为用户可见的那些目录 —— 玩家往里丢存档文件的地方。路径不是
+ * 猜的：ArkTS 问平台（getUserDownloadDir / getUserDocumentDir）后写进 USER_DIRS_FILE，但只有
+ * native 能用与游戏相同的 libc 测可读性 ——「API 返回了路径」说明不了 open() 能否成功。游戏的
+ * 「导入存档」浏览器以从 user.home 推导的外部存储路径为根，而 user.home 是沙箱。 */
 #define USER_DIRS_FILE "/data/storage/el2/base/haps/entry/files/user_dirs.txt"
 
 /* ArkTS 在切到游戏树【之前】写下它，本文件在【找到游戏的入口方法之后】删掉。
- * ⭐ 不变量：**标记还在 ⟺ 从来没有走到游戏入口**。于是它覆盖两类旧标记都看不见的失败：JVM 根本
- * 没建起来；以及 JVM 建起来了但那个 jar 里【没有游戏】（玩家把 mod 当游戏选了，2026-10-01 实际
- * 遇到）—— 后者 FindClass 找不到主类是干净 return、不写 crash.txt。⛔ 删除点必须在拿到 main 之后。 */
+ * ⭐ 不变量：标记还在 ⟺ 从来没有走到游戏入口 ⇒ 于是它覆盖两类旧标记都看不见的失败：JVM 根本没
+ * 建起来；以及 JVM 建起来了但那个 jar 里【没有游戏】（玩家把 mod 当游戏选了，2026-10-01 实际遇到），
+ * 后者 FindClass 找不到主类是干净 return、不写 crash.txt。⛔ 删除点必须在拿到 main 之后。 */
 #define LAUNCH_PENDING_FILE "/data/storage/el2/base/haps/entry/files/launch_pending"
 
-/* ⭐⭐ 版本隔离的拨杆 —— 整个功能的心脏就这一个文件。玩家选「按版本隔离」后 ArkTS 把结果写
- * 在这里，native 启动时读它并据此算出 -Duser.home=；⛔ 游戏不知道这件事，它只看到一个 user.home。
- * 格式与 user_dirs.txt 同为 key=value：enabled / key（由 ArkTS 算，见 gameVersionOf）/
- * granularity（native 不用，只留痕）。⛔ 文件不在 ⇒ enabled=0 ⇒ 用 DEST_ROOT ⇒【与今天逐字节相同】。 */
+/* ⭐⭐ 版本隔离的拨杆 —— 整个功能的心脏就这一个文件。玩家选「按版本隔离」后 ArkTS 把结果写在这里，
+ * native 启动时读它并据此算出 -Duser.home=；⛔ 游戏不知道这件事，它只看到一个 user.home。格式与
+ * user_dirs.txt 同为 key=value：enabled / key（由 ArkTS 算，见 gameVersionOf）/ granularity（native
+ * 不用，只留痕）。⛔ 文件不在 ⇒ enabled=0 ⇒ 用 DEST_ROOT ⇒【与今天逐字节相同】。 */
 #define ISOLATION_FILE "/data/storage/el2/base/haps/entry/files/isolation.txt"
 
-/* 隔离根的那一层子目录。⛔ 在数据根之下、但在游戏那棵树【之外】：游戏的数据目录是 user.home
- * 拼上 ARC 强加的 ".local/share/Mindustry"，所以 instances/ 永远不会被游戏当成数据看。布局：
- *     <数据根>/instances/<粒度键>/sets/default/  ← -Duser.home 指到这里；游戏建的是 …/.local/share/Mindustry/
- * ⚠️ A 阶段 sets 恒为 default（界面看不见）；现在就铺这层，是为以后加「集合」时不必搬玩家数据。
- * ⛔ ISOLATION_SUBDIR / ISOLATION_SET 的字面必须与 ArkTS 侧逐字一致，改一处不会报错、只会落错地方。
- *
- * ⛔⛔ **这里曾经是一个编译期常量 `ISOLATION_ROOT = DEST_ROOT "/instances"`，2026-10-04 拆掉了。**
- *    存储根可以在运行期切到外置，而只要这个前缀还钉在 DEST_ROOT 上，就会出现：
- *      隔离开 + 外置 ⇒ launcher 在【沙箱】里 mkdir、把 user.home 指向【沙箱】那棵树，
- *      而 `record_user_home()` 照样写 `reason=on` ⇒ **界面上显示「外置、正常」，游戏却写在沙箱**。
- *    ⇒ 根改成运行期决定（`resolve_user_home` 里那个 `base`），这里只留那一段**相对**后缀。
- *    ⭐ 拆掉常量而不是「让调用点记得用 base」，是为了让**错误写法根本写不出来** ——
- *      留下那个宏，任何人（包括以后的我）都可能顺手再用它一次，而那一次是无声的。 */
+/* 隔离根的那层子目录，在数据根之下、游戏那棵树【之外】（游戏数据目录 = user.home + ARC 强加的
+ * ".local/share/Mindustry"，故 instances/ 永不被当数据看）。
+ * 布局：<数据根>/instances/<粒度键>/sets/default/ ← -Duser.home 指到这里（A 阶段 sets 恒为 default）。
+ * ⛔ ISOLATION_SUBDIR / ISOLATION_SET 必须与 ArkTS 侧逐字一致：改一处不报错、只会落错地方。
+ * ⛔⛔ 2026-10-04 拆掉了编译期常量 ISOLATION_ROOT = DEST_ROOT "/instances"：存储根可运行期切到外置，
+ *   前缀钉在 DEST_ROOT 上会出现「隔离开 + 外置 ⇒ 在沙箱 mkdir、user.home 指向沙箱，记录却写
+ *   reason=on」⇒ 界面显示外置、游戏写沙箱。故根改为运行期决定，这里只留相对后缀。 */
 #define ISOLATION_SUBDIR "/instances"
 #define ISOLATION_SET    "sets/default"
 
@@ -159,11 +149,10 @@
  * `static int read_kv` 就变成「static 跟在非 static 之后」而编译失败。 */
 static int read_kv(const char *path, const char *key, char *out, size_t outlen);
 
-/*
- * 算出这次启动该用哪个 user.home，写进 out，并把结论记进 USERHOME_RECORD_FILE。
+/* 算出这次启动该用哪个 user.home，写进 out，并把结论记进 USERHOME_RECORD_FILE。
  * ⭐ 三条不变量：1) 隔离关着 ⇒ 结果【逐字节等于 DEST_ROOT】；2) 目录必须真的存在（不存在就 mkdir）；
- * 3) 任何一步失败 ⇒ 回退 DEST_ROOT 并说明原因（宁可回到不隔离，也不要起不来）。
- * ⚠️ 另写文件是为排障第一问「上次启动用的哪个数据目录」：稳定的两行，hdc 直接读走（订正 2026-10-02：它在 redirect_io() 【之后】跑）。 */
+ * 3) 任何一步失败 ⇒ 回退 DEST_ROOT 并说明原因。⚠️ 另写文件是为排障第一问「上次启动用的哪个数据
+ * 目录」：稳定的两行，hdc 直接读走（订正 2026-10-02：它在 redirect_io() 【之后】跑）。 */
 #define USERHOME_RECORD_FILE DEST_ROOT "/userhome_used.txt"
 
 /** 把结论写进记录文件。失败静默放过 —— 记录不下来不该拦住启动。 */
@@ -220,12 +209,9 @@ static void resolve_user_home(char *out, size_t outlen)
     read_kv(ISOLATION_FILE, "key", key, sizeof(key));
     read_kv(ISOLATION_FILE, "root", root, sizeof(root));
 
-    /* ⭐⭐ **① 先定根，再进隔离分支。顺序是承重的。**
-     * ⛔ 原来「隔离关着」那条早退直接返回 `DEST_ROOT`（编译期常量）。如果把读 root 塞进
-     *    「隔离开着」那一支里，**隔离关着时外置就不生效** —— 而出厂就是不隔离，
-     *    也就是说**最常见的那条路会静默忽略玩家的设置**。
-     * ⚠️ root 缺省（老桥文件、或玩家选的就是沙箱）时 `base` 落回 DEST_ROOT
-     *    ⇒ **与从前逐字节相同**（那条不变量：隔离关着 ⇒ 结果等于 DEST_ROOT）。 */
+    /* ⭐⭐ ① 先定根，再进隔离分支。顺序是承重的：若把读 root 塞进「隔离开着」那一支里，
+     *    隔离关着时外置就不生效 —— 而出厂就是不隔离，即最常见的那条路会静默忽略玩家的设置。
+     * ⚠️ root 缺省（老桥文件、或玩家选的就是沙箱）时 base 落回 DEST_ROOT ⇒ 与从前逐字节相同。 */
     const char *base = DEST_ROOT;
     if (root[0] != 0) {
         if (root_is_usable(root)) {
@@ -237,13 +223,10 @@ static void resolve_user_home(char *out, size_t outlen)
         }
     }
 
-    /* ⭐⭐ **先把根本身建出来。**
-     * ⛔ `mkdir()` **不建父目录**，而外置的根是 `Download/<包名>/data` —— 它下面才是
-     *    `instances/<键>/…`。不先建这一层，下面那几层会以 `ENOENT` 全部失败，
-     *    于是回退 `DEST_ROOT`、记 `reason=mkdir-failed`，症状是「切到外置、重启又回到沙箱」。
-     * ⚠️ ArkTS 那边（`ensureGameDataRoot`）也会建，但**这里也要建**：native 不该假设
-     *    ArkTS 跑过 —— 这条路径在应用启动后第一次跑游戏时就要能用。
-     * ⚠️ 失败即回退（`EEXIST` 不算失败）：建不出根就没有理由继续往下拼。 */
+    /* ⭐⭐ 先建根本身。⛔ mkdir() 不建父目录，而外置根是 `Download/<包名>/data`，它下面才是
+     *    instances/<键>/…；不先建这层，下面几层会以 ENOENT 全失败、回退 DEST_ROOT、记
+     *    reason=mkdir-failed，症状是「切到外置、重启又回到沙箱」。⚠️ ArkTS（ensureGameDataRoot）
+     *    也会建，但 native 不该假设 ArkTS 跑过。⚠️ 失败即回退（EEXIST 不算失败）。 */
     if (mkdir(base, 0755) != 0 && errno != EEXIST) {
         SDL_Log("storage: cannot create root '%s' (errno=%d), falling back to %s",
                 base, errno, DEST_ROOT);
@@ -275,12 +258,10 @@ static void resolve_user_home(char *out, size_t outlen)
         }
     }
 
-    /* ④ 拼路径，**显式查长度**。
-     * ⛔⛔ `SDL_snprintf` 会**静默截断**成一个「看起来合法的短路径」，而下面紧接着就
-     *    `mkdir` 那个被截断的路径、并把它当 `user.home` 返回 ⇒ **游戏在一个错的但存在的
-     *    目录里启动，而记录里写着 `reason=on`**。量过：最坏 ~224 字符 vs 512 缓冲，
-     *    **今天不会触发** —— 但这是「以后换个更深的路径就静默变错」的那种洞，所以现在就按住。
-     * ⚠️ `SDL_snprintf` 返回的是**本该写入的长度**（同 snprintf）⇒ 拿它对比缓冲区大小即可。 */
+    /* ④ 拼路径，**显式查长度**。⛔⛔ `SDL_snprintf` 会**静默截断**成一个「看起来合法的短路径」，
+     *    而紧接着就 `mkdir` 那个被截断的路径、并把它当 `user.home` 返回 ⇒ 游戏在一个错的但存在的
+     *    目录里启动，而记录里写着 `reason=on`。量过：最坏 ~224 字符 vs 512 缓冲，今天不会触发 ——
+     *    但这是「以后换个更深的路径就静默变错」的那种洞。⚠️ `SDL_snprintf` 返回本该写入的长度。 */
     char home[512];
     {
         int n = SDL_snprintf(home, sizeof(home), "%s%s/%s/%s", base, ISOLATION_SUBDIR, key,
@@ -319,42 +300,22 @@ static void resolve_user_home(char *out, size_t outlen)
     record_user_home("on", out);
 }
 
-/* 游戏语言（`-Duser.language=` / `-Duser.country=`），2026-10-04。
- *
- * ⭐⭐ **这是在补一个本来没有的能力，不是修缺陷**（用户 2026-10-04 纠正过：「这不是缺陷，
- *    正常 mindustry 就没有跟随」）。Mindustry **没有**「跟随系统」这个设置项：它的语言就是
- *    `settings.bin` 里那个值，而 **`default` 的含义是「用 JVM 的默认 locale」** ——
- *    桌面版看起来「跟着系统」，只是因为桌面 JVM 的默认 locale 跟着操作系统环境走。
- *    本启动器此前没给 JVM 传过 locale ⇒ HotSpot 的 C locale 是 `C` ⇒ 那个 `default` 落在
- *    **英文**上（随后 `LanguageDialog.findClosestLocale()` 还会把结果写死进 `settings.bin`）。
- *    这里做的就是**告诉 JVM 设备语言是什么**，出厂打开。
- *
- * ⭐ 局部实测（JDK17，宿主 zh_CN）：不给 `-D` ⇒ `zh_CN`（宿主）；`-Duser.language=ja -Duser.country=JP`
- *    ⇒ `ja_JP`；**只给 language** ⇒ `de_CN`（**地区跟着宿主走了**）⇒ **两个都要给，别只给一个。**
- * ⚠️ 值是 ArkTS 侧翻译好的（`GameLocale.systemGameLocale()`），已是游戏认得的写法（`zh_CN`）；
- *    这里只做**形状**校验，不重做翻译 —— 那份知识（游戏认哪些 locale）在 ArkTS 那边。
- * ⚠️ 空串 ⇒ 两个选项都留 NULL、由末尾那次压缩丢掉，**行为与本功能存在之前逐字节相同**。 */
+/* 游戏语言（-Duser.language= / -Duser.country=），2026-10-04。⭐ 补一个本来没有的能力、不是修
+ * 缺陷：Mindustry 没有「跟随系统」设置，settings.bin 的 default 意为「用 JVM 默认 locale」，
+ * 为此没传 locale ⇒ HotSpot 是 C locale ⇒ default 落在英文。实测（JDK17，宿主 zh_CN）：只给
+ * language ⇒ de_CN（地区跟宿主走）⇒ 两个都要给。空串 ⇒ 两个选项都留 NULL。 */
 static char opt_language[32];
-/* ⛔⛔ **32，不是 16 —— 16 让这个功能【完全失效】，而它一声不响。**
- *    实测踩到：`-Duser.country=` 这个前缀本身 **15 个字符**，加 `CN` 再加结尾 NUL 需要 18。
- *    给 16 ⇒ `SDL_snprintf` **静默截断**成 `-Duser.country=`（值被切掉）⇒ JVM 收到一个国家为空的
- *     locale ⇒ `Locale("zh","")` ⇒ 游戏找 `bundle_zh.properties`（**不存在**）⇒ 落到英文根包。
- *    ⇒ 中文设备上照样是英文，而**日志看起来一切正常**（那句 `locale: …` 是我自己拼的，不经过缓冲区）。
- *    ⭐ 判据同 `read_kv` 那条：**缓冲区尺寸写错，症状是「设置没生效」，不是崩溃。** */
+/* ⛔⛔ 32，不是 16 —— 16 让这个功能完全失效，而它一声不响。实测：`-Duser.country=` 前缀本身
+ *    15 字符，加 `CN` 再加结尾 NUL 需要 18。给 16 ⇒ SDL_snprintf 静默截断成 `-Duser.country=`
+ *    （值被切掉）⇒ 国家为空的 locale ⇒ 游戏找不存在的 bundle_zh.properties ⇒ 落到英文根包，中文
+ *    设备上照样英文而日志看起来一切正常。⭐ 判据同 read_kv：缓冲区尺寸写错，症状是「设置没生效」。 */
 static char opt_country[32];
 
-/* ⚠️⚠️ **诊断用，不是功能。** 在**游戏启动之前**把 `<user.home>/.local/share/Mindustry/settings.bin`
- * 里的两个值读出来打日志 —— 「游戏到底读到了什么」否则**只有它自己的设置界面能回答**，
- * 而那是玩家用眼睛看、我读不到的。有这一行之后，`stderr.log` 就能直接给出答案。
- *
- * ⛔⛔ **它故意只认 int 类型、遇到别的类型就跳过**（而不是完整实现 ARC 的格式）：
- *    完整的解析器在 ArkTS 那边（`GameSettings.ets`），已经用真实文件逐字节验证过。
- *    在这里再写一份完整的 = **两份会分叉的格式实现** —— 本项目为此付过代价。
- *    ⭐ 所以这里只做「够用的那一点」：读条目数，逐条读键名+类型，是 int 就记下来，
- *      不是 int 就按已知长度跳过。⚠️ 跳不过去（遇到字符串/字节数组）就**放弃并说出来** ——
- *      **半个解析结果比不解析更危险**（它会让人以为读到了真值）。
- *
- * 输出形如：`settings-probe: uiEdgePadding=89 uiscale=100 entries=19` */
+/* ⚠️⚠️ 诊断用，不是功能：在游戏启动【之前】把 <user.home>/.local/share/Mindustry/settings.bin
+ * 里两个值读出来打日志 ——「游戏到底读到了什么」否则只有它自己的设置界面能回答。
+ * ⛔⛔ 故意只认 int、遇到别的类型就跳过：完整解析器在 ArkTS 那边（GameSettings.ets）已用真实文件
+ * 逐字节验证过，再写一份 = 两份会分叉的格式实现（本项目为此付过代价）。⚠️ 跳不过去（字符串/字节
+ * 数组）就放弃并说出来 —— 半个解析结果比不解析更危险。输出形如：settings-probe: uiEdgePadding=89 uiscale=100 entries=19 */
 static void log_game_settings_probe(const char *home)
 {
     char path[768];
@@ -435,12 +396,10 @@ static void log_game_settings_probe(const char *home)
         } else if (type == 3) {
             fseek(f, 4, SEEK_CUR);
         } else if (type == 4 || type == 5) {
-            /* ⚠️ 变长的两种。**只读长度前缀再跳过** —— 这一步很小，但不做的话探针会停在
-             *    第一个字符串上（本项目实测：文件里 `lastBuildString` 排在第 16 条，
-             *    于是 `uiscale` 永远读不到、报 -1）。⛔ 别在这里解析字符串内容：
-             *    那是「再实现一份格式」，而完整实现已经在 ArkTS 那边（`GameSettings.ets`）。
-             *    这里只需要**知道有多长**：type 4 是 `writeUTF`（2 字节长度），
-             *    type 5 是 `int` 长度 + 内容（4 字节）。 */
+            /* ⚠️ 变长的两种：只读长度前缀再跳过 —— 不做的话探针会停在第一个字符串上（实测
+             *    `lastBuildString` 排在第 16 条，于是 `uiscale` 永远读不到、报 -1）。⛔ 别解析
+             *    字符串内容（那是再实现一份格式，完整实现在 ArkTS 那边）。type 4 是 `writeUTF`
+             *    （2 字节长度），type 5 是 `int` 长度 + 内容（4 字节）。 */
             unsigned char lb[4];
             if (type == 4) {
                 if (fread(lb, 1, 2, f) != 2) {
@@ -481,17 +440,9 @@ static void log_game_settings_probe(const char *home)
 }
 
 /* 算出这次启动要给 JVM 的 locale，写进 opt_language / opt_country（空串 = 不设）。
- *
- * ⭐ 值由 ArkTS 翻译好（`GameLocale.systemGameLocale()`）后写进同一个桥文件 ——
- *    「游戏认哪些 locale」那份知识（35 个 ID，抄自 jar 的 `locales` 资产）**只有一处**。
- *    ⚠️ **不要**把那份清单抄到这里来：两份清单会分叉，而分叉的症状是「某个语言静默变英文」。
- *    这里**只校验形状**，不重做翻译：重做一遍就是两份会分叉的实现。
- *
- * ⛔ 校验是必须的，虽然来源是我们自己：值要拼进 `-D` 字符串，而且它来自一个**文件**
- *    （可以被改、可以被写坏）。判据与 `key` 那里同款（那份要进路径，这份要进属性值）。
- * ⚠️ 只在**两个**部分都合法时才用：`zh` 这种没有地区的是合法的（`bundle_ja` / `bundle_en`
- *    这些确实是裸语言），但如果带了 `_` 而地区部分不合法，整条丢掉 —— 半个值会让
- *    `Locale("zh", "")` 与 ArkTS 那边的意图不符。 */
+ * ⭐ 值由 ArkTS 翻译好（GameLocale.systemGameLocale()）写进同一个桥文件 ——「游戏认哪些 locale」
+ * （35 个 ID，抄自 jar 的 locales 资产）只有一处，这里只校验形状、不重做翻译：两份会分叉。
+ * ⛔ 校验是必须的（值来自一个文件、要拼进 -D 字符串），判据同 `key`；只在两个部分都合法时才用。 */
 static void resolve_game_locale(void)
 {
     char loc[32];
@@ -801,10 +752,10 @@ static void probe_user_dirs(void)
 static int g_files = 0;
 static long long g_bytes = 0;
 
-/* 我们在哪？—— 运行时发现，而非假设。ABI 目录名在两个命名空间里【不是】同一个字符串（HAP 内
- * 是 libs/arm64-v8a/...，设备上是 /data/storage/el1/bundle/libs/arm64/...），搞错它是无声的
- * （dlopen 只报 "no such file"）。其中一条【不是】我们能选的：anchor 的 DT_NEEDED 带着
- * prep_vendor.py 在【链接时】烙进去的设备绝对路径 ⇒ 向 dladdr() 询问真正加载中的库的路径。 */
+/* 我们在哪？—— 运行时发现，而非假设。ABI 目录名在两个命名空间里【不是】同一个字符串（HAP 内是
+ * libs/arm64-v8a/...，设备上是 /data/storage/el1/bundle/libs/arm64/...），搞错它是无声的（dlopen
+ * 只报 "no such file"）。其中一条【不是】我们能选的：anchor 的 DT_NEEDED 带着 prep_vendor.py 在
+ * 【链接时】烙进去的设备绝对路径 ⇒ 向 dladdr() 询问真正加载中的库的路径。 */
 #define ABI_DIR_GUESS "/data/storage/el1/bundle/libs/arm64"
 
 static char g_root[1024];       /* <bundle>/libs/<abi>            */
@@ -813,8 +764,8 @@ static char g_jdklib[1400];     /* <jdkhome>/lib                  */
 static char g_jvmreal[1500];    /* <jdklib>/server/libjvm_real.so */
 static char g_anchor[1400];     /* <root>/libjvm.so               */
 
-/* 定义在下面更远处，但 diagnose_loading() 需要它们而它排在前头。 */
-/* probe_exec_mem() 的结果：匿名 RWX 可用时为 42，mmap 被拒时为 -1，代码没跑起来时是别的值。
+/* 定义在下面更远处，但 diagnose_loading() 需要它们而它排在前头。
+ * probe_exec_mem() 的结果：匿名 RWX 可用时为 42，mmap 被拒时为 -1，代码没跑起来时是别的值。
  * 刻意初始化成【不是 42】：选项组装会把「不是 42」当作拿不到可执行内存并强制 -Xint，所以探测
  * 万一没跑成，被采纳的是那个安全答案（出错代价是一个装得上、然后毫无解释地卡死的应用）。 */
 static long g_exec_probe_result = -2;
@@ -984,13 +935,10 @@ static void on_fatal_signal(int sig, siginfo_t *info, void *uctx)
                 int hn = SDL_snprintf(hdr, sizeof(hdr),
                     "PC=0x%lx BASE=0x%lx LEN=%llu MAP=%s\n",
                     (unsigned long)pc, base, (unsigned long long)len, map);
-                /* ⛔⛔ `hn` 是**本该写入的长度**，⛔ 不是实际写进去的（标准 `vsnprintf` 语义，
-                 *    见 `SDL_snprintf` → `SDL_vsnprintf`，以及本文件 283 行那段）——
-                 *    **截断时它【大于】`sizeof(hdr)`**。直接拿它当 `write` 的长度，
-                 *    就是从 `hdr` 后面**越界读**最多约 440 字节写进 `cc_dump.bin`
-                 *    （`map` 可到 511，而这里只有 128）。
-                 * ⭐ 内容长度取 `min(hn, sizeof(hdr) - 1)`：`snprintf` 保证最多写
-                 *    `sizeof - 1` 个字符 + 一个 `NUL`，所以这个长度就是**实际有效内容**。 */
+                /* ⛔⛔ `hn` 是本该写入的长度、不是实际写进去的（标准 `vsnprintf` 语义，见 `SDL_snprintf`
+                 *    → `SDL_vsnprintf`，以及本文件 283 行那段）—— 截断时它【大于】`sizeof(hdr)`。直接拿它当
+                 *    `write` 的长度，就是从 `hdr` 后面越界读最多约 440 字节写进 `cc_dump.bin`。⭐ 取
+                 *    min(hn, sizeof(hdr) - 1)，那才是实际有效内容。 */
                 if (hn > (int)sizeof(hdr) - 1) hn = (int)sizeof(hdr) - 1;
                 ssize_t w = write(fd, hdr, (size_t)hn); (void)w;
                 w = write(fd, (const void *)base, len); (void)w;
@@ -1013,14 +961,9 @@ static void on_fatal_signal(int sig, siginfo_t *info, void *uctx)
         sig, info ? info->si_code : -1, info ? info->si_addr : NULL, name, map,
         pcinfo, regs, insn);
     if (n > 0) {
-        /* ⛔⛔ **`n` 是「本该写入的长度」，⛔ 不是实际写进去的**（与上面 `hdr` 那处同一个坑）。
-         *    这里拼进去的四段最坏是 `map` 511 + `pcinfo` 599 + `regs` 1399 + `insn` 399 ≈ 2900，
-         *    而 `buf` 只有 1600 ⇒ 截断时 `n` 可达 2900
-         *    ⇒ `write(fd, buf, 2900)` **从栈上越界读约 1.4 KB**，写进 `crash.txt` 与 stderr。
-         * ⚠️ 为什么不是「反正已经崩了，无所谓」：
-         *    ① 越界读是**未定义行为**，可能**二次崩溃** ⇒ 把本来要留下的那份报告一起弄丢；
-         *    ② 本项目**崩溃是常态**（一口气抓过 18 条 faultlog），这条路不冷。
-         * ⭐ 内容长度取 `min(n, sizeof(buf) - 1)` —— 理由同上面那一处。 */
+        /* ⛔⛔ **`n` 是「本该写入的长度」，不是实际写进去的**（与上面 `hdr` 那处同一个坑）：四段最坏
+         *    map 511 + pcinfo 599 + regs 1399 + insn 399 ≈ 2900，而 buf 只有 1600 ⇒ write(fd, buf, 2900)
+         *    从栈上越界读约 1.4 KB。越界读是 UB、可能二次崩溃，把要留下的报告一起弄丢。⭐ 取 min(n, sizeof(buf) - 1)。 */
         if (n > (int)sizeof(buf) - 1) n = (int)sizeof(buf) - 1;
         int fd = open(DEST_ROOT "/crash.txt", O_WRONLY | O_CREAT | O_APPEND, 0644);
         if (fd >= 0) { ssize_t w = write(fd, buf, (size_t)n); (void)w; close(fd); }
@@ -1075,9 +1018,8 @@ static bool is_elf(const char *path)
  * 搜索路径上，所以 libjvm.so 必须【最先】用完整路径 + RTLD_GLOBAL 带进来，其它库随后针对它解析
  * 依赖；反过来就是一整堵 "libjvm.so: (needed by ...)" 失败。 */
 /* preload 循环【没有了】：它存在过是为了更老的布局（shim 不在搜索路径上时，每个 JDK 库都得手工
- * RTLD_GLOBAL dlopen）。当前布局已解决 —— libjvm_real.so 只有 libcxxabi_shim.so 和 libc.so 两个
- * 依赖，shim 就在搜索路径上，其余 JDK 库由 JVM 自己从 sun.boot.library.path 加载。
- * ⚠️ 留着它并非无害：会把 35 个库推进全局符号作用域、排在 JVM【前面】，可能覆盖 HotSpot 自己的调用。 */
+ * RTLD_GLOBAL dlopen）。当前布局已解决。⚠️ 留着它并非无害：会把 35 个库推进全局符号作用域、
+ * 排在 JVM【前面】，可能覆盖 HotSpot 自己的调用。 */
 static void load_anchor_only(void)
 {
     SDL_Log(" --- dlopen diagnostics ---");
@@ -1101,9 +1043,8 @@ static char opt_unsve[512];
 static char opt_sve[512];
 /* 三个平台属性，作为 VM 创建选项而不是运行时选项文件：游戏的平台检测在类初始化时就读它们，早于
  * 任何从 Java 侧设置能生效的时机。os.name —— LWJGL/Arc 每次 native 查找都依据它，已知可用的参考
- * 配置报 "Linux"（真实值会让游戏去找这个布局里不存在的 HarmonyOS/Android natives）；user.home ——
- * 存档与设置的位置（没有它 JVM 会从 /etc/passwd 猜）；user.dir —— 工作目录。只有 os.name 照搬那个
- * 参考启动器；user.home/user.dir 是本启动器自己的沙箱路径（DEST_ROOT）。 */
+ * 配置报 "Linux"（真实值会让游戏去找不存在的 HarmonyOS/Android natives）；user.home —— 存档与设置
+ * 的位置；user.dir —— 工作目录。后两者是本启动器自己的沙箱路径（DEST_ROOT）。 */
 static char opt_osname[512];
 static char opt_userhome[512];
 static char opt_userdir[512];
@@ -1173,9 +1114,8 @@ static void probe_dlopen(const char *label, const char *path)
  * 的含混消息上浪费了大量时间，而它与十来种原因都相容。刻意保持窄小。 */
 /* 一个 HAP 资源文件能否作为【普通文件系统路径】被访问到？hvigor 从 entry/libs/ 只分发 `*.so`，
  * 走那条路的 JDK 会丢掉每个数据文件（`modules` 逼出了 jimg.so 改名，还有 `conf/`、`classlist`、
- * `jvm.cfg`），而 HAP 的 rawfile 区没有这种过滤：放进去的原样进去、名字完好。问法：在项目里放
- * `resources/rawfile/rawfile_probe.txt`，构建后问运行中的应用哪条路径能解析到 —— 只有应用能看见
- * 自己的 bundle 区。若可行，【整个未修改的 JDK】都能在那里分发。 */
+ * `jvm.cfg`），而 HAP 的 rawfile 区没有这种过滤。问法：在 resources/rawfile/ 放一个探针文件，
+ * 构建后问运行中的应用哪条路径能解析到。若可行，【整个未修改的 JDK】都能在那里分发。 */
 static void probe_rawfile(void)
 {
     static const char *cands[] = {
@@ -1331,10 +1271,9 @@ static int copy_exec_file(const char *src, const char *dst)
 }
 
 /* 这个进程能不能 dlopen 位于它【自己】可写区里的库？整个 JDK 放置设计系于此，而记录在案的答案
- * （「不能，沙箱不可执行」）只有单个样本 —— 一个可能因自身原因失败的手写 shim；若能，Arc 自己的
- * 解包就能工作、什么都不用特殊处理。Arc 把库放进 java.io.tmpdir：AMCL 下那目录是模块级 files、
- * 游戏能跑，这里它是应用级 temp、加载以 EINVAL 失败（两者都可写，差别只在挂载）。故用两个不同的库
- * 拷进每个候选目录各自 dlopen，bundle 那份作对照。 */
+ * （「不能，沙箱不可执行」）只有单个样本。Arc 把库放进 java.io.tmpdir：AMCL 下那目录是模块级
+ * files、游戏能跑，这里它是应用级 temp、加载以 EINVAL 失败（两者都可写，差别只在挂载）。故用两个
+ * 不同的库拷进每个候选目录各自 dlopen，bundle 那份作对照。 */
 static void probe_sandbox_exec(void)
 {
     static const char *srcs[] = {
@@ -1414,21 +1353,12 @@ static void diagnose_loading(void)
 #define MAX_EXTRA_OPTS 32
 static char g_extra[MAX_EXTRA_OPTS][256];
 
-/* 候选位置。这里【曾经】有第三个条目 "/data/local/tmp/jvm.options"，2026-09-22
- * 移除 —— 它不可能工作：文件推到了那里、从 shell 可读，启动器仍报 "no options file found; tried
- * 3 locations"，每次 fopen 都失败（该路径对应用的 uid 不可达），一个永远打不开的条目只会误导。
- *
- * ⭐⭐ **两个条目各有【一个】写入者 —— 这一点是承重的**（2026-10-05 才分清，见 load_extra_options）：
- *   · 第 1 条（ability 级 `/data/storage/el2/base/haps/entry/files`）—— **启动器自己**：
- *     `Index.setupCompatMode()` 每次启动**双向重写**它（写 `-Xint`，或**把整个文件删掉**）。
- *     低于 API 26 的手机 JVM 拿不到匿名可执行内存、必须解释执行，故写 `-Xint`
- *     （RELEASE-MAINTENANCE.md 2.12），且必须双向重写，否则手机升过 26 后 -Xint 会留下、
- *     游戏永久以解释模式跑。⚠️ probe_exec_mem() 不可用时启动器也强制 -Xint（覆盖 API 26
- *     商店签名机与无 ACL 平板）：文件是请求，探测才是权威。
- *   · 第 2 条（应用级 DEST_ROOT）—— **人工注入**：`EntryAbility.writeJvmOptions()`，入口是
- *     `aa start … --ps jvmoptN <flag>`。**没有任何东西删它** —— 它要持有到有人显式清掉。
- *   ⛔ 两者共用一个文件时，启动器每次启动都会把注入的 flag 删掉（见 load_extra_options 的说明）。
- *   ⭐ DEST_ROOT 那一份 hdc 能【读】但不能写（沙箱），所以是「应用写、shell 读」。 */
+/* 候选位置。曾有过第三个 "/data/local/tmp/jvm.options"，2026-09-22 移除 —— 该路径对应用的 uid
+ * 不可达，永远打不开的条目只会误导。⭐⭐ 两个条目各有【一个】写入者（2026-10-05 才分清）：
+ * 第 1 条（ability 级）归启动器，Index.setupCompatMode() 每次启动双向重写（写 -Xint 或删掉整个
+ * 文件，见 RELEASE-MAINTENANCE.md 2.12）；第 2 条（应用级 DEST_ROOT）是人工注入 ——
+ * EntryAbility.writeJvmOptions() 写、`aa start … --ps jvmoptN <flag>` 是入口、没有任何东西删它。
+ * ⛔ 共用一个文件时启动器会把注入的 flag 删掉。DEST_ROOT 那份 hdc 能读不能写。 */
 static const char *OPTION_PATHS[] = {
     "/data/storage/el2/base/haps/entry/files/jvm.options",
     DEST_ROOT "/jvm.options",
@@ -1478,22 +1408,13 @@ int options_contain(const char *needle)
     return 0;
 }
 
-/* 读【全部候选文件】，按 OPTION_PATHS 的顺序拼接。
- *
- * ⛔⛔ 2026-10-05：这里原来是 `open_options_file()` —— **只读第一个存在的**文件。那不只是
- *    一个优先级细节：它毁掉了一条功能通道，而且是**静默地**毁掉的。
- *   · ability 级那份由 `Index.setupCompatMode()` 拥有，每次启动**双向重写**（写 `-Xint`，
- *     或**删掉整个文件**）—— 这是有意的，见 OPTION_PATHS 上面那段。
- *   · 人工注入的 flag 原先也写在**那一份**里 ⇒ 启动器下一次启动就把它删了。
- *     `RELEASE-MAINTENANCE.md` §2.10 正是拿这条路去测那个悬着的 SIGSEGV
- *     （原文：「put `NOHANDLERS` in `jvm.options`」）—— 那条命令**从来不可能生效**。
- *     ⚠️ 而它失败的样子是「日志里没有 handler」，与「注入没写进去」「选项没被读到」
- *     **长得一模一样** —— 门从来不触发，和门查了但没查到，区分不开。
- *   ⇒ 修法两半：**① 两个写入者各用一个文件**（注入搬到 DEST_ROOT 那份，见 EntryAbility.ets）；
- *     **② 这里读全部候选**（否则「先找到的那个」仍是单点）。
- *   ⭐ 判据：**一个文件两个写入者、而两者对「下次启动还在不在」的期望相反 ⇒ 那是设计缺陷，
- *     不是实现细节。** 换掉实现（合并、加标记）都不如把两件事分开来得干净。
- * ⚠️ 顺序仍然是候选表的顺序：同名选项时**后者生效**（HotSpot 对重复参数的规则）。 */
+/* 读【全部候选文件】，按 OPTION_PATHS 顺序拼接。
+ * ⛔⛔ 2026-10-05：这里原来是 `open_options_file()` —— 只读第一个存在的文件，那静默毁掉了一条功能
+ *    通道：ability 级那份由 setupCompatMode() 每次启动双向重写（写 -Xint 或删掉整个文件），而人工
+ *    注入的 flag 原先也写在那份里 ⇒ 启动器下次启动就把它删了（RELEASE-MAINTENANCE.md §2.10 拿这条
+ *    路测 SIGSEGV，那条命令从来不可能生效，失败却长得像「日志里没有 handler」）。
+ * ⇒ 修法两半：① 两个写入者各用一个文件；② 这里读全部候选。判据：一个文件两个写入者、且对「下次
+ *    启动还在不在」期望相反 ⇒ 设计缺陷。⚠️ 顺序仍是候选表顺序：同名选项时后者生效。 */
 static int load_extra_options(JavaVMOption *out, int base)
 {
     const unsigned count = (unsigned) (sizeof(OPTION_PATHS) / sizeof(OPTION_PATHS[0]));
@@ -1544,10 +1465,9 @@ static long probe_exec_mem(void)
 }
 
 /* 自修改代码：对【已经可执行】的页做一次写入会生效吗？HarmonyOS 封锁「来自文件的代码」（把文件
- * 或 memfd 映射为可执行，实测都是 errno=13），却允许匿名可执行内存，而 HotSpot 生成的代码全在
- * 匿名内存里。要紧的是：HotSpot 的 code cache 同时可写可执行且【就地】打补丁、不做 mprotect
- * 往返 —— ARM 上数据/指令缓存不一致，写入需显式维护才可见，否则 CPU 跑旧字节。测量 1/2/3/4，
- * 第 3 步（flush 后写入）决定性；第 2 步不构成缺陷（多数 ARMv8 核上不做维护本就合法不可见）。 */
+ * 或 memfd 映射为可执行，实测都是 errno=13），却允许匿名可执行内存。要紧的是 HotSpot 的 code
+ * cache 同时可写可执行且就地打补丁、不做 mprotect 往返 —— ARM 上数据/指令缓存不一致，写入需显式
+ * 维护才可见。测量 1/2/3/4，第 3 步（flush 后写入）决定性。 */
 /* 每个测试用例都在它【自己】全新的页上（共用一页正是弄坏上一版的原因：用例 4 把页留在 RX 上，
  * 用例 5 的 memcpy 在自己的 mprotect 之前就出错，那个 SIGSEGV 看起来像平台发现、其实是测试 bug）。
  * mode：0 写+clear_cache+调 / 1 写+不维护+调 / 2 写+mprotect RW->RX+调 / 3 写+mprotect+clear_cache+调
@@ -1605,10 +1525,9 @@ static long icache_case(int expect, int mode)
 }
 
 /* 覆盖【已经执行过】的代码 —— 这才是要紧的场景，上一版弄丢了它（给每个用例一个从未执行过的页，
- * 于是全都通过、假设因错误的原因显得死了）。HotSpot 做的正是这件事：生成代码、运行，之后回过头去
- * 【给】同样的指令打补丁。每个用例：写 v1 -> 可见 -> 【调用】（填上取指单元）-> 写 v2 -> 施加被测
- * 机制 -> 再调用，报告【第二次】结果（正确 v2，v1 = 保留旧指令）。mode：0 不做事 / 1 clear_cache
- * （对照）/ 2 mprotect RW->RX / 3 mprotect 后 clear_cache / 4 反之。 */
+ * 于是全都通过）。HotSpot 做的正是这件事：生成、运行，之后回过头给同样的指令打补丁。每个用例：
+ * 写 v1 -> 可见 -> 调用 -> 写 v2 -> 施加被测机制 -> 再调用，报告第二次结果（v2 正确、v1 保留旧指令）。
+ * mode：0 不做事 / 1 clear_cache（对照）/ 2 mprotect RW->RX / 3 mprotect 后 clear_cache / 4 反之。 */
 static long icache_rewrite_case(int v1, int v2, int mode)
 {
     unsigned int c1[2] = { 0x52800000u | ((unsigned)v1 << 5), 0xd65f03c0u };
@@ -1718,10 +1637,9 @@ static void probe_mark(const char *what)
 }
 
 /* 这个进程能不能访问网络？做 native 探测而不只看游戏：游戏已报 "SocketException: Operation not
- * permitted"（sun.nio.ch.Net.socket0），说明 socket() 可达且被拒 —— 但 ArcNet 全是 NIO
- * （Selector.open()、SocketChannel、DatagramChannel），能开 socket 却开不了 selector 的 JVM 跑不了
- * 服务器与客户端事件循环，差别是一周工作还是重写 37 个类。每次调用用它自己的 errno 报告；⚠️
- * 名字/连接两步经 DEST_ROOT/netprobe 选择加入 —— 它在 JNI_CreateJavaVM 之前跑、解析可能阻塞数秒。 */
+ * permitted"（sun.nio.ch.Net.socket0），说明 socket() 可达且被拒 —— 但 ArcNet 全是 NIO，能开 socket
+ * 却开不了 selector 的 JVM 跑不了服务器与客户端事件循环。每次调用用它自己的 errno 报告；⚠️ 名字/
+ * 连接两步经 DEST_ROOT/netprobe 选择加入 —— 它在 JNI_CreateJavaVM 之前跑、解析可能阻塞数秒。 */
 static void probe_network(void)
 {
     SDL_Log(" --- network syscalls ---");
@@ -1793,11 +1711,10 @@ static void probe_network(void)
         }
     }
 
-    /* ⚠️ 下面的网络 I/O 是选择加入的：上面每一样都是本地内核操作、立即返回，而 getaddrinfo 按
-     * 顺序问 /etc/resolv.conf 里的 nameserver，第一个不可达时会卡到超时才试下一个。本函数在
-     * JNI_CreateJavaVM【之前】跑，这里花的每一毫秒都是玩家盯着黑窗口的毫秒（实测手机上报黑屏、
-     * 过了一段明显时间才开始加载，同样的构建在平板上没事）。所以可能阻塞的检查只在
-     * hdc shell "touch /data/storage/el2/base/files/netprobe" 之后才跑。 */
+    /* ⚠️ 下面的网络 I/O 是选择加入的：上面每一样都是本地内核操作、立即返回，而 getaddrinfo 会按
+     * 顺序问 nameserver，第一个不可达时卡到超时才试下一个。本函数在 JNI_CreateJavaVM【之前】跑，
+     * 这里每一毫秒都是玩家盯着黑窗口的毫秒（实测手机黑屏明显时间才开始加载，同构建在平板没事）。
+     * 所以可能阻塞的检查只在 hdc shell "touch /data/storage/el2/base/files/netprobe" 之后才跑。 */
     if (access(DEST_ROOT "/netprobe", F_OK) != 0) {
         SDL_Log("   (name resolution and connect skipped -- create %s to enable)",
                 DEST_ROOT "/netprobe");
@@ -1809,11 +1726,10 @@ static void probe_network(void)
     if (gai != 0) SDL_Log("        %s (EAI code %d)", gai_strerror(gai), gai);
     if (res) freeaddrinfo(res);
 
-    /* 可达性通过解析一个名字、再连接它返回的东西来测。刻意【不是】硬编码地址：早先那版连一个几
-     * 分钟前采样的字面 IP 恰好只灵一次（地址会变，因数字过期而失败的探测比没有还糟）；先解析也正是
-     * Java 所做的。失败不自动等于沙箱问题：上面的 getaddrinfo 与这里的 connect 只把「无法解析」与
-     * 「无法到达」分开，而一台没有路由的设备两者都失败 —— 真正区分的是 errno，socket() 上的 EPERM
-     * 或 EACCES 才意味着被策略拒绝。只解析【一次】（早先那版解析两遍，白白让最慢一步的代价翻倍）。 */
+    /* 可达性通过解析一个名字、再连接它返回的东西来测。刻意【不是】硬编码地址：早先那版连一个几分
+     * 钟前采样的字面 IP 恰好只灵一次（地址会变，因数字过期而失败的探测比没有还糟）；先解析也正是
+     * Java 所做的。失败不自动等于沙箱问题 —— 真正区分的是 errno，socket() 上的 EPERM/EACCES 才
+     * 意味着被策略拒绝。只解析【一次】（早先那版解析两遍，白白让最慢一步的代价翻倍）。 */
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
@@ -2006,8 +1922,7 @@ static int copy_tree_strip_so(const char *src, const char *dst)
 /* 构建 java.home 将被指向的那个目录。镜像与时区库必须以 java.base 所要找的名字待在那里：
  * lib/modules 是 module image，以 jimg.so 分发（patch_libjvm.py，hvigor 只搬 .so，而 java.base
  * 自己拼出 "modules"）；lib/tzdb.dat 以 tzdb.so 分发（prep_jdklib.py），缺失时不只是破坏时间戳 ——
- * ZoneInfoFile 初始化失败，程序里第一次请求 DateFormat 就抛异常（Saves.<clinit> 就会）。
- * 返回值只意味着 lib/modules 是否到位（它才决定 java.home 能否被重定向）；其余大声报告但不改返回值。 */
+ * ZoneInfoFile 初始化失败，第一次请求 DateFormat 就抛异常。返回值只意味着 lib/modules 是否到位。 */
 static int prepare_java_home(void)
 {
     if (mkdir(DEST_ROOT "/jdk", 0755) != 0 && errno != EEXIST) {
@@ -2126,11 +2041,10 @@ static void preload_arc_natives(JNIEnv *env)
     SDL_Log(" --- end Arc natives ---");
 }
 
-/* 蓝图第 4 步：以反射方式调用游戏的入口点。通过条件是【游戏自己的】代码运行了（可观测为它自己
- * 在 stdout 上的输出）—— 窗口明确【不】属于这一步（那是第 5 步），所以 main() 开始之后的一次 SDL
- * 或 GL 失败仍算「它启动了」，作为独立结果报告。入口点经 JNI 调用而不是把 main class 交给启动器，
- * 因为没有启动器：这个就是。调用发生在 SDL 为 SDL_main 创建的那个线程上并阻塞到游戏返回（有意：
- * 游戏的 main() 跑自己的循环，退出时才返回）。 */
+/* 蓝图第 4 步：以反射方式调用游戏的入口点。通过条件是【游戏自己的】代码运行了（可观测为它自己在
+ * stdout 上的输出）—— 窗口明确【不】属于这一步（那是第 5 步），所以 main() 开始之后的一次 SDL 或
+ * GL 失败仍算「它启动了」，作为独立结果报告。入口点经 JNI 调用而不是把 main class 交给启动器，
+ * 因为没有启动器：这个就是。调用发生在 SDL 为 SDL_main 创建的线程上并阻塞到游戏返回。 */
 static int launch_game(JNIEnv *env)
 {
     static const char *MAIN_CLASS = "mindustry/desktop/DesktopLauncher";
@@ -2291,8 +2205,7 @@ static int start_jvm(void)
     /* -XX:UseSVE=0 在 JIT 中禁用 ARM SVE（必须先有 -XX:+UnlockDiagnosticVMOptions，它是诊断 flag）：
      * 没有它 JVM 会在 JNI_CreateJavaVM 期间以 SIGILL 确定性地死掉，在解释器 native-method entry
      * codelet 的同一个地址上。实测交替 A/B 五轮：基线在 0x5edf41fc68 处 5/5 崩溃，UseSVE=0 则 5/5
-     * 成功。佐证是 AMCL（同设备、同 libjvm.so）的选项清单里就传了它。它们不是调参旋钮，而是能启动
-     * 与会死掉的 JVM 之间的差别，故作为默认值待在这里。 */
+     * 成功。佐证是 AMCL 的选项清单里就传了它。它们不是调参旋钮，而是能启动与会死掉的 JVM 的差别。 */
     SDL_strlcpy(opt_unsve,  "-XX:+UnlockDiagnosticVMOptions", sizeof(opt_unsve));
     SDL_strlcpy(opt_sve,    "-XX:UseSVE=0", sizeof(opt_sve));
 
@@ -2364,11 +2277,10 @@ static int start_jvm(void)
      * 字符串会设置该属性，那不是同一回事 —— 见 opt_chooser 上的说明。 */
     options[17].optionString = (opt_chooser[0] != '\0') ? opt_chooser : NULL;
     options[17].extraInfo = NULL;
-    /* ⭐ 游戏语言（`-Duser.language` / `-Duser.country`，2026-10-04）。
-     * ⛔⛔ **刻意追加在【末尾】（18、19），不是插进中间**：下面那条最小模式用的是
-     *    **写死的下标**（`options[0]` / `[2]` / `[8]`），插进中间会让那三个下标全部错位、
-     *    而错位的后果是**最小模式静默换掉了它传的参数**。追加则 0..17 的含义完全不变。
-     * ⚠️ 两个都可能为空（关掉「跟随系统」时）⇒ 用 NULL 交给末尾那次压缩丢掉。 */
+    /* ⭐ 游戏语言（-Duser.language / -Duser.country，2026-10-04）。
+     * ⛔⛔ 刻意追加在【末尾】（18、19），不是插进中间：下面最小模式用的是写死的下标（options[0]/
+     *    [2]/[8]），插中间会让那三个下标全部错位、后果是**最小模式静默换掉了它传的参数**。追加则
+     *    0..17 的含义完全不变。⚠️ 两个都可能为空 ⇒ 用 NULL 交给末尾那次压缩丢掉。 */
     options[18].optionString = (opt_language[0] != '\0') ? opt_language : NULL;
     options[18].extraInfo = NULL;
     options[19].optionString = (opt_country[0] != '\0') ? opt_country : NULL;
@@ -2376,8 +2288,7 @@ static int start_jvm(void)
 
     /* 最小模式 —— 运行时选项文件里的一行开关（一行恰好写着 MINIMAL）。有几个内置 -D flag 是在告诉
      * HotSpot 它本会自己算出的东西（java.home、sun.boot.library.path、java.library.path）；提供它们
-     * 本身偏离了「正常启动器如何启动 VM」，而已知在本设备可行的 AMCL 是在 VM 起来【之后】才经
-     * System.setProperty 设置大多数属性的。所以这个模式几乎什么都不传，让 VM 自己推导：崩溃变了 ⇒
+     * 本身就偏离了「正常启动器如何启动 VM」。所以这个模式几乎什么都不传，让 VM 自己推导：崩溃变了 ⇒
      * 我们的选项清单有嫌疑；没变 ⇒ 选项被洗清。 */
     int nExtra = 0;
     {
@@ -2472,10 +2383,9 @@ static int start_jvm(void)
     }
 
     /* 把判决留给 UI 读：是否以解释方式运行由【这里】测量决定，而页面做不了这个测量、也读不到日志
-     * （游戏每秒推几千行），所以结论经文件传递（与 IME 桥同一通道）。页面在 XComponent 挂载之前就
-     * 写下提示决定 ⇒ 只能读到【上一次】启动的答案。⚠️ 报告的是【能力】而不是选项清单 —— 过去问
-     * 「清单里有 -Xint 吗」，于是页面的陈旧请求被当作新鲜判决喂回来（实测一台探测一直返回 42 的手机
-     * 以 12239 ms 保持解释模式）；改为问探测就打破了循环，且它在 JNI_CreateJavaVM【之前】跑。 */
+     * （游戏每秒推几千行），所以结论经文件传递。页面在 XComponent 挂载之前就写下提示决定 ⇒ 只能读到
+     * 【上一次】启动的答案。⚠️ 报告的是【能力】而不是选项清单 —— 过去问「清单里有 -Xint 吗」，于是
+     * 页面的陈旧请求被当作新鲜判决喂回来（实测一台探测一直返回 42 的手机以 12239 ms 保持解释模式）。 */
     {
         const int incapable = (force_noexec || g_exec_probe_result != 42);
         FILE *vf = fopen(DEST_ROOT "/execmem", "w");
@@ -2509,10 +2419,9 @@ static int start_jvm(void)
     args.options = options;
 
     /* 先严格，后宽松 —— 因为「文件被读了」并不能证明某个 flag 被理解了。这里过去无条件用 JNI_TRUE
-     * （忽略不认识的）：日志对每个 flag 都说 "read 1 extra option(s)"，而一个拼错的、或不存在的
-     * flag 产生完全相同的一行然后被静默丢弃，于是「那个 flag 没用」的每个结论都站不住脚 —— 分不清
-     * 「flag 没有效果」与「flag 根本没到达 VM」。先试严格（未知选项会让 JVM 明确说出来，报错码或
-     * stderr 一条消息都会被捕获），再试宽松，这样选项文件里的一个坏 flag 无法让启动器彻底无法运行。 */
+     * （忽略不认识的）：一个拼错的或不存在的 flag 只产生完全相同的一行然后被静默丢弃，于是「那个
+     * flag 没用」的每个结论都站不住脚。先试严格（未知选项会让 JVM 明确说出来，报错码或 stderr 一条
+     * 消息都会被捕获），再试宽松，这样选项文件里的一个坏 flag 无法让启动器彻底无法运行。 */
     args.ignoreUnrecognized = JNI_FALSE;
 
     SDL_Log(" calling JNI_CreateJavaVM (strict) ...");
@@ -2616,10 +2525,9 @@ static int start_jvm(void)
 }
 
 /* 把每一条 SDL_Log 都镜像到 HILOG。诊断全走 SDL_Log → stdout/stderr → 沙箱文件，那对 DEBUG 签名
- * 有效，但对 release 签名【不】有效：设备实测 internaltesting 包下 `hdc shell cat
- * <sandbox>/files/stderr.log` -> Permission denied、pidof/ps 皆空、faultlog 无条目 —— 2026-09-22 一个
- * 商店签名包回退到 -Xint 后崩溃，什么都读不到；hilog 对任何签名都可读，诊断也必须去那里。用回调
- * 而非在调用点包宏（SDL3 允许替换汇聚点，一个函数接住本文件每条 SDL_Log 及 SDL 自己记录的一切）；⚠️ 用 %{public}s。 */
+ * 有效，但对 release 签名【不】有效：设备实测 internaltesting 包下 hdc 读 stderr.log 是 Permission
+ * denied、pidof/ps 皆空、faultlog 无条目（2026-09-22 商店签名包回退 -Xint 后崩溃，什么都读不到）；
+ * hilog 对任何签名都可读。用回调而非在调用点包宏（SDL3 允许替换汇聚点）；⚠️ 用 %{public}s。 */
 #define MX_LOG_DOMAIN 0x0000
 #define MX_LOG_TAG    "MindustryLauncher"
 
@@ -2699,11 +2607,10 @@ int main(int argc, char *argv[])
     }
     SDL_Log("--------------------------------------------------");
 
-    /* 崩溃处理器【只有】在选项文件不要求放过它们时才安装（把 "NOHANDLERS" 放进 jvm.options 就
-     * 什么都不装）。为什么成了变量：它们从最初那版起就一直安装，覆盖 SIGILL —— 恰恰是我们正死于其上
-     * 的信号；而 HotSpot 在 JNI_CreateJavaVM 期间装【它自己的】处理器并用链式方案（认不出就转给先前
-     * 安装的），我们看到【我们的】在跑 ⇒ HotSpot 没把这次错误认作自己的。HotSpot 刻意把非法指令当
-     * 陷阱执行并自己捕获，从一开始就坐在那条路径前面，是造成现有症状的一个说得通的方式。 */
+    /* 崩溃处理器【只有】在选项文件不要求放过它们时才安装（把 "NOHANDLERS" 放进 jvm.options 就什么
+     * 都不装）。为什么成了变量：它们从最初那版起就一直安装、覆盖 SIGILL —— 恰恰是我们正死于其上的
+     * 信号；而 HotSpot 在 JNI_CreateJavaVM 期间装【它自己的】处理器并用链式方案（认不出就转给先前
+     * 安装的），我们看到【我们的】在跑 ⇒ HotSpot 没把这次错误认作自己的。 */
     extern int options_contain(const char *needle);
     if (options_contain("NOHANDLERS")) {
         SDL_Log(" ** NOHANDLERS: not installing crash handlers -- HotSpot's signal");
@@ -2715,28 +2622,17 @@ int main(int argc, char *argv[])
     SDL_Log("--------------------------------------------------");
     SDL_Log(" result = %d", rc);
 
-    /* 这里曾有一个 20 秒的 "staying alive 20s ..." 睡眠循环（早期诊断脚手架，用来观察 main() 返回
-     * 之后发生什么，一直没被移除），它也是「退出会卡住、几秒后应用才退出」那个抱怨的全部原因：
-     * 游戏 main() 返回后画面冻住，循环睡 20 秒期间进程还活着，循环结束我们返回才拆除。所以延迟从来
-     * 不在 SDL 里、也不在 JVM 的 shutdown hook 里 —— 2026-09-20 用 quit_timing.sh 实测点击到进程
-     * 消失约 20 秒，恰好与循环时长吻合。已移除且不替换：越早返回，系统越早拆掉应用。 */
+    /* 这里曾有一个 20 秒的 "staying alive 20s ..." 睡眠循环（早期诊断脚手架，一直没被移除），它也是
+     * 「退出会卡住、几秒后应用才退出」那个抱怨的全部原因：游戏 main() 返回后画面冻住、循环期间进程
+     * 还活着。2026-09-20 用 quit_timing.sh 实测点击到进程消失约 20 秒，恰好与循环时长吻合。已移除。 */
     SDL_Log("==================================================");
-    /* 用 _exit 终止，而不是 return：从 main 返回会运行 C 运行时的 atexit 处理器与每一个静态析构
-     * 函数，而那次拆除会【中止】—— 实测每次退出都是 "*** FATAL SIGNAL 6 (code=-6) at ... pc
-     * 0x5acff84ef4  in /lib/ld-musl-aarch64.so.1  thread SDL_main"，系统照章把它归档成
-     * "AppMS: reason=Cpp Crash ... exitSigno = 6"。应用反正都要走，这个信号对结果毫无改变，却意味着
-     * 每一次正常退出都被报告给 OS 为一次崩溃（会生成崩溃报告、可能弹对话框）—— 对一个用户按下的
-     * 按钮这是错误的说法。跳过拆除也毫无损失（它发生在游戏 main() 已返回之后，libjvm 和 SDL 正以
-     * 本平台都不支持的顺序被卸载）。先 flush：_exit 不运行 stdio 清理，而 stdout.log/stderr.log 的
-     * 尾部是最有用的证据；游戏持久化不受影响（Arc 在 application shutdown 保存设置，main() 返回时
-     * 已完成，已确认 settings.bin 仍被重写）。
-     * ---------------------------------------------------------------------
-     * 退出之前，把关机交给 ArkTS。单靠 _exit 会在 ability 仍然活着的时候结束进程，而系统把那记录为
-     * "Cpp Crash"（AppMS: reason=Cpp Crash, killId=2004）—— 即使没有信号、没有崩溃 dump 也一样，
-     * 我们就是靠这点知道它是对一次看起来异常之退出的分类，而不是一次真正的错误。所以改为：放下一个
-     * 标记，给 ArkTS 一个短窗口调用 terminateSelf()，如果它没有调用就自己退出；当它生效时，框架把
-     * ability 拆掉并杀掉进程 —— 一次正常结束，路径里也没有我们的 C 运行时拆除。窗口刻意有界：握手
-     * 不生效时应用仍必须退出，在这里卡死远比它试图修的那条被错标的日志行糟糕得多；走回退实测约 1.2 秒。 */
+    /* 用 _exit 终止，而不是 return：从 main 返回会运行 atexit 处理器与每个静态析构函数，而那场拆除
+     * 会【中止】—— 实测每次退出都是 "FATAL SIGNAL 6 ... in /lib/ld-musl-aarch64.so.1  thread
+     * SDL_main"，系统归档成 "AppMS: reason=Cpp Crash ... exitSigno = 6"，于是每次正常退出都被报告为
+     * 一次崩溃；跳过拆除毫无损失。先 flush：_exit 不运行 stdio 清理，而日志尾部是最有用的证据。
+     * 退出前把关机交给 ArkTS：单靠 _exit 会在 ability 仍活着时结束进程，系统照样记 "Cpp Crash"
+     * （killId=2004）。所以放下标记、给 ArkTS 一个短窗口调用 terminateSelf()，它没调用就自己退出
+     * （走回退实测约 1.2 秒）。 */
     {
         const char *paths[2] = { EXIT_MARKER_SANDBOX, EXIT_MARKER_MODULE };
         for (int i = 0; i < 2; i++) {

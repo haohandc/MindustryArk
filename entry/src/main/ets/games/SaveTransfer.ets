@@ -139,11 +139,8 @@ export function moveSaveTo(save: SaveEntry, fromDir: string, toDir: string): str
 }
 
 /* **同一个版本里**再复制一份（改名）。只允许手动存档（理由见文件头）。
- *
- * ⚠️ 必须告诉玩家的后果：存档显示名不在文件里，而在 `settings.bin` 的
- *    `save-<索引>-name` 上，索引就是**文件名** ⇒ 复制出来那份在游戏里显示成
- *    **`untitled`**。这不是我们能修的，所以界面必须说出来。
- */
+ * ⚠️ 必须告诉玩家的后果：存档显示名在 `settings.bin` 的 `save-<索引>-name`，索引就是**文件名**
+ *    ⇒ 副本在游戏里显示成 **`untitled`** —— 不是我们能修的，界面必须说出来。 */
 export function duplicateSave(save: SaveEntry, savesDir: string): string {
   if (save.kind !== 'manual') {
     return '战役存档不能在这同一个版本里再复制一份 —— 一个区块出现两份存档，游戏会认不出来。'

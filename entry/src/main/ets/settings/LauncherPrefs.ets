@@ -1,13 +1,9 @@
 /* 启动器自己的界面偏好。
- *
- * ⭐ 内容宽度**曾经**在这里；用户 2026-10-02「首页固定在 30%，存档固定在 100%，设置固定在
- *   100%」⇒ 宽度成了每个页签自己的固定值（见 LauncherHome 的 gamesWidthVp），本文件只剩
- *   「启动后进哪里」一项。⛔ 别把宽度那套再搬回来。
+ * ⭐ 内容宽度**曾经**在这里；用户 2026-10-02「首页固定在 30%，存档 100%，设置 100%」⇒ 宽度成了每个
+ *   页签自己的固定值（见 LauncherHome 的 gamesWidthVp），本文件只剩「启动后进哪里」一项。⛔ 别搬回来。
  * 为什么单独一个文件：它是**界面偏好**不是游戏知识，混进 GameLibrary 会让那里同时管两件事。
- * 为什么用纯文本而非 preferences：本项目每个跨启动状态都是文件（`control_mode.txt`、
- * `selected_game.txt`、`user_dirs.txt`、`jvm.options`），且都是「ArkTS 写、native 或下次启动读」
- * —— 再引入 Preferences 只多一种要理解的东西，没多出任何能力。
- */
+ * 为什么用纯文本而非 preferences：本项目每个跨启动状态都是文件，且都是「ArkTS 写、native 或下次启动读」
+ * —— 再引入 Preferences 只多一种要理解的东西，没多出任何能力。 */
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
@@ -15,9 +11,7 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
 
-/* ====================================================================
- * 启动后进哪里
- * ==================================================================== */
+/* ===== 启动后进哪里 ===== */
 
 const MODE_FILE_NAME = 'launch_mode.txt';
 
@@ -26,15 +20,13 @@ export const LAUNCH_MODE_HOME: string = 'home';
 /** 直接进游戏（选中的 jar 存在时）。 */
 export const LAUNCH_MODE_GAME: string = 'game';
 
-/* 出厂值 = **先进首页**，2026-10-01 用户被卡住之后定的：他选了一个 **mod 当游戏**，于是每次
- * 打开都直接进游戏树、立刻闪退，且**没有任何界面能让他改回来**。检测机制（GameLibrary 的
- * launch_pending）现在能把他送回启动器，但**先进首页**是唯一不依赖检测机制也一定出得来的
- * 选择。代价是每次启动多一次点击（要换回直接进游戏就改成 LAUNCH_MODE_GAME，或拨设置里的开关）。 */
+/* 出厂值 = **先进首页**，2026-10-01 用户被卡住之后定的：他选了 **mod 当游戏**，于是每次打开直接进游戏树、
+ * 立刻闪退，且**没有任何界面能让他改回来** ⇒ **先进首页**是唯一不依赖检测机制也一定出得来的选择。
+ * 代价是每次启动多一次点击（要换回直接进游戏就改成 LAUNCH_MODE_GAME，或拨设置里的开关）。 */
 export const LAUNCH_MODE_DEFAULT: string = LAUNCH_MODE_HOME;
 
 /** 读启动模式。文件不存在或内容不认识时给出厂值。
- * ⚠️ 不认识的值【不报错、也不静默当成另一个有效值】—— 记一条日志再回退到默认：
- *    「降级默认值」会把「读错了」掩盖成「看起来正常」，本项目为此付过代价。 */
+ * ⚠️ 不认识的值【不报错、也不静默当成另一个有效值】—— 记一条日志再回退（「降级默认值」会掩盖「读错了」）。 */
 export function readLaunchMode(filesDir: string): string {
   const path: string = filesDir + '/' + MODE_FILE_NAME;
   try {
@@ -76,9 +68,7 @@ export function writeLaunchMode(filesDir: string, mode: string): void {
   }
 }
 
-/* ====================================================================
- * 深色模式
- * ==================================================================== */
+/* ===== 深色模式 ===== */
 
 const APPEARANCE_FILE_NAME = 'appearance.txt';
 
@@ -89,16 +79,9 @@ export interface AppearancePref {
 }
 
 /* 文件里一行两个词：`auto dark` / `auto light` / `manual dark` / `manual light`。
- *
- * ⭐ 格式与 `SafePref` 那套**故意一样**（`auto` / `user` + 一个值），因为它们是同一族问题：
- *    「玩家管过这件事没有」。两处写成一个形状，读代码的人只需要理解一次。
- *
- * ⚠️ `auto` 时那个 dark 值**仍然写进去** —— 它不参与判断，只为了让这个文件自己可读
- *    （诊断时要能看出「跟随系统时系统当时是什么」）。同 `writeSafePref` 对 vp 的做法。
- *
- * ⛔ **这份偏好是必须的，不是锦上添花**：`ApplicationContext.setColorMode()` 只对
- *    **当前进程**有效，进程一重启就回到系统默认。⇒ 想把「强制深色」保住，就得自己记住它，
- *    并在每次启动后重新应用一次（见 LauncherHome 的 `applyColorMode`）。 */
+ * ⭐ 格式与 `SafePref` 那套**故意一样**（`auto` / `user` + 一个值），同一族问题只需要理解一次。
+ * ⚠️ `auto` 时那个 dark 值**仍然写进去**（不参与判断，只为让这个文件自己可读）。
+ * ⛔ **这份偏好是必须的**：`ApplicationContext.setColorMode()` 只对**当前进程**有效，重启就回到系统默认。 */
 function parseAppearance(raw: string): AppearancePref {
   const parts: string[] = raw.trim().split(/\s+/);
   if (parts.length >= 2 && (parts[0] === 'auto' || parts[0] === 'manual')) {
@@ -145,23 +128,14 @@ export function writeAppearance(filesDir: string, follow: boolean, dark: boolean
   }
 }
 
-/* ====================================================================
- * 游戏语言是否跟随系统
- * ==================================================================== */
+/* ===== 游戏语言是否跟随系统 ===== */
 
 const GAME_LOCALE_FILE_NAME = 'game_locale.txt';
 
-/* 文件里就一个词：`auto`（跟随系统）/ `manual`（不动）。
- * ⭐ 格式与 `AppearancePref` / `SafePref` **故意一样**（`auto` / `manual` 一族），
- *    它们是同一类问题：「这件事由系统定还是由你定」。
- *
- * ⭐ **出厂 `auto`（跟随系统）** —— 用户 2026-10-04 定的。
- *
- * ⚠️ **这是启动器补的一个能力，不是修缺陷**（用户 2026-10-04 纠正过：「这不是缺陷，正常
- *    mindustry 就没有跟随」）。Mindustry 本来就没有「跟随系统」这个设置项：它的语言就是
- *    `settings.bin` 里那个值，`default` 的含义是「用 JVM 的默认 locale」。
- *    本启动器此前没给 JVM 传 locale ⇒ C locale ⇒ 那个 `default` 落在英文上。
- *    出厂打开，是为了让中文设备上开箱就是中文。 */
+/* 文件里就一个词：`auto`（跟随系统）/ `manual`（不动）。⭐ 格式与 `AppearancePref` / `SafePref` **故意一样**。
+ * ⭐ **出厂 `auto`** —— 用户 2026-10-04 定的，也是启动器补的一个能力而非修缺陷（用户纠正过：「这不是缺陷，
+ *   正常 mindustry 就没有跟随」）：Mindustry 的语言就是 `settings.bin` 里那个值，`default` = 用 JVM 的
+ *   默认 locale，而我们此前没给 JVM 传 locale ⇒ C locale ⇒ 落在英文上。出厂打开，中文设备开箱即中文。 */
 export const GAME_LOCALE_FOLLOW: boolean = true;
 
 /** 读「游戏语言是否跟随系统」。文件不在或读不懂 ⇒ **跟随系统**（出厂值）。 */
@@ -206,35 +180,24 @@ export function writeGameLocaleFollow(filesDir: string, follow: boolean): void {
   }
 }
 
-/* ====================================================================
- * 游戏内显示（写进游戏自己的 settings.bin）
- * ==================================================================== */
+/* ===== 游戏内显示（写进游戏自己的 settings.bin）===== */
 
 const GAME_DISPLAY_FILE_NAME = 'game_display.txt';
 
 /* ⛔⛔ **两个量程都是从游戏自己的界面抄来的，别自己编** —— 来源 `SettingsMenuDialog`：
  *      `sliderPref("uiEdgePadding", 0, 0, 100, …)` ⇒ 默认 0、0~100
- *      `sliderPref("uiscale", getInt("uiscale", 100), 25, 300, 5, …)` ⇒ 默认 100、25~300、步长 5
- * ⭐ 用它的量程意味着：**启动器设不出游戏自己的 UI 都设不出的值。** */
+ *      `sliderPref("uiscale", getInt("uiscale", 100), 25, 300, 5, …)` ⇒ 默认 100、25~300、步长 5 */
 /* ⛔⛔ **`*_FACTORY` 与「启动器想让它是什么」是【两件不同的事】，别合并成一个常量。**
- *    `*_FACTORY` = **游戏自己的**默认值 ⇒ 只有一个用途：判断「玩家碰过这个设置没有」。
- *    而「启动器出厂想让它是什么」= `GAME_DISPLAY_DEFAULT`（下面）。
- * ⚠️⚠️ 把它们当成一个数的后果是**静默失效**：一旦哪天把启动器的出厂值调成 70/200
- *    （用户已经调好的值），`untouched` 就会拿 70 去比一份全新游戏的 `0` ⇒ 判定「玩家改过」
- *    ⇒ **永远不写**，而现象只是「这个功能忽然不生效」，看不出因果。
- *    ⇒ 判据：**「什么算没被碰过」只由游戏决定，与我们的偏好无关。** */
+ *    `*_FACTORY` = **游戏自己的**默认值 ⇒ 只用来判断「玩家碰过这个设置没有」。
+ * ⚠️⚠️ 合并的后果是**静默失效**：把启动器出厂值调成 70/200 后，`untouched` 拿 70 比全新游戏的 `0`
+ *    ⇒ 判定「玩家改过」⇒ **永远不写**。⇒ 判据：**「什么算没被碰过」只由游戏决定，与我们的偏好无关。** */
 export const GAME_EDGE_FACTORY: number = 0;
 export const GAME_SCALE_FACTORY: number = 100;
 
-/* 启动器的**基准**界面缩放（百分数）。
- *
- * ⭐ 用户 2026-10-04：「在我的观感下，150% 是比较合理的初始数值。」
- * ⛔ **它不是公式推出来的，也推不出来** —— 理由写在 `GameAutoFit.ets` 那段
- *    （游戏已经用系统密度算过一次缩放了，我们再乘一次就是叠加；而实测本机那个密度项恰好 = 1，
- *     说明「100% 太小」不是密度问题，是观感问题）。
- * ⭐ 它是**实测值**：游戏默认的 100 在手机上偏小。
- * ⚠️ 它**本来**要当基准、按系统字体倍率放大（见 `systemGameScale`）—— 但**今天那个倍率恒为 1**
- *    （我们没声明 `configuration` 标签），所以**实际就是 150**。⛔ 别在这里写成「会跟随系统」。 */
+/* 启动器的**基准**界面缩放（百分数）。⭐ 用户 2026-10-04：「在我的观感下，150% 是比较合理的初始数值。」
+ * ⛔ **它不是公式推出来的** —— 游戏已用系统密度算过一次缩放，再乘一次就是叠加；实测本机那个密度项
+ *    恰好 = 1 ⇒「100% 太小」是观感问题。⚠️ 它**本来**要按系统字体倍率放大（`systemGameScale`），但
+ *    **今天那个倍率恒为 1**（我们没声明 `configuration` 标签）⇒ **实际就是 150**。⛔ 别写成「会跟随系统」。 */
 export const GAME_SCALE_BASE: number = 150;
 
 /* 量程照抄游戏自己的滑条（见上），⛔ 别自己放宽 —— 那会让启动器设出游戏 UI 都设不出的值。 */
@@ -254,28 +217,18 @@ export interface GameDisplayPref {
    * ⛔ **出厂关闭**（用户 2026-10-04：「标注为实验性功能，这个不默认开启」）。
    * ⚠️ 自动模式**只接管避让**，不碰缩放 —— 依据见 `GameAutoFit.ets` 的文件头。 */
   auto: boolean;
-  /* ⛔⛔ **这两个标志是「启动器能改自己默认值」的前提，别删。**
-   *    没有它们时，**写进文件的默认值会被当成玩家的选择**：启动器把当前值存一遍
-   *    （哪怕它只是初值），下次读回来就成了「他设过 100」⇒ 启动器**再也改不动自己的默认值**。
-   *    2026-10-04 实测踩到：把 `GAME_DISPLAY_DEFAULT.scale` 从 100 改成 200 **对他完全无效**，
-   *    因为他那份 `game_display.txt` 里正存着 100（那是我写的初值，不是他选的）。
-   * ⭐ 判据：**持久化只该记「玩家显式做过的选择」**；默认值永远由代码给出。
-   *    ⇒ 读的时候 `*Set === false` 就回退到 `GAME_DISPLAY_DEFAULT`，⛔ **不是**回退文件里那个数。 */
+  /* ⛔⛔ **这两个标志是「启动器能改自己默认值」的前提，别删。** 没有它们时，**写进文件的默认值会被
+   *    当成玩家的选择** ⇒ 启动器**再也改不动自己的默认值**。2026-10-04 实测：把 `scale` 从 100 改成 200
+   *    对他完全无效，因为他那份 `game_display.txt` 里正存着我写的初值 100。
+   * ⭐ 判据：**持久化只该记「玩家显式做过的选择」** ⇒ 读时 `*Set === false` 就回退 `GAME_DISPLAY_DEFAULT`。 */
   edgeSet: boolean;
   scaleSet: boolean;
 }
 
 /** 启动器的出厂值 —— ⛔ **这是「我们想要游戏是什么样」，不是「游戏自己是什么样」。**
- *
- * ⚠️ 上面那对 `*_FACTORY` 只用来判断「玩家碰过没有」；这里是**要写进游戏的数**。
- *    两者**今天不相等**（`scale` 100 vs 200），而它们**必须继续分开**：
- *    把 `untouched` 判据也改成 200 的话，一份全新的游戏（`uiscale = 100`）会被判成
- *    「玩家改过」⇒ 永远不写 ⇒ 症状只是「这个功能忽然不生效」。
- *
- * `scale`：见 `GAME_SCALE_BASE`（150，实测值；系统调过字体大小则按倍率放大）。
- *
- * `edge = GAME_EDGE_FACTORY`：**避让的默认仍是「不改变」** —— 它由「自动适配」按本机算
- *    （见 `GameAutoFit.autoEdgePadding`），而自动适配是**实验性、默认关闭**的。 */
+ * ⚠️ 上面那对 `*_FACTORY` 只用来判断「玩家碰过没有」；这里是要写进游戏的数。两者**必须继续分开**：
+ *    把 `untouched` 判据也改成 200 的话，全新游戏（`uiscale = 100`）会被判成「玩家改过」⇒ 永远不写。
+ * `scale` = `GAME_SCALE_BASE`（150，实测）；`edge = GAME_EDGE_FACTORY`（避让默认仍是「不改变」）。 */
 export const GAME_DISPLAY_DEFAULT: GameDisplayPref = {
   edge: GAME_EDGE_FACTORY,
   scale: GAME_SCALE_BASE,
@@ -285,8 +238,7 @@ export const GAME_DISPLAY_DEFAULT: GameDisplayPref = {
 };
 
 /** 把数值夹进量程。⛔ 读文件与滑条两处都要走它 —— 文件是可以被改坏的。
- * ⚠️ 两个量程**必须分开传**：边距是 0~100，缩放是 25~300。第一版我写了「下限用边距的、
- *    上限用缩放的」那一个函数，两边都错 —— 那种一眼看不出的错正是要避免的。 */
+ * ⚠️ 两个量程**必须分开传**：第一版我写了「下限用边距的、上限用缩放的」那一个函数，两边都错。 */
 function clampTo(v: number, min: number, max: number): number {
   if (!Number.isFinite(v)) {
     return min;
@@ -354,8 +306,7 @@ export function readGameDisplay(filesDir: string): GameDisplayPref {
       hilog.warn(DOMAIN, TAG, 'prefs: game display file has nothing usable -- using defaults');
       return GAME_DISPLAY_DEFAULT;
     }
-    /* ⭐⭐ **没被玩家设过的那一项回退出厂值**（⛔ 不是回退文件里那个数）。
-     *    这一步就是「启动器能改自己的默认值」的唯一原因 —— 见接口里那段。 */
+    /* ⭐⭐ **没被玩家设过的那一项回退出厂值**（⛔ 不是回退文件里那个数）—— 这就是「启动器能改自己默认值」的原因。 */
     return {
       edge: edgeSet ? clampEdge(edge) : GAME_DISPLAY_DEFAULT.edge,
       scale: scaleSet ? clampScale(scale) : GAME_DISPLAY_DEFAULT.scale,
@@ -377,15 +328,10 @@ export function writeGameDisplay(filesDir: string, p: GameDisplayPref): void {
     const f: fs.File = fs.openSync(path,
       fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
     try {
-      /* ⛔⛔ **`auto` 必须写出来 —— 漏了它会让「自动适配」整个失效，而症状是静默的。**
-       *    2026-10-04 真的漏了（那次改动经由脚本替换，替换没匹配上而 `str.replace` 不报错），
-       *    后果连锁：`readGameDisplay` 读不到 `auto` ⇒ 回退 `false` ⇒ 下一次 `refresh()`
-       *    把 `gameAuto` 复位成 false ⇒ **开关自己弹回去**，而 `applyGameDisplayNow`
-       *    于是用**手动值**（0）去比 ⇒ 永远不写。玩家看到的是「拨上去、它自己回去了、游戏没变」。
-       * ⭐ 判据：**读的那一侧加了字段，写的那一侧必须同时加** —— 两者不同步时，
-       *    失败方向是「读到默认值」，而那与「玩家没设过」长得一模一样。 */
-      /* ⭐ 两个 `*Set` 标志**必须一起写**（见接口里那段）：它们是「这一项玩家设过没有」的唯一记录。
-       * ⛔ 漏掉它们 ⇒ 写进去的默认值下次被当成「玩家的选择」⇒ 启动器**再也改不动自己的默认值**。 */
+      /* ⛔⛔ **`auto` 必须写出来 —— 漏了它会让「自动适配」整个失效，而症状是静默的。** 2026-10-04
+       *    真的漏了（脚本替换没匹配上而 `str.replace` 不报错）⇒ 读不到 `auto` ⇒ 回退 `false` ⇒
+       *    `gameAuto` 复位 ⇒ **开关自己弹回去**、之后永远用 0 去比 ⇒ 永远不写。 */
+      /* ⭐ 两个 `*Set` 标志**必须一起写**：漏掉它们 ⇒ 写进去的默认值下次被当成「玩家的选择」⇒ 再也改不动默认值。 */
       fs.writeSync(f.fd, 'auto=' + (p.auto ? '1' : '0')
                        + ' edgeSet=' + (p.edgeSet ? '1' : '0')
                        + ' scaleSet=' + (p.scaleSet ? '1' : '0')
@@ -402,15 +348,9 @@ export function writeGameDisplay(filesDir: string, p: GameDisplayPref): void {
 }
 
 /* 「**上次我们把它写成了什么**」—— ⛔ 这一个文件是「不覆盖玩家设置」那条规则的**全部依据**。
- *
- * ⭐ 判据（三个值一比就知道该不该动手）：
- *     游戏里那个值 == 出厂默认        ⇒ 玩家没碰过      ⇒ **写**
- *     游戏里那个值 == 我们上次写的     ⇒ 那是**我们的**值 ⇒ **写**（玩家改了启动器那边就该跟着变）
- *     其它                            ⇒ 玩家在游戏里改过了 ⇒ **不碰**
- * ⛔ 少了这个文件，就只能靠「是不是出厂默认」判断 —— 那样**启动器一旦写过一次，就再也改不动了**
- *    （值不再是默认、也不是我们认识的，于是永远被当成「玩家改的」）。
- * ⚠️ 它记的是**边距与缩放两个数**，不是「写过没有」这个布尔 —— 布尔分不出「我们写的是 40」与
- *    「我们写的是 60」。 */
+ * ⭐ 三个值一比：游戏里的值 == 出厂默认 ⇒ 玩家没碰过 ⇒ **写**；== 我们上次写的 ⇒ 那是**我们的**值 ⇒
+ *    **写**；其它 ⇒ 玩家改过了 ⇒ **不碰**。⛔ 少了它就只能靠「是不是出厂默认」判断 ⇒ 写过一次就再也改不动。
+ * ⚠️ 它记的是**两个数**，不是布尔 —— 布尔分不出「我们写的 40」与「我们写的 60」。 */
 const GAME_DISPLAY_APPLIED_FILE_NAME = 'game_display_applied.txt';
 
 /** 上次写进游戏的值；从没写过 ⇒ `null`。 */
@@ -441,8 +381,7 @@ export function readAppliedGameDisplay(filesDir: string): GameDisplayPref | null
     if (edge < 0 || scale < 0) {
       return null;
     }
-    /* ⚠️ `applied` 里**不**记 auto：它记的是「我们往游戏里写了什么数」，而 auto 只是
-     * 「这个数是谁算出来的」。判据（不覆盖玩家设置）只用得上那两个数。 */
+    /* ⚠️ `applied` 里**不**记 auto：它记的是「我们往游戏里写了什么数」，而 auto 只是「这个数是谁算出来的」。 */
     return { edge: edge, scale: scale, auto: false, edgeSet: false, scaleSet: false };
   } catch (e) {
     return null;
@@ -466,9 +405,7 @@ export function writeAppliedGameDisplay(filesDir: string, p: GameDisplayPref): v
   }
 }
 
-/* ====================================================================
- * 异形屏避让（vp，四边统一一个值）
- * ==================================================================== */
+/* ===== 异形屏避让（vp，四边统一一个值）===== */
 
 const SAFE_FILE_NAME = 'launcher_safe_vp.txt';
 
@@ -484,19 +421,9 @@ export interface SafePref {
 }
 
 /* 文件里一行两个词：`auto 24` / `user 32`。
- *
- * ⛔ **为什么需要这个标记，而不是「有文件就用文件里的值」**（那是第一版，坏了）：
- *    第一版是「只播种一次」—— 文件不存在时把探测结果写进去，之后就永远用文件里的值。
- *    而**前一版探测本身是坏的**（顶部的判据算错，永远得 0），于是那唯一一次播种
- *    把 0 写了进去 ⇒ 从此 `hasSafeVp()` 恒为真、**探测值再也不被采用**，
- *    界面上「建议 24」与滑条停在 0 同时成立。用户 2026-10-03 报的就是这个：
- *    「自动设置好异形屏避让没做」。
- * ⭐ 教训：一个「只发生一次」的动作，如果它的输入可能是错的，那它就会把错误永久固化。
- *    ⇒ 改成**状态**而不是**事件**：只要玩家没动过滑条，每次启动都重新采用探测结果。
- *
- * ⚠️ 旧格式（单独一个数字，没有标记）会被当成 `auto`。这是**刻意的迁移**：
- *    这个功能只存在过几小时，而唯一存在的旧文件正是那份被错误播种的 0。 */
-
+ * ⛔ **为什么需要这个标记**（第一版「有文件就用文件里的值」坏了）：第一版只播种一次，而**前一版探测
+ *    是坏的**（恒得 0）⇒ 播种把错误的 0 写进去、`hasSafeVp()` 恒为真（界面上「建议 24」与滑条停在 0
+ *    同时成立，用户 2026-10-03 报的）。⭐ 用**状态**不用**事件**。⚠️ 旧格式当成 `auto`，是刻意的迁移。 */
 function parseSafe(raw: string): SafePref {
   const parts: string[] = raw.trim().split(/\s+/);
   if (parts.length >= 2) {
