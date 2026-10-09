@@ -478,13 +478,15 @@ def main():
         # ⭐ 上游原版 jar，未修改 -- 所以这是关于 Anuken 发布的
         # 文件的陈述，而不是关于我们自己构建产物的。见
         # prep_game.py 里的说明。2026-09-28 更改；它曾固定的是我们多阶段的变体。
-        WANT_GAME = "8e0fd5d7dd7828fccff59a693a635948883a704b"
+        # ⭐ SHA-256（与 prep_game.py 的 SRC_SHA256 【必须】同值；两处跨文件重复，
+        #    只改一处 = 一条闸门静默失效）。换算法的理由见 prep_game.py。
+        WANT_GAME = "36d94941a1639478ad1d9be25a9d802c6f77552f400c6da0338b7b019f63a0d1"
         game_ok = False
         with zipfile.ZipFile(hap) as z:
             if GAME_ENTRY not in z.namelist():
                 print("   MISSING from the archive: %s" % GAME_ENTRY)
             else:
-                h = hashlib.sha1()
+                h = hashlib.sha256()
                 n = 0
                 with z.open(GAME_ENTRY) as src:
                     while True:

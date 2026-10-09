@@ -15,9 +15,9 @@
 
 ## 一、要你自己提供的（8 个文件）
 
-| 相对路径 | 字节 | sha1（仓库里的钉子，实测已核对） | 从哪来 |
+| 相对路径 | 字节 | 哈希（仓库里的钉子，实测已核对） | 从哪来 |
 | --- | ---: | --- | --- |
-| `Mindustry.jar` | 88902250 | `8e0fd5d7dd7828fccff59a693a635948883a704b` | 上游 Mindustry **v8 Build 160.5** 官方桌面发布版，逐字节不改。它的 `version.properties` 写着 `build=160.5, modifier=release, type=official` |
+| `Mindustry.jar` | 88677884 | **sha256** `36d94941a1639478ad1d9be25a9d802c6f77552f400c6da0338b7b019f63a0d1` | 上游 Mindustry **v8 Build 160.7** 官方桌面发布版，逐字节不改。⭐ 用 sha256 是为了**能与上游 GitHub Release 的 `digest` 直接对**，不必自己再算一遍（实测已对上） |
 | `lwjgl-ohos/lwjgl.jar` | 1287240 | `cd7dd7a13abce9a2764364f58e138c6f99f50a7f` | LWJGL 的 OHOS 移植。三个 jar 加两个原生库**必须来自同一次 LWJGL 发布**（`prep_lwjgl.py` 的原话：它们「取自一个已构建好的 HarmonyOS 应用」） |
 | `lwjgl-ohos/lwjgl-opengl.jar` | 964989 | `27698e706465a088d4c8eda34f98d69e5c8b32f7` | 同上 |
 | `lwjgl-ohos/lwjgl-sdl.jar` | 1018499 | `96d577ef9b661fe4bb9bfb32fbb1de3ff34219cd` | 同上 |
@@ -27,9 +27,11 @@
 | `jdk21slim/lib/libcxxabi_shim.so` | 10120 | `b605f5863ca1a75170a814ab4054a9867c346e15` | 在**另一个项目**（`sdl-template`）里构建，按字节原样分发；`verify_hap.py` 会校验它的 SHA-1，所以**不要**为了美观去重编它 |
 
 **钉子的权威出处**（本表只是副本，改哪边都要一起改）：
-- `Mindustry.jar` —— `scripts/prep_game.py` 的 `SRC_SHA1`
+- `Mindustry.jar` —— `scripts/prep_game.py` 的 `SRC_SHA256`（另有 `scripts/verify_hap.py` 的 `WANT_GAME` 是**同值**，改一处必须同时改另一处）
 - `lwjgl-ohos/*` —— `scripts/prep_lwjgl.py` 的 `NATIVES`（两个 `.so`）与 `JARS`（三个 jar）
 - JDK 那两个文件**没有哈希钉子**，上面是实测值，仅供核对
+
+⚠️ 表里只有 `Mindustry.jar` 是 **sha256**（理由见那一行），其余仍是 sha1 —— 两种算法**并存是知情的**，不是漏改。
 
 ## 二、脚本自己生成的（⛔ 不要手工提供）
 
@@ -46,7 +48,8 @@
 | 相对路径 | 为什么可以删 |
 | --- | --- |
 | `Mindustry-160.4.jar` | 已被 160.5 取代。**实测没有任何脚本引用它** |
-| `Mindustry-160.5.jar` | 与 `Mindustry.jar` **逐字节相同**（sha256 一致）⇒ 纯冗余 |
+| `Mindustry-160.5.jar` | 已被 160.7 取代。**实测没有任何脚本引用它** |
+| `Mindustry-160.7.jar` | ⚠️ **这是当前版本的那一份**。`Mindustry.jar` 必须与它**逐字节相同**（sha256 一致）—— 两者不同就说明 `Mindustry.jar` 还没换过来 |
 
 ## 四、⭐ `libarcarm64.so` —— 配方已收进仓库
 
@@ -101,9 +104,9 @@ python scripts/config.py     # 打印每一个路径，以及它是否存在（M
 
 ## 1. You provide these (8 files)
 
-| Path | Bytes | sha1 (pinned in the repo, verified) | Where it comes from |
+| Path | Bytes | hash (pinned in the repo, verified) | Where it comes from |
 | --- | ---: | --- | --- |
-| `Mindustry.jar` | 88902250 | `8e0fd5d7dd7828fccff59a693a635948883a704b` | Upstream Mindustry **v8 Build 160.5**, official desktop release, byte-for-byte unmodified |
+| `Mindustry.jar` | 88677884 | **sha256** `36d94941a1639478ad1d9be25a9d802c6f77552f400c6da0338b7b019f63a0d1` | Upstream Mindustry **v8 Build 160.7**, official desktop release, byte-for-byte unmodified. ⭐ sha256 so it can be compared **directly against the upstream GitHub Release `digest`** (verified to match) |
 | `lwjgl-ohos/lwjgl.jar` | 1287240 | `cd7dd7a13abce9a2764364f58e138c6f99f50a7f` | The OHOS port of LWJGL. The three jars and two natives **must come from one LWJGL release** |
 | `lwjgl-ohos/lwjgl-opengl.jar` | 964989 | `27698e706465a088d4c8eda34f98d69e5c8b32f7` | same |
 | `lwjgl-ohos/lwjgl-sdl.jar` | 1018499 | `96d577ef9b661fe4bb9bfb32fbb1de3ff34219cd` | same |
@@ -112,9 +115,13 @@ python scripts/config.py     # 打印每一个路径，以及它是否存在（M
 | `jdk21slim/lib/server/libjvm.so` | 25322128 | `871ffd37689f020ed53332db97d64f5dcb110771` | From an **OpenJDK 21 OpenHarmony (musl / aarch64)** build. A desktop JDK will not do |
 | `jdk21slim/lib/libcxxabi_shim.so` | 10120 | `b605f5863ca1a75170a814ab4054a9867c346e15` | Built in a **different project** (`sdl-template`) and shipped byte-for-byte; `verify_hap.py` checks its SHA-1, so do not rebuild it for tidiness |
 
-Authoritative pins: `Mindustry.jar` in `scripts/prep_game.py` (`SRC_SHA1`);
+Authoritative pins: `Mindustry.jar` in `scripts/prep_game.py` (`SRC_SHA256`; `verify_hap.py`'s
+`WANT_GAME` carries the **same value** -- change one, change the other);
 `lwjgl-ohos/*` in `scripts/prep_lwjgl.py` (`NATIVES`, `JARS`).
 The two JDK files have no pin -- those values are measurements, for checking only.
+
+⚠️ Only `Mindustry.jar` is **sha256** (see its row); the rest are still sha1. The two algorithms
+coexisting is deliberate, not an oversight.
 
 ## 2. Produced by the scripts (do **not** supply by hand)
 
@@ -124,8 +131,10 @@ They live here for historical reasons; they are pipeline outputs.
 
 ## 3. Leftovers, safe to delete
 
-`Mindustry-160.4.jar` (superseded, referenced by nothing) and `Mindustry-160.5.jar`
-(byte-identical to `Mindustry.jar`).
+`Mindustry-160.4.jar` and `Mindustry-160.5.jar` (both superseded, referenced by nothing).
+
+⚠️ `Mindustry-160.7.jar` is **the current one**: `Mindustry.jar` must be byte-identical to it
+(same sha256). If they differ, `Mindustry.jar` has not been swapped over yet.
 
 ## 4. `libarcarm64.so` -- the recipe is in the repository now
 
