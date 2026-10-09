@@ -1,7 +1,6 @@
 /* 应用在 Downloads 里的文件夹 —— 它已经【不再是】导入器了。
  * 三个自作主张往 mods 目录塞文件的旧职责（pickMods / scanModFolder / seedProbeMod）都已移除：scanModFolder
- * 只在 mods 目录已存在同大小文件时才跳过 ⇒ 玩家删掉一个 mod 后，下次启动就会把它带回来；它还和存档撞车
- * （同一文件夹正是游戏浏览器打开的根 -Darc.sdl.chooserPath，存档导出为 .zip 而扫描把 .zip 当 mod 接受）。
+ * 会让玩家删掉的 mod 复活，且与存档撞车（同一文件夹正是游戏浏览器打开的根 -Darc.sdl.chooserPath）。
  * ⚠️ 游戏自己的导入按钮在设备上确认可用：别信「Platform.showFileChooser 默认实现抛 Not implemented」那条
  * 旧结论 —— 持有该按钮的 ModsDialog 用的是游戏【自己】的纯 Java 浏览器（RELEASE-MAINTENANCE.md 2.10）。
  * 保留的是文件夹本身（每次启动创建、路径发布给 native 让游戏浏览器落在玩家够得着的地方）：丢进来的 mod 仍

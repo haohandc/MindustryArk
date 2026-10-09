@@ -34,30 +34,14 @@ const LAUNCHER_MARKER_FILE_NAME = 'show_launcher';
  *    所以两个 jar 都是改过名的。见 launcher.c 的 GAME_JAR 注释。 */
 const BUNDLED_GAME_REL = '/libs/arm64/game/mindustry.so';
 
-/* 包内那份 JVM，相对 `bundleCodeDir`。
- *
- * ⭐ 为什么需要它：**有两种包不带运行时**。
- *    一种是 `SHIPS_GAME = False` 的 lite 分支（不带游戏，但**带** JDK）；
- *    另一种是 `make_store_app.sh tools` 产出的「管理工具」包
- *    —— **JDK 和游戏都不带**，因为不跑 JVM 就不需要
- *    `ALLOW_WRITABLE_CODE_MEMORY`，而那条 ACL 只覆盖平板与 PC/2in1
- *    ⇒ 那是它能在手机上架的**全部理由**（见那个脚本的文件头）。
- *
- * ⚠️ 路径里那两层名字都来自 `launcher.c` 的编译期常量
- *    （`JDK_HOME = ".../libs/arm64/jdk21"`、真正的 JVM 在 `lib/server/` 下，
- *     是 `libjvm_real.so`）。⛔ 改这里必须同时看那边 —— 两处指向同一个文件，
- *    而它们 **只有在「包齐不齐」这件事上会同时被用**。
- * ⚠️ `libjvm.so`（顶层那个）**不能**用来判：它是锚库，
- *    在一个没有 JDK 的包里它同样会缺席，但用真正的 JVM 更直白。 */
+/* 包内那份 JVM，相对 `bundleCodeDir`。⭐ 两种包不带运行时：`SHIPS_GAME = False` 的 lite（带 JDK 不带游戏）、
+ *    `make_store_app.sh tools` 的「管理工具」包（JDK 和游戏都不带 —— 不跑 JVM 就不需要
+ *    `ALLOW_WRITABLE_CODE_MEMORY`，那条 ACL 只覆盖平板与 PC/2in1 ⇒ 那是它在手机上架的全部理由）。
+ * ⚠️ 路径来自 `launcher.c` 的编译期常量（`JDK_HOME`、真正的 JVM 是 `libjvm_real.so`），改这里要同时看那边。 */
 const BUNDLED_RUNTIME_REL = '/libs/arm64/jdk21/lib/server/libjvm_real.so';
 
-/* `source` 的取值：
- *   'user'      玩家自选的那个 jar
- *   'bundled'   包内自带的那个
- *   'none'      两个都不行（真的没有游戏）
- *   'no-runtime' **这个包不带 JVM** —— 它与 'none' 是两件事：
- *               前者是「这个包不支持跑游戏」，后者是「你没有游戏文件」。
- *               分开是因为对玩家的处置不同（换包 vs 导入一个 jar）。 */
+/* `source` 的取值：'user' 玩家自选 / 'bundled' 包里自带 / 'none' 两个都不行 / 'no-runtime' **这个包不带 JVM**。
+ * ⚠️ 'no-runtime' 与 'none' 是两件事（「这个包不支持跑游戏」vs「你没有游戏文件」），对玩家的处置不同。 */
 /** 列表里的一项。够画一行就够了。 */
 export interface GameJar {
   name: string;
@@ -275,20 +259,9 @@ export function hasBundledGame(bundleCodeDir: string): boolean {
 }
 
 
-/** 这个文件**存在**时为真。
- *
- * ⛔⛔ 必须有这个函数，**不能用 `isReadableJar` 代替** —— 这正是 2026-10-03 的缺陷：
- *     `isReadableJar` 除了「能打开」还要看**头两个字节是不是 `PK`**（即是个 zip/jar），
- *     而那份 JVM 是 **ELF 共享库**（头两字节 `\x7fELF`）。
- *     ⇒ 用它判 JVM **永远返回 false**，于是 `hasRuntime()` 恒假，
- *        `resolveGame()` 恒返回 `'no-runtime'`，
- *        **连完整包都会显示「这个包不能运行游戏」并把「启动游戏」置灰。**
- *     ⚠️ 用户看到的现象就是「编译出来的是阉割版本」—— 而包其实是完整的（263 MB）。
- *
- * ⭐ 游戏本体用 `isReadableJar` 是对的：它**确实是**一个改名成 `.so` 的 zip
- *    （`entry/libs/arm64-v8a/game/mindustry.so`，头两字节就是 `PK`）。
- *    ⇒ 两者判据不同，不是笔误。
- *
+/** 这个文件**存在**时为真。⛔⛔ **不能用 `isReadableJar` 代替**（2026-10-03 的缺陷）：
+ *    它还要看头两字节是不是 `PK`，而那份 JVM 是 **ELF**（`\x7fELF`）⇒ 恒 false ⇒ `hasRuntime()` 恒假
+ *    ⇒ **连完整包都显示「这个包不能运行游戏」并把「启动游戏」置灰**。游戏本体是改名的 zip，那才用 `isReadableJar`。
  * ⚠️ `fs.accessSync` **返回布尔值、文件不在时不抛**，所以这里不需要 try。 */
 export function fileExists(path: string): boolean {
   if (path === '') {
@@ -297,27 +270,12 @@ export function fileExists(path: string): boolean {
   return fs.accessSync(path);
 }
 
-/** 这个包里**带不带运行时**（那份自编译的 JVM）。
- *
- * ⭐⭐ 与 `isReadableJar` 同样，是**运行期文件探测**，**不是编译期常量**。
- *    这一点是刻意的、也是承重的：三种形态（master / lite / tools）的
- *    ArkTS 源码因此**可以逐字节相同**，差异只体现在「包里有什么」——
- *    与 `SHIPS_GAME` 那套既有设计完全一致。
- *
- * ⛔ **为什么必须问它，而不是只问「有没有游戏」**：
- *    `resolveGame()` 是两级的 —— 先看**玩家自选**的 jar，再看包里的。
- *    只判「包里有没有游戏」的话，一个**没有运行时**的包里只要玩家
- *    导入并选中了自己的 jar，`resolveGame` 就会乐呵呵地返回那个路径，
- *    启动器显示「启动游戏」，按下去却什么都不发生（`launcher.c` 在
- *    `start_jvm` 里找不到 JVM 就直接返回）。
- *    ⇒ 那是「点了没反应」，最难查的一种失败。
- *
- * ⚠️ 判据取**真正的 JVM**（`libjvm_real.so`），不是顶层那个锚库 `libjvm.so`：
- *    两者在有运行时的包里都在、在没有的包里都不在，但前者是「能不能起 JVM」
- *    的直接回答，后者只是加载链上的一环。 */
+/** 这个包里**带不带运行时**（那份自编译的 JVM）。⭐ 与 `isReadableJar` 一样是**运行期文件探测**，不是
+ *    编译期常量 —— 三种形态（master/lite/tools）的 ArkTS 源码因此**逐字节相同**。
+ * ⛔ 必须问它：没有运行时的包里玩家选中自己的 jar，`resolveGame()` 会返回那个路径 ⇒ 显示「启动游戏」
+ *    但按下去什么都不发生（`start_jvm` 找不到 JVM 直接返回）。⚠️ 判据取真 JVM `libjvm_real.so`，非锚库 `libjvm.so`。 */
 export function hasRuntime(bundleCodeDir: string): boolean {
-  /* ⛔ 这里用 `fileExists` 而【不是】`isReadableJar`，理由见上面 `fileExists` 的注释：
-   *    那份 JVM 是 ELF，`isReadableJar` 的 `PK` 判据会让它恒为 false。 */
+  /* ⛔ 用 `fileExists` 而非 `isReadableJar` —— 那份 JVM 是 ELF，`PK` 判据会让它恒 false。 */
   return fileExists(bundledRuntimePath(bundleCodeDir));
 }
 
@@ -472,15 +430,9 @@ export function consumeLauncherRequest(filesDir: string): boolean {
  * ⚠️ 两个来源都必须【真的能打开】才算数：一条记在那里但文件已被删掉的路径必须落回下一档，
  *    而不是让启动失败 —— 玩家删掉一个 jar 文件是常事。 */
 export function resolveGame(filesDir: string, bundleCodeDir: string): GameResolution {
-  /* ⭐⭐ **先问运行时在不在，再谈选哪个 jar。**
-   * ⛔ 这一行是后补的，而它补的是一个真缺口：`resolveGame` 原本只看
-   *    「哪个 jar 可读」，完全不问包里的 JVM 在不在。于是**没有运行时的包**
-   *    （`make_store_app.sh tools` ⇒ 管理工具形态）里，只要玩家导入并选中
-   *    自己的 jar，它就会返回 `source: 'user'` ⇒ 界面显示「启动游戏」
-   *    ⇒ 按下去什么都不发生（`launcher.c` 的 `start_jvm` 找不到 JVM 直接返回）。
-   *    ⇒ 一个**点了没反应**的按钮，比一个**明确不可用**的按钮糟得多。
-   * ⚠️ 它**不**改动 `hasBundledGame()` 的语义，也不影响 master/lite：
-   *    那两个形态的包里都有运行时，这一行恒为真。 */
+  /* ⭐⭐ **先问运行时在不在，再谈选哪个 jar。** ⛔ 这一行补的是：原本只看「哪个 jar 可读」，
+   *    于是**没有运行时的包**（`make_store_app.sh tools`）里玩家选中自己的 jar 会返回 `source:'user'`
+   *    ⇒ 显示「启动游戏」但按下去没反应。⚠️ 它不改 `hasBundledGame()` 语义，master/lite 里恒为真。 */
   const runtime: boolean = hasRuntime(bundleCodeDir);
   if (runtime) {
     const chosen: string = readSelection(filesDir);

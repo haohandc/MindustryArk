@@ -2204,15 +2204,23 @@ Doing only the first two ships a package named after the previous version.
       in any other checkout.
 
       ⚠️ **This check and the binary one below return DIFFERENT numbers. Do not mix them
-      up.** Measured 2026-09-23: this text check returns **15 lines**; the binary check
-      returns **14 hits**. Reading "14" here and getting 15 looks exactly like a
-      regression and is not one. Of the 15, **14 are not defects at all** — they are the
+      up.** Re-measured 2026-10-07: this text check returns **26 lines**; the binary check
+      returns **14 hits**. Reading "14" here and getting 26 looks exactly like a
+      regression and is not one. Of the 26, **25 are not defects at all** — they are the
       documentation of this check itself (the control's `bad E:/u/x`, the note about
       `https://x`) plus the standard install-location defaults (`E:/Program Files/DevEco
-      Studio`, `C:/Program Files/Java/jdk-17`, all overridable by env). The remaining
+      Studio`, `C:/Program Files/Java/jdk-17`, all overridable by env), plus **one binary
+      false positive** (`AppScope/resources/phone-ldpi/media/app_icon.png` is an image, not
+      text — `git grep` reports it as "Binary file … matches"). The remaining
       **one carries a username**: `scripts/config.py`'s `C:\Users\Haohandc\Arc` default
       for `ARK_ARC_SRC`. That is not a secret — the GitHub account is `haohandc` — but it
       is the only line here worth neutralising the next time that file is touched.
+
+      ⭐ **This number drifts, and it is not a gate.** It read 15 on 2026-09-23 and 26 on
+      2026-10-07. Six of the eleven came in that day with `tools/audio-build/` (the
+      `libarcarm64.so` rebuild recipe, moved into the repository), every one of them a
+      standard install-location default. ⇒ Read it against the date, not against this
+      paragraph.
 - [x] **No local absolute paths in the BINARIES either** — ✅ **DONE 2026-09-22**, 395 → 14.
       See the note at the end of this item for what is left and why. The `git grep` above only sees
       text files, so it cannot see the four native libraries — and they carry `__FILE__`

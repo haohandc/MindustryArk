@@ -94,19 +94,16 @@ const MIN_API_FOR_JIT = 26;
  * ⚠️ 任何要发布的构建里它都必须是 false。 */
 const FORCE_COMPAT_MODE = false;
 
-/** 现在应用不再申请任何运行时权限，列表为空（空时 requestPerms 整个跳过那次调用）。
- * 2026-09-22 移除 READ_WRITE_DOWNLOAD_DIRECTORY：该 API 文档写明仅 2in1 设备，手机无论权限
- * 状态都抛 "The device doesn't support this api"（实测时权限是手工加上的，所以授权不是变量）。
- * ⚠️ 移除的是权限不是调用：ModImporter 仍调 getUserDownloadDir() 作 route A（平板靠它报路径），
- * 真正干活的是不需要权限的 DocumentPickerMode.DOWNLOAD。
- * 实测同一 HAP 同一签名：tablet reqPermissionStates [0,0] / phone [0,-1]。 */
+/** 现在应用不再申请任何运行时权限（空列表时 requestPerms 整个跳过那次调用）。
+ * 2026-09-22 移除 READ_WRITE_DOWNLOAD_DIRECTORY：该 API 仅 2in1 设备，手机无论授权状态都抛
+ * "The device doesn't support this api"。⚠️ 移除的是【权限】不是【调用】：ModImporter 仍调
+ * getUserDownloadDir()，真正干活的是无需权限的 DocumentPickerMode.DOWNLOAD。 */
 const WANTED: Permissions[] = [
 ];
 
 async function requestPerms(ctx: common.UIAbilityContext): Promise<void> {
   /* 没什么可申请的就没什么可做的：截至 2026-09-22 这个列表是空的（见 WANTED）。
-   * 这是正常路径不是边角情况 —— requestPermissionsFromUser() 拿空数组会怎样没有文档，
-   * 但这次调用被跳过了，所以那个问题不会出现。 */
+   * ⚠️ requestPermissionsFromUser() 拿空数组会怎样没有文档 —— 所以这里跳过那次调用。 */
   if (WANTED.length === 0) {
     hilog.info(DOMAIN, TAG, 'permissions: nothing to request');
     return;
@@ -123,9 +120,8 @@ async function requestPerms(ctx: common.UIAbilityContext): Promise<void> {
     }
 
     const res = await atm.requestPermissionsFromUser(ctx, WANTED);
-    /* 把四个字段全打出来，不只那两个显而易见的：这个循环过去只打 permissions/authResults，
-     * 于是「权限弹窗不再出现」要花一整个会话来解释 —— 回答它的正是 dialogShownResults 和 errorReasons
-     * （字段含义见 security/PermissionRequestResult.d.ts）。
+    /* 把四个字段全打出来，不只那两个显而易见的：回答「权限弹窗不再出现」的正是
+     * dialogShownResults 和 errorReasons（含义见 security/PermissionRequestResult.d.ts）。
      * 实测（HarmonyOS 7 手机）：READ_WRITE_DOWNLOAD_DIRECTORY 的 auth=2 dialogShown=true errorReason=0。 */
     for (let i = 0; i < res.permissions.length; i++) {
       const shown: string = (res.dialogShownResults !== undefined
@@ -137,10 +133,9 @@ async function requestPerms(ctx: common.UIAbilityContext): Promise<void> {
         'permission request: %{public}s -> auth=%{public}d dialogShown=%{public}s errorReason=%{public}d',
         res.permissions[i], res.authResults[i], shown, reason);
       if (res.authResults[i] === 2) {
-        /* 报出来是 2 —— 但这里【不要】叙述原因。第一个版本说「判为无效请求所以不弹」，是从 SDK
-         * 那句推出来的；实测元组 auth=2 dialogShown=true errorReason=0 反驳了它（0 意为 "this request
-         * is valid"），且整次调用约 170ms 就返回，快到不可能有人回答对话框。三个字段凑不成故事，
-         * 只记录结果：未授予，玩家看不到弹窗。 */
+        /* 报出来是 2 —— 但这里【不要】叙述原因：从 SDK 那句推出的「判为无效请求所以不弹」已被
+         * 实测反驳（auth=2 dialogShown=true errorReason=0，且整次调用约 170ms 就返回，
+         * 快到不可能有人回答对话框）。只记录结果：未授予，玩家看不到弹窗。 */
         hilog.warn(DOMAIN, TAG,
           '  %{public}s: NOT GRANTED (authResult 2). dialogShown=%{public}s, '
           + 'errorReason=%{public}d -- the three fields do not agree, so no cause '
@@ -154,10 +149,9 @@ async function requestPerms(ctx: common.UIAbilityContext): Promise<void> {
   }
 }
 
-/** 不再申请任何运行时权限（更早申请的 READ_WRITE_DOWNLOAD_DIRECTORY 已删）。
- * 当初要它是为了把 JDK 放在用户 Download 区，该计划已放弃（JDK 随 HAP 打包并复制进沙箱），
- * 实测拒绝它对游戏运行毫无影响。⚠️ 唯一想要用户可见目录的是 Arc 的
- * libarc-filedialogsarm64.so —— 它在这里加载不了（tinyfiledialogs / glibc）；不是本平台自带的那个选择器。 */
+/** 更早申请的 READ_WRITE_DOWNLOAD_DIRECTORY 已删：当初要它是为了把 JDK 放进用户 Download 区，
+ * 该计划已放弃（JDK 随 HAP 打包并复制进沙箱）。⚠️ 唯一想要用户可见目录的是 Arc 的
+ * libarc-filedialogsarm64.so —— 它在这里加载不了（tinyfiledialogs / glibc）。 */
 
 /* 原生侧在哪里找这些文件。刻意用字面路径：ArkTS 的 context.filesDir 是 HAP 级目录，
  * 不是原生代码共享的那个应用级目录，写错地方的文件永远不会被看到。 */
@@ -169,13 +163,10 @@ const IME_CMD_FILE = '/data/storage/el2/base/files/ime_cmd';
 const IME_RECT_FILE = '/data/storage/el2/base/files/ime_rect';
 
 /* 这里【曾经】有 MODS_DIR，已随它唯一的用户消失 —— 本文件再没有东西写游戏的模组目录。
- * 备忘：user.home→DEST_ROOT，Arc 拼 "<user.home>/.local/share/Mindustry/"，mods 在其下，
- * 设备上是 /data/storage/el2/base/files/.local/share/Mindustry/mods —— 用绝对字面量的理由同上。 */
+ * 备忘：mods 目录在设备上是 /data/storage/el2/base/files/.local/share/Mindustry/mods —— 用绝对字面量的理由同上。 */
 
-/* seedProbeMod() 和它的两个常量曾在这里，【已删除】—— 理由同删掉那行菜单、那次文件夹扫描：
- * 那次复制每次都【无条件】执行，开发者手删 probe-mod.jar 后下次启动又被放回去，
- * 和文件夹扫描复活的模组一模一样。⚠️ tools/probe-mod/ 仍在仓库里、仍能构建；
- * 消失的是自动种入，所以设备上遗留的 probe-mod.jar 被删掉后会保持被删。 */
+/* seedProbeMod() 和它的两个常量曾在这里，【已删除】—— 理由是那次复制每次都【无条件】执行，
+ * 开发者手删 probe-mod.jar 后下次启动又被放回去，同文件夹扫描复活的模组。 */
 
 /* 玩家选了哪套操作方案，由启动器在 JVM 启动前读取。刻意写在 user_dirs.txt 旁边：
  * 两者都写进 filesDir（HAP 级目录），【不是】上面 IME 桥接用的应用级目录 ——
@@ -194,15 +185,13 @@ const BALL_SIZE_FALLBACK_VP = 48;   /* 在 onAreaChange 上报任何数据之前
 const BALL_SIZE_RATIO = 0.065;      /* 窗口短边的比例 */
 const BALL_SIZE_MIN_VP = 48;
 const BALL_SIZE_MAX_VP = 76;
-/* 球停靠时离边留多远。四条边、每条会安置球的路径（首次摆放/拖动/从磁盘恢复）都适用 ——
- * 它曾经只在首次摆放时被用到，结果拖动过的球贴边相切，没碰过的球却保留着间隙。 */
+/* 球停靠时离边留多远。四条边、每条会安置球的路径（首次摆放/拖动/从磁盘恢复）都适用。 */
 const BALL_MARGIN_VP = 8;
 /* 触摸移动多远才算拖动而非点按。没有它，点按时最轻微的移动都会被读成拖动。 */
 const BALL_DRAG_SLOP_VP = 8;
 const BALL_MENU_W_VP = 176;
-/* 一行的高度。这些行过去是裸 Row + fontSize 14 的 Text，点击目标只有约 19vp，
- * 设备上报「选项太小、也挨得太近」。现在行带显式高度、文本居中，点击目标是整行。
- * 46 矫枉过正，设备上报间隙应减半 ⇒ 32 让文本保持 16vp、上下留白减半。
+/* 一行的高度。这些行过去是裸 Row + fontSize 14 的 Text，点击目标只有约 19vp，设备上报「选项太小、
+ * 也挨得太近」。46 矫枉过正，设备上报间隙应减半 ⇒ 32 让文本保持 16vp、上下留白减半。
  * BALL_MENU_H_VP 由它推导，因为 ballMenuY 要拿它做 clamp。 */
 const BALL_MENU_ROW_VP = 32;
 const BALL_MENU_DIVIDER_VP = 1;
@@ -217,9 +206,8 @@ const BALL_MENU_FONT_VP = 16;
 const BALL_MENU_HINT_FONT_VP = 14;
 
 /* 自动半隐藏：球贴上边后再滑出这么多，只剩外侧 40% 留在屏幕上并降低透明度。
- * 0.6 在这台平板的密度下，约 66vp 的球仍有约 26vp 可见。
- * 那条窄边就是全部目标区 —— 把球弄回来的点击只需落在那条窄边上，不必瞄准。
- * 调大它就隐藏得更多；它就是那个旋钮。 */
+ * 0.6 在这台平板的密度下，约 66vp 的球仍有约 26vp 可见 —— 那条窄边就是全部目标区，
+ * 把球弄回来的点击只需落在它上面。调大它就隐藏得更多；它就是那个旋钮。 */
 const BALL_HIDE_MS = 3000;
 const BALL_HIDE_FRACTION = 0.6;
 const BALL_OPACITY_HIDDEN = 0.45;
@@ -236,8 +224,7 @@ const IME_DISMISS_MS = 1500;
 /* 给隐形文本框额外增加的高度，只在键盘弹起时：框架只会把页面上推到聚焦文本框可见为止，
  * 所以这是避免游戏文本框紧贴键盘上边缘的唯一杠杆。margin 向下长，也盖住游戏画在文本框
  * 下方的东西（导出对话框上是 Cancel）—— 要够到它得先移开焦点。
- * ⚠️ 改成向上是错的：下边缘会落在 fieldY + fieldH（`y = fieldY - 24` + `h = fieldH + 24`），
- * 页面少推 24vp，键盘盖住 Cancel 和 Enter ⇒ 只在用户收起键盘时才去掉这个外伸。 */
+ * ⚠️ 改成向上是错的（少推 24vp，键盘盖住 Cancel 和 Enter）⇒ 只在收起键盘时才去掉这个外伸。 */
 const IME_FIELD_MARGIN_VP = 24;
 
 @Entry
@@ -304,22 +291,14 @@ struct Index {
   /** 设置一次，在 XComponent 存在之前：见 aboutToAppear。 */
   @State shieldBlocked: boolean = false;
   /* Kit 的原始答案：'on' / 'off' / 'no-lib: ...' / 'no-sym: ...' / 'mode=N'。
-   * ⛔ **不是 `@State`**（2026-10-05 改的）：它在 `aboutToAppear` 里被写、被读（用来算
-   *    `shieldBlocked` 与那行日志），但**从来没有在 `build()` 里被读过** ⇒ 那个 `@State`
-   *    只买到「每次赋值都把这一页标脏」，一次重绘都不产出。同 `jvmFaults`。
+   * ⛔ **不是 `@State`**（2026-10-05）：它只在 aboutToAppear 里被写、被读，从没在 `build()`
+   *    里被读过 ⇒ 那个 `@State` 一次重绘都不产出，只把这一页标脏。同 `jvmFaults`。
    * ⚠️ `shieldBlocked` **保留 `@State`** —— 它真的在 `build()` 里决定挂不挂 XComponent。 */
   private shieldDiag: string = '';
   /* 上一次启动的临终遗言，在它的日志还存在时捕获。
-   * ⛔⛔ **同样不是 `@State`，而且它当前【没有任何读者】**（2026-10-05 记下来的）。
-   *    这里如实写出来，而不是留一个看起来在用的字段：
-   *    · 它捕获的那几行（`mmap(RWX) FAILED` / `FORCING -Xint` / `calling JNI_CreateJavaVM`
-   *      / `execmem:` / `shield now:`）**全部来自 `stderr.log` 的尾部**；
-   *    · 而「导出诊断」已经把 `stderr.log` / `stdout.log` 各 128 KB **原样收进报告**
-   *      （`ExportDiagnostics`）⇒ 这几行的信息**已经在玩家能拿到的那个文件里**了。
-   *    ⭐ 所以它现在是**重复采集**：删掉它不会少任何信息，留着也不会多给。
-   *    ⛔ 但我**没有删**：它是「在标记被清除之前、原生 main() 截断日志之前」抢下来的那一份，
-   *      窗口只有那一下，而删掉它要重新论证「那条窗口真的没有价值」—— 那不是这一轮该做的事。
-   *    ⇒ 保留、标清楚，等哪天有人要动这里时再决定。 */
+   * ⛔ **不是 `@State`，而且当前【没有任何读者】**（2026-10-05 记下）：它捕获的那几行全部来自
+   *    `stderr.log` 尾部，而「导出诊断」已把整个 stderr.log 原样收进报告 ⇒ 这是重复采集。
+   *    保留是因为它是「标记被清除、原生 main() 截断日志之前」抢下的那一份，窗口只有那一下。 */
   private jvmFaults: string = '';
   /** 启动器留下了「JVM 正在创建」的标记。 */
   @State jvmIncomplete: boolean = false;
@@ -366,15 +345,12 @@ struct Index {
   aboutToAppear(): void {
     const ctx = getContext(this) as common.UIAbilityContext;
     /* 应用名在这里读，**不是**打开 About 时才读：`appLabel()` 只是一次同步的资源查表，
-     * 而下面 publishCrash() 在启动阶段就要用它（崩溃报告的抬头），那时 About 还没被打开过。
-     * ⚠️ 版本号不同 —— 那个要发一次异步包查询，所以仍留在 openAbout() 里按需读。
-     * 拿不到就留空串，各处调用点自己兜底。 */
+     * 而下面 publishCrash() 在启动阶段就要用它（崩溃报告的抬头）。⚠️ 版本号不同 —— 那个要发
+     * 一次异步包查询，所以仍留在 openAbout() 里按需读。拿不到就留空串，调用点自己兜底。 */
     this.appName = appLabel(ctx);
-    /* 权限请求走的是普通窗口，所以沉浸式切换【串】在它后面而不是并行：requestPerms() 是异步的，
-     * 首条语句 await getBundleInfoForSelf()，下面的一切都在那次 await 期间运行 —— 而系统权限
-     * 对话框属于普通窗口，不属于刚变成全屏、没有栏的窗口。
-     * ⚠️ 这是【预防措施】不是【诊断】：它当初的说法已被下次启动否证（顺序变、结果没变），
-     * 保留是因为顺序本身是对的。 */
+    /* 权限请求走的是普通窗口，所以沉浸式切换【串】在它后面而不是并行：requestPerms() 首条语句
+     * 就 await 包查询，下面的一切都在那次 await 期间运行 —— 而系统权限对话框属于普通窗口，
+     * 不属于刚变成全屏、没有栏的窗口。这是预防措施不是诊断（顺序本身是对的）。 */
     requestPerms(ctx).then(() => {
       this.enterImmersive();
     }).catch((e: BusinessError) => {
@@ -386,14 +362,12 @@ struct Index {
     });
     /* 应用在 Downloads 里的文件夹在这里创建，不是在 ability 里：这里才有 UI 窗口 —— 实测同一个
      * DOWNLOAD 模式调用从菜单点击能成功、从 EntryAbility.onCreate 报 13900042。每次启动都检查
-     * 并重建。⚠️ 用途已变而函数名没跟上（磁盘上仍叫 ensureModFolder / mod_folder）：它过去是暂存区
-     * （内容每次启动被扫进模组目录），现在纯粹是游戏自带文件浏览器打开的目录。 */
+     * 并重建。⚠️ 用途已变而函数名没跟上（磁盘上仍叫 ensureModFolder / mod_folder）。 */
     ensureModFolder(ctx, ctx.filesDir + '/mod_folder')
       .then(() => {
-        /* 桥接文件在这里【再写一次】—— 这是「文件浏览器打开在错误位置」的修复。
-         * writeUserDirs 在 ability 的 onCreate 里跑，早于这里的文件夹创建，所以首次装机启动时
-         * 桥接文件没有 `mods=` 那行，启动器退回普通的 Download 目录（实测 "download NOT READABLE
-         * errno=1"），浏览器打开在一片虚无上。抢在启动器读取之前写完即修复；抢不到也无害。 */
+        /* 桥接文件在这里【再写一次】—— 这是「文件浏览器打开在错误位置」的修复：writeUserDirs 在
+         * ability 的 onCreate 里跑，早于这里的文件夹创建，所以首次装机启动时桥接文件没有 `mods=`
+         * 那行，启动器退回 Download 目录（实测 "download NOT READABLE errno=1"）。 */
         writeUserDirs(ctx.filesDir);
         /* 崩溃报告导出的后半段。崩溃本身在 ability 的 onCreate 里捕获（必须赶在原生 unlink 之前），
          * 但那时无法写入 Downloads（手机要靠 DOWNLOAD 模式 picker 的授权，而 picker 需要窗口）。
@@ -516,17 +490,9 @@ struct Index {
     try {
       const ctx = getContext(this) as common.UIAbilityContext;
       const win = await window.getLastWindow(ctx);
-      /* ⛔⛔ **`await` 之后再确认这一页还在**（2026-10-05 修的）。
-       *    上面那句是**异步**的，而 `aboutToDisappear()` 里有一份对称的清理：
-       *      `imeWindow.off('avoidAreaChange'); imeWindow = undefined;`
-       *    ⇒ 若销毁正好发生在这次 `await` 期间，清理**已经跑完了**，而这一句紧接着
-       *      **又把监听注册上去、并把 `imeWindow` 重新赋成一个已经不存在的窗口上的窗口**
-       *      ⇒ 那个监听器**永远不会被摘掉**（`aboutToDisappear` 不会再跑第二次），
-       *      而它的回调还会去写一张已经销毁的页面的 @State。
-       * ⭐ 判据：**「先 await、后注册」的每一处，都要在注册前重新确认目标还活着** ——
-       *    清理点只保证「跑过」，不保证「跑在注册之前」。
-       * ⚠️ 这个标志在 `aboutToDisappear` 里置上，⛔ 别在 `aboutToAppear` 里重置：
-       *    这一页是被重建（新实例）而不是被复用，新实例的字段本来就是初值。 */
+      /* ⛔⛔ **`await` 之后再确认这一页还在**（2026-10-05 修）：销毁若正好发生在这次 await 期间，
+       * `aboutToDisappear()` 的清理已经跑完，这一句又会把监听注册到一个已不存在的窗口上、永远摘不掉。
+       * 判据：「先 await、后注册」的每一处都要在注册前重新确认目标还活着。⚠️ 别在 aboutToAppear 里重置。 */
       if (this.pageGone) {
         return;
       }
@@ -634,27 +600,9 @@ struct Index {
   }
 
   /* 给游戏的 XComponent 要回焦点 —— **这是实体键盘能不能用的那个开关**。
-   *
-   * ⛔ 为什么必须有它：默认启动模式是「先显示启动器」，那一刻 `showLauncher` 为真
-   *    ⇒ XComponent **不在树里** ⇒ 它上面那句 `.defaultFocus(true)` **赶不上页面的初始构建**，
-   *    等于没设。玩家点「启动游戏」只是把 `showLauncher` 置假，组件这时才被建出来，
-   *    而全工程没有别处给它请求过焦点（`requestFocus('SDL_XComponent')` 原先只剩 `dismissIme()`
-   *    一处）⇒ ArkUI 只把按键投递给聚焦组件 ⇒ **实体键盘彻底失灵，而触摸一切正常**
-   *    （触摸按坐标投递，不看焦点）。
-   * ⚠️ 症状的指纹：**IME 能正常弹出**（它走文件桥 + 一个隐形 TextInput，与这里无关）、
-   *    游戏里按不了键、两种操控方案都一样。日志里会看到按键只落在 `onKeyPreIme[Stack]`，
-   *    **没有** `onKeyPreIme[X]` —— 就是焦点不在 XComponent 上的指纹。
-   *
-   * ⚠️ 为什么是**一串延迟请求**，而不是 `onAppear` 里请求一次：组件刚建出来那一刻还没布局完，
-   *    那一次请求会被丢掉（2026-10-05 实测：`onAppear` 里请求一次**没修好**，日志里连那行都没留）。
-   *    这是本项目已经付过代价的形状 —— IME 那个隐形文本框的注释写着「第一次请求必须等它」，
-   *    用的是 `setTimeout(..., 60)`。游戏这个目标比文本框晚得多（surface 要先挂上），所以给几档延迟兜住。
-   * ⭐ 而 `requestFocus('SDL_XComponent')` 这个调用**本身确实有效**：`dismissIme()` 一直靠它
-   *    把键盘交还给游戏，那条路是好的（那里的注释写着「否则 ESC 和 WASD 就不再到达」）——
-   *    **坏的只是时序**，所以这里补的是「什么时候要」，不是「怎么要」。
-   * ⚠️ 只在游戏树里要（`showLauncher` 为假），否则会从启动器界面上把焦点抢走。
-   * ⚠️ `focusControl.requestFocus` 返回 **void**，拿不到成败 ⇒ 唯一判据是 hilog：
-   *    **修好之后按一个键，日志里会出现 XComponent 自己那条 `onKeyPreIme[X]`。** */
+   * ⛔ 默认「先显示启动器」⇒ XComponent 不在树里，`.defaultFocus(true)` 赶不上初始构建，而全工程
+   *    没有别处请求过焦点 ⇒ 按键投递不到聚焦组件 ⇒ **实体键盘彻底失灵，触摸照常**（按坐标投递）。
+   * ⚠️ 必须一串延迟请求 —— `onAppear` 里请求一次会被丢掉（2026-10-05 实测）。只在游戏树里要。 */
   private focusClaimPending: boolean = false;
 
   private claimGameFocus(): void {
@@ -895,9 +843,8 @@ struct Index {
         this.saveBallPos();
         this.scheduleBallHide();
       } else if (this.ballWasHiddenOnDown) {
-        /* 第一次点按只把球带回来，打开菜单需要第二次。没有这个拆分，点半隐藏的球会同时恢复球
-         * 【又】打开菜单 —— 一个只想看看球跑哪去了的玩家会得到一个他没要的菜单。倒计时也会重新开始，
-         * 否则点一下之后球会一直待在外面，半隐藏就不再是静息状态。 */
+        /* 第一次点按只把球带回来，打开菜单需要第二次：否则点半隐藏的球会同时恢复球【又】打开菜单。
+         * 倒计时也会重新开始，否则点一下之后球会一直待在外面，半隐藏就不再是静息状态。 */
         this.scheduleBallHide();
       } else {
         this.ballMenu = !this.ballMenu;
@@ -1095,20 +1042,9 @@ struct Index {
    * 返回 true 表示本页处理了它，应用留在屏幕上。退出是游戏自己主菜单里的事，不是我们的。
    * ⚠️ 双击退出做过又拿掉（分清 UI 深处需要游戏的 UI 状态，我们没有这个通道）；代价是在主菜单上返回什么都不做，逃生口不受影响。 */
   onBackPress(): boolean {
-    /* ⛔ 先问启动器界面：原来这里无条件把返回转成 ESC 发给游戏，而启动器界面（首页/存档/设置）
-     * 底下根本没有游戏 ⇒ 那条 ESC 发进虚空，玩家看到「滑了没反应」。手势本身是好的（系统的手势
-     * 侧滑与返回键是同一个事件）；缺的是「谁在启动器界面里消费它」。
-     *
-     * ⛔⛔ **但只要还在启动器界面上，就【绝不】往桥里写东西**（2026-10-05 修的，代码审查发现）。
-     *    原来这一句是 `if (this.showLauncher && this.launcherBack())`，而 `launcherBack()` 在
-     *    **根层**返回 false（`LauncherHome.handleBack()` 最外层就是 `return false`）
-     *    ⇒ 条件不成立 ⇒ **落到下面那条 `appendCmd('E\n')`** ⇒ 往「给游戏发命令」的桥文件里
-     *    写了一个 ESC。可此刻界面上**根本没有游戏**（没有 XComponent ⇒ 没有 native 消费者）
-     *    ⇒ 这条 `E\n` 就**留在文件里**，一直等到玩家点「启动游戏」：XComponent 一挂载，
-     *    native 从 offset 0 读起，把这**一次 ESC 当成按键喂给刚起来的游戏**（ESC 会开关游戏菜单）。
-     * ⭐ 触发链很普通：在启动器首页按一下返回（界面上没反应，这是设计），过一会儿点启动游戏。
-     * ⛔ 判据：**「谁在消费这条命令」比「命令该不该发」更根本** —— 没有消费者时写进去的命令
-     *    不会消失，只会**延后生效**，而延后生效在玩家眼里就是「游戏自己动了」。 */
+    /* ⛔ 只要还在启动器界面上，就【绝不】往桥里写东西（2026-10-05 修）：launcherBack() 在根层
+     * 返回 false，于是旧代码落到下面那条 appendCmd('E\n') —— 此刻没有 XComponent ⇒ 没有消费者
+     * ⇒ 这条 ESC 留在文件里，等玩家点「启动游戏」时被喂给刚起来的游戏。手势本身是好的。 */
     if (this.showLauncher) {
       const handled: boolean = this.launcherBack();
       hilog.info(DOMAIN, TAG, 'back: the launcher screen had it, handled=%{public}s',
@@ -1149,9 +1085,8 @@ struct Index {
    * 两个方向重写：只写不删会让一次 -Xint 永久留下，而设备上没有任何东西能解释为什么。 */
   private setupCompatMode(): void {
     /* 优先级顺序：FORCE_COMPAT_MODE（明确的指令） > 启动器的结论（对本次安装的测量） >
-     * 设备类型规则（猜测，只在没有测量结果时用）。⚠️ FORCE 必须在最上面 —— 它就是发布脚本
-     * 「只要它不是 false 就拒绝构建 release」那个开关；更早的版本把结论放到它上面，于是开关
-     * 无声失效（一次开着 FORCE 的启动读到过期的 "jit" 结论，把强制作罢，结果什么都没写）。 */
+     * 设备类型规则（猜测）。⚠️ FORCE 必须在最上面 —— 它就是发布脚本「只要它不是 false 就拒绝
+     * 构建 release」那个开关；更早的版本把结论放到它上面，于是开关无声失效。 */
     let want: boolean = false;
     let kind: string = '?';
     let api: number = -1;
@@ -1173,9 +1108,8 @@ struct Index {
     }
 
     /* 启动器的测量压过猜测：规则问「这是不是那类通常拿不到内存的设备」，探测问「本次安装拿到了
-     * 没有」—— 只有后者是玩家体验到的东西，两者不一致比规则暗示的更频繁（API 26 手机在商店包里
-     * 拿不到权限、API 26 的 DEBUG 安装 JIT 却跑得好、没有该 ACL 的平板）。
-     * ⚠️ 猜测仍是首启的答案且在低于 API 26 的设备上必须如此：什么都不写会让 JVM 在产生结论前卡住。 */
+     * 没有」—— 只有后者是玩家体验到的。⚠️ 猜测仍是首启的答案，且在低于 API 26 的设备上必须如此：
+     * 什么都不写会让 JVM 在产生结论前卡住。 */
     const verdict: string = launcherExecMemoryVerdict();
     if (verdict === 'interp') {
       want = true;
@@ -1220,14 +1154,12 @@ struct Index {
   }
 
   /** 决定这一屏显示游戏还是启动器。只在 aboutToAppear 里调用一次。
-   * ⚠️ 必须在 ArkTS 里、且必须在挂载 XComponent 之前：挂载 XComponent ⇒ 加载 libmain.so ⇒
-   * main() 跑 ⇒ 一次完整的 JVM 启动，所以「先挂上、再由 native 说没有游戏」会白起一次 JVM。
-   * native 侧仍然【也】判一次（launcher.c 的 resolve_game_jar）：防的是 `aa start` 之类绕过界面
-   * 直接拉起 native，以及两次之间文件被删。 */
+   * ⚠️ 必须在挂载 XComponent 之前：挂载 ⇒ 加载 libmain.so ⇒ main() 跑 ⇒ 一次完整的 JVM 启动，
+   * 所以「先挂上、再由 native 说没有游戏」会白起一次 JVM。native 侧也判一次（防 `aa start`
+   * 之类绕过界面直接拉起，以及两次之间文件被删）。 */
   /* 把「上次为什么没起来」拼成一段给玩家看的话。⚠️ 两句判据指向的处置不同：jvm_incomplete
-   * ⇒ Java 虚拟机都没建起来（多半是设备/权限层面，与 jar 无关）；JVM 好的 ⇒ 那个 jar 里没有
-   * 游戏。⚠️ 日志尾巴是搬过来的：启动器把每处失败都写进 stderr.log，例如
-   * "!! mindustry.core.Vars is NOT on the classpath" —— 与其写「可能是不兼容的 jar」，不如交出原文。 */
+   * ⇒ Java 虚拟机都没建起来（多半是设备/权限层面，与 jar 无关）；JVM 好的 ⇒ 那个 jar 里没有游戏。
+   * ⚠️ 日志尾巴是搬过来的：与其写「可能是不兼容的 jar」，不如交出启动器写进 stderr.log 的原文。 */
   private buildLaunchFault(jarPath: string): string {
     const lines: string[] = [];
     if (jarPath !== '') {
@@ -1268,10 +1200,9 @@ struct Index {
       return;
     }
 
-    /* 上一次的启动尝试没有走到游戏入口 ⇒ 回启动器，并把原因交给它显示 —— 这是「一打开就闪退、
-     * 回不了主界面」的解药（2026-10-01 实际撞上：把一个 mod 当成游戏选了）。⚠️ 现有两个标记盖不住它，
-     * 见 GameLibrary 里 launch_pending：JVM 建起来了（jvm_incomplete 已删），主类找不到时是干净返回
-     * （不写 crash.txt）⇒ 必须有「有没有到过游戏入口」的独立判据。读后即删，同 consumeLauncherRequest。 */
+    /* 上一次的启动尝试没走到游戏入口 ⇒ 回启动器并把原因交给它显示 —— 这是「一打开就闪退、回不了
+     * 主界面」的解药（2026-10-01 实际撞上：把一个 mod 当成游戏选了）。⚠️ 现有两个标记盖不住它：
+     * JVM 建起来了（jvm_incomplete 已删），主类找不到时是干净返回（不写 crash.txt）。读后即删。 */
     const pending: string = pendingLaunchAttempt(ctx.filesDir);
     if (pending !== '' || this.jvmIncomplete) {
       this.launchFaultJar = pending;
@@ -1409,20 +1340,8 @@ struct Index {
              * 去掉无损失：触摸按坐标投递、只有按键跟随焦点。 */
             .focusable(true)
             .defaultFocus(true)
-            /* ⛔⛔ **这一句是承重的，别删**（2026-10-05 修，用户 bisect 定位到本处）。
-             *   `defaultFocus` 只在【页面初始构建】那一次起作用。而默认启动模式是「先显示启动器」，
-             *   那一刻 `showLauncher` 为真 ⇒ XComponent **根本不在树里**，初始焦点就落在没有它的页面上。
-             *   玩家点「启动游戏」只是把 `showLauncher` 置假 ⇒ XComponent 【这时才被建出来】，
-             *   而没有任何地方给它请求过焦点：全工程 `requestFocus('SDL_XComponent')` 只剩
-             *   `dismissIme()` 那一处，冷启动直接进游戏时一次都走不到。
-             *   ⇒ ArkUI 只把按键投递给聚焦组件 ⇒ **实体键盘彻底失灵，而触摸一切正常**（触摸按坐标投递）。
-             * ⚠️ 症状的指纹是「IME 能正常弹出、游戏里就是按不了键、两种操控方案都一样」——
-             *   因为 IME 走的是文件桥 + 一个隐形 TextInput，与这里这个焦点无关。
-             * ⭐ 判据：**组件晚于页面初始构建才出现时，`defaultFocus` 赶不上，必须自己请求一次。**
-             * 【实测·用户 bisect】1.1（无启动器界面）键盘正常 → 1.2（引入启动器界面）键盘坏、
-             *   且 1.2 / 1.3.1 / 1.3.2 / 1.3.3 全坏；把启动模式改成「直接进游戏」（XComponent 构建时就在）
-             *   键盘立刻恢复 ⇒ 本句即修复。
-             * ⚠️ `focusControl.requestFocus` 返回 **void**（不是 boolean），别去接它的返回值。 */
+            /* ⛔ `.defaultFocus` 只在【页面初始构建】那一次起作用：默认「先显示启动器」时
+             * XComponent 不在树里，它赶不上 ⇒ 必须靠 `onAppear` 自己请求一次（见 claimGameFocus）。 */
             .onAppear(() => { this.claimGameFocus(); })
             /* 最早的按键钩子，必须【拒绝】（返回 false）：在这里消费 ESC 虽然能修正系统行为，但实测会在
              * 原生代码看到之前就把它吞掉（ESC 时 SDL 一个字节都没记到，而非 ESC 的控制键仍正常到达）。
@@ -1528,9 +1447,8 @@ struct Index {
             .strokeWidth(BALL_MENU_DIVIDER_VP)
             .color('#22ffffff')
 
-          /* 条目：当前生效的是哪套操作方案及切换开关。选择必须在游戏启动之前做出：Mindustry 的整个
-           * 输入层【和】UI 都派生自 Vars.mobile，在 Vars.init() 里只写一次；它自带的游戏内开关只改输入
-           * 处理器 ⇒ 桌面控制配移动端 UI（平板上实测并在字节码里确认）。所以需要重启，这一点被明白说出。 */
+          /* 条目：当前生效的是哪套操作方案及切换开关。必须在游戏启动之前做出：Mindustry 的输入层
+           * 【和】UI 都派生自 Vars.mobile，它只在 Vars.init() 里写一次 ⇒ 需要重启。 */
           Row() {
             Text(this.controlMode === CONTROL_MODE_DESKTOP ? 'PC 模式' : '触屏模式')
               .fontSize(BALL_MENU_FONT_VP)
@@ -1548,10 +1466,9 @@ struct Index {
             .strokeWidth(BALL_MENU_DIVIDER_VP)
             .color('#22ffffff')
 
-          /* 这里【曾经】有一行 "导入模组"（选文件 → 复制进模组目录），已【删除】。那三种方式全都让应用
-           * 自己决定一个模组何时存在，玩家无法在游戏内撤销：把 Downloads 里的东西每次启动复制进模组目录
-           * （只跳过已在且大小相同的），于是在游戏里删掉一个模组会下次启动被带回来；而存档是 .zip，
-           * 放在那里会被当成模组扫进去。⇒ 现在唯一的入口是游戏自带的导入按钮（手动，构造上就不自动）。 */
+          /* 这里【曾经】有一行 "导入模组"（选文件 → 复制进模组目录），已【删除】：那三种方式全都
+           * 让应用自己决定一个模组何时存在，玩家无法在游戏内撤销（游戏里删掉的模组会下次启动被
+           * 带回来，而存档是 .zip，放着会被当成模组扫进去）。⇒ 唯一入口是游戏自带的导入按钮。 */
 
           /* 条目：谁做的、它住在哪、以及它不是官方的。这些答案需要在应用内部够得到，
            * 因为问题冒出来的时候玩家已经在应用里了。 */
@@ -1593,8 +1510,7 @@ struct Index {
         .position({ x: this.ballMenuX(), y: this.ballMenuY() })
         .focusable(false)
         /* ⭐ 淡入出现（用户 2026-10-03 点名）。⚠️ 挂在这里而不是整层：菜单是 position 定位的
-         * 一张卡、没有全屏遮罩，所以淡入的就是它自己。⛔ 别把 transition 挪到 `.focusable(false)`
-         * **之前** —— 那是同一个节点，位置无所谓；但**不要**给它加任何可获焦的东西（见上面那条规则）。 */
+         * 一张卡、没有全屏遮罩，所以淡入的就是它自己。⛔ 不要给它加任何可获焦的东西。 */
         .transition(enterFade(80))
       }
     /* About 卡片 —— Stack 子节点，盖住一切包括悬浮球。任何地方都没有可聚焦组件：对话框或 Button
@@ -1603,10 +1519,9 @@ struct Index {
     if (this.showAbout) {
       Column() {
         Column() {
-          /* ⭐ 走资源，与启动器那边的 About 同一处规则。原来这里写死 'Mindustry Ark'，
-           * 于是改名之后同一块屏幕上两处 About 显示两个名字。
-           * ⚠️ 拿不到时给一个空格，不是给某个写死的名字 —— 下一个 `Text`（版本号）就是这么做的，
-           * 而写死一个名字恰好会让【另一个】应用显示错名，那正是这次要修的毛病。 */
+          /* ⭐ 走资源，与启动器那边的 About 同一处规则：原来这里写死 'Mindustry Ark'，改名之后
+           * 同一块屏幕上两处 About 显示两个名字。⚠️ 拿不到时给一个空格，不是给某个写死的名字 ——
+           * 写死一个名字恰好会让【另一个】应用显示错名。 */
           Text(this.appName === '' ? ' ' : this.appName)
             .fontSize(20)
             .fontWeight(FontWeight.Bold)

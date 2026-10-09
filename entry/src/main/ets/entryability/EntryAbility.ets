@@ -46,18 +46,9 @@ function writeJvmOptions(want: Want): void {
     if (lines.length === 0) {
       return;
     }
-    /* ⛔⛔ **写【应用级】那一份，不是 `ctx.filesDir`（ability 级）那一份。** 2026-10-05 改的。
-     *    这两条路原来抢同一个文件，而两者对「下次启动还在不在」的期望**相反**：
-     *      · `Index.setupCompatMode()` 每次启动**双向重写** ability 级那份 —— 写 `-Xint`，
-     *        或者**把整个文件删掉**。那是**有意**的（`-Xint` 不能跨设备升级留成永久的）；
-     *      · 人工注入的 flag（就是这里写的）应当**持有到有人显式清掉**为止。
-     *    ⇒ 合在一个文件里时，启动器**下一次启动就把注入的 flag 删了**。而
-     *      `RELEASE-MAINTENANCE.md` §2.10 正是拿这条路测那个悬着的 SIGSEGV
-     *      （原文：「put `NOHANDLERS` in `jvm.options`」）—— 那条命令当时**不可能生效**，
-     *      而且失败得与「没注入」一模一样。
-     * ⭐ 分开之后两个写入者各有各的文件，`launcher.c` 的 `load_extra_options()` 读**全部**候选。
-     * ⚠️ 这个路径必须与 `launcher.c` 的 `DEST_ROOT "/jvm.options"` 逐字一致 ⇒ 用 `SANDBOX_ROOT`，
-     *    ⛔ 不在这里再写一遍字面量。 */
+    /* ⛔ 写【应用级】那一份，不是 `ctx.filesDir`（ability 级）：`Index.setupCompatMode()` 每次启动会重写或
+     * 删掉 ability 级那份，而人工注入的 flag 应当持有到有人显式清掉为止 ⇒ 合成一个文件，启动器下次启动
+     * 就会把它抹掉。⚠️ 路径须与 `launcher.c` 的 `DEST_ROOT "/jvm.options"` 逐字一致 ⇒ 用 `SANDBOX_ROOT`。 */
     const path = SANDBOX_ROOT + '/jvm.options';
     const file = fs.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
     fs.writeSync(file.fd, lines.join('\n') + '\n');
@@ -132,10 +123,8 @@ export function writeUserDirs(filesDir: string): void {
 }
 
 export default class EntryAbility extends UIAbility {
-  /* 退出监视的定时器 id；-1 = 没有在跑。
-   * ⚠️ 提到成员上来（原来是一个局部 `const`）是为了能在 `onDestroy` 里停掉它 ——
-   *   看下面 `onDestroy` 那段：**没有它就有一个最长十分钟的窗口，定时器在 ability 已经没了之后
-   *   还在跑**，而且闭包里还攥着那个 `ctx`。 */
+  /* 退出监视的定时器 id；-1 = 没有在跑。⚠️ 提到成员上来是为了能在 `onDestroy` 里停掉它 —— 否则
+   * ability 没了之后它还会跑（闭包里攥着那个已失效的 `ctx`）。 */
   private exitWatchTimer: number = -1;
 
   /** 盯着 native 侧结束，然后体面地把 ability 关掉：launcher 过去在 main() 返回后杀掉自己的进程，从框架看就是
@@ -184,8 +173,7 @@ export default class EntryAbility extends UIAbility {
           // native 侧仍会在它自己的超时后退出。
         }
       }
-      // 只是安全阀。2400 个 tick、每个 250 ms 就是十分钟 —— 比任何一次会话都长得多，所以实际上
-      // 从不会触发；它存在的意义是让这里的一个 bug 不至于留下一个永远跑着的定时器。
+      // 只是安全阀：让这里的一个 bug 不至于留下一个永远跑着的定时器。
       if (ticks > 2400) {
         clearInterval(timer);
         this.exitWatchTimer = -1;
@@ -194,16 +182,8 @@ export default class EntryAbility extends UIAbility {
     this.exitWatchTimer = timer;
   }
 
-  /* ⛔ **必须停掉那个定时器**（2026-10-05 补的）。
-   *
-   * 背景：`startExitWatch` 的定时器在那个文件里**没有对应的清理点** —— ability 被销毁时
-   * （玩家把应用从最近任务里划掉、系统回收、或者一次不经过标记的退出）它会**继续跑**，
-   * 而它闭包里攥着 `ctx`（那个已经无效的 ability 上下文），还每 250 ms 做两次 `accessSync`。
-   * 上界是那个 2400 tick 的安全阀 —— 也就是**最多十分钟的无效轮询**。
-   * ⭐ 这不是崩溃，是「一次性的事被拖着做」：与「诊断工具不该拖慢被测对象」同一条。
-   * ⚠️ 正常退出那条路（`terminateSelf`）里已经 `clearInterval` 过了，这里再清一次是幂等的
-   *   （`clearInterval` 对已清的 id 无害），所以两条路都不必特判。
-   * ⛔ 这个类原本**没有 `onDestroy`** —— 补上它不是为了做别的事，只为停这一个定时器。 */
+  /* ⛔ 必须停掉那个定时器：ability 被销毁时它不会自己停。⚠️ 正常退出那条路（`terminateSelf`）里已经
+   * `clearInterval` 过，这里再清一次是幂等的（对已清的 id 无害），所以两条路都不必特判。 */
   onDestroy(): void {
     if (this.exitWatchTimer !== -1) {
       clearInterval(this.exitWatchTimer);
@@ -238,8 +218,7 @@ export default class EntryAbility extends UIAbility {
      * scanModFolder() 调用（已移除）—— 它每次启动都复制该文件夹内容进 mods 目录、复活玩家删掉的 mod。 */
     this.startExitWatch(this.context);
     try {
-        // 把 SDL 的 C 代码所需的、用来应付 ArkTS 接口的东西交给它：尽量用 C 通过 NAPI 来处理，这样
-        // 「脚本和 native 代码不同步」的风险面就极小。它会往 `this` 上加方法（如 onWindowStageCreate），
+        // 把 SDL 的 C 代码所需的 ArkTS 接口交给它，它会往 `this` 上加方法（如 onWindowStageCreate），
         // 于是可以从 C 驱动一切 —— 这个函数调用失败，应用实际上根本起不来。
         // 【只允许往这个调用里加参数】：如果 C 代码拿不到它期望的确切数量，它会 abort。
         sdl.provideArkTSObjects(this, abilityAccessCtrl.createAtManager(), i18n.System, pointer.setPointerVisibleSync, inputMethod.getController());

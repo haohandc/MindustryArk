@@ -1,39 +1,14 @@
-/* 读写**游戏自己的** `settings.bin`（ARC 的 Settings 格式）。
+/* 读写**游戏自己的** `settings.bin`（ARC 的 Settings 格式）—— 避让与 UI 缩放只存在于游戏数据里，
+ * 没有跨进程接口 ⇒ 只能由启动器写这个文件。
  *
- * ── 为什么需要它 ────────────────────────────────────────────────────────────
- * 用户要的是「启动器默认帮用户调好**游戏内**的异形屏避让与 UI 缩放」。而这两件事
- * **只存在于游戏的数据里**，没有任何跨进程接口：
- *   · `uiEdgePadding`（int，0~100）—— `mindustry.core.UI.updateMargins()` 把它加进
- *     `Scene.marginTop/Bottom`。⭐ 它是**唯一**可用的游戏侧避让旋钮：
- *     `arc.Graphics.getSafeInsets()` 在这个包里**恒返回 `{0,0,0,0}`**，而全包
- *     **没有任何类覆写它** ⇒ 游戏自己那套安全区机制是空转的（2026-10-04 反编译核实）。
- *   · `uiscale`（int，百分数；25~300）—— 界面整体缩放。
- * ⇒ 只能由启动器**写这个文件**。
- *
- * ── 格式（全部来自 `arc.Settings.loadValues` / `saveValues` 的字节码，不是猜的）──
- * ```
- * 头两字节是 0x78 且第二字节 ∈ {1, 94, 0x9c, 0xda}  ⇒ 整个流是 zlib 压缩的（⛔ 这种我们【不碰】，见 parseGameSettings）
- * 否则                                              ⇒ 明文（直接 DataInputStream）—— **游戏实际写的就是这种**
- * 然后：  int   条目数           （≤ 0 游戏会抛 "0 values are not allowed."）
- *        每条： readUTF 键名
- *               byte   类型      —— 0=bool 1=int 2=long 3=float 4=String 5=byte[]
- *               <按类型取值>      （bool 1 字节；int 4；long 8；float 4；String=readUTF；byte[]=int 长度 + 内容）
- * ```
- * ⭐ **序列化在本地被逐字节验证过**：拿设备上真实的 390 字节文件往返一次，输出与输入
- *    `逐字节相等`；改一个 int（`uiEdgePadding` 0→40）再写回，字节数不变、其余 18 条逐一相同。
- *    ⇒ 这份规范是**被证明的**，不是「看起来对」。
- *
- * ⛔ **写出去的一律是明文**，不重新压缩。理由是游戏两种都读（上面那个魔数分支就是为此存在的），
- *    而压缩要再引一层 zlib。⚠️ 代价：文件会大一点（几 KB 级），游戏下次自己保存时又会压回去。
- *
- * ⛔⛔ **type 2/3/5（long/float/字节数组）我们【不解释】，原样保留字节。**
- *    理由：float 的字面量格式化与 long 的解析各有坑（`-0.0`、精度、端序），而我们**一个都不需要**
- *    —— 要改的只有两个 int。⇒ 判据：**凡是不用改的东西，就原样搬，别解释它。**
- */
+ * ── 格式（来自 `arc.Settings.loadValues`/`saveValues` 字节码）──
+ * 头两字节 `0x78` 且第二 ∈ {1, 94, 0x9c, 0xda} ⇒ zlib 压缩（⛔ 我们不碰）；否则明文。
+ * 然后 int 条目数；每条 `readUTF` 键名 + byte 类型（0=bool 1=int 2=long 3=float 4=String 5=byte[]）+ 值。
+ * ⭐ 逐字节验证过：设备上真实的 390 字节文件往返一次逐字节相等。
+ * ⛔ 写出去的一律明文（游戏两种都读）、不重压缩；⛔ type 2/3/5 不解释、原样保留字节。 */
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
-/* ⭐ 「游戏内显示」那两个偏好存在启动器这边（LauncherPrefs），本文件负责把它落进游戏。 */
 /* ⭐ 只为 `pathExistsAnyChannel` 里的第二通道。⚠️ 不成环：`StorageRoot` 的依赖图
  * 只到 `ModImporter` 与 `libstorprobe.so`，⛔ 不碰本文件（而 `Isolation` 碰，所以不能从它借）。 */
 import { nativePathExists } from '../settings/StorageRoot';
@@ -52,13 +27,9 @@ export const TYPE_STRING: number = 4;
 export const TYPE_BYTES: number = 5;
 
 /** 一条设置。
- *
- * ⛔⛔ **键与值都保留【原样字节】，只有 bool 与 int 会被解释。**
- *    理由是 ARC 用的是 `writeUTF`（**modified UTF-8**），与标准 UTF-8 在补充平面字符
- *    （U+10000 以上）和 NUL 上不同 ⇒ **「解码再编码」不是恒等变换**。
- *    ⭐ 而我们**一个字符串都不用解释**（要改的只有两个 int）⇒ 原样搬字节，
- *    这条风险整个消失：无论键或值里是什么编码、什么字符，往返都逐字节相同。
- *      `key` 只是给比较用的**视图**（按 ASCII 解），⛔ 写回去一律用 `keyRaw`。 */
+ * ⛔⛔ **键与值都保留【原样字节】**，只解释 bool 与 int：ARC 用 modified UTF-8（`writeUTF`），
+ *    「解码再编码」不是恒等变换，而我们一个字符串都不用解释 ⇒ 原样搬字节，这条风险整个消失。
+ *    `key` 只是比较用的 ASCII **视图**，⛔ 写回一律用 `keyRaw`。 */
 export interface GameSetting {
   /** 比较用的键名视图（逐字节按 ASCII 解）。⛔ **不用于写回**。 */
   key: string;
@@ -115,11 +86,9 @@ class Cursor {
 }
 
 /* 把键名的字节按 ASCII 看成字符串 —— **只给比较用**。
- * ⛔ 刻意不用 `util.TextDecoder`：那会按标准 UTF-8 解，而 ARC 写的是 modified UTF-8；
- *    两者对 ASCII 相同、对别的字符不同，而**我们不需要那个精确性**
- *    （要比的键名全是 ASCII 字面量：`uiEdgePadding` / `uiscale`）。
- * ⚠️ 非 ASCII 的键会在这里变成一串「对不上任何东西」的字符 —— 那是**无副作用**的：
- *    它只是匹配不到，于是我们不动那个键，而写回时用的是 `keyRaw` 原样字节。 */
+ * ⛔ 刻意不用 `util.TextDecoder`：它按标准 UTF-8 解，而 ARC 写的是 modified UTF-8
+ *    —— 两者对 ASCII 相同，而**要比的键名全是 ASCII 字面量**。非 ASCII 的键只是匹配不到，
+ *    我们不动它，写回用的是 `keyRaw` 原样字节。 */
 function asciiView(b: Uint8Array): string {
   let s: string = '';
   for (let i = 0; i < b.length; i++) {
@@ -152,12 +121,8 @@ export function parseGameSettings(bytes: Uint8Array): GameSetting[] | null {
   let body: Uint8Array = bytes;
   if (bytes.length > 1 && isZlibHeader(bytes[0], bytes[1])) {
     /* ⛔⛔ **压缩的一律不碰，而不是去实现一个解压器。**
-     * ⭐ 依据（反编译核实，不是猜）：`arc.Settings` 的构造函数里 `writeCompressed = false`，
-     *    而**全包没有任何类调用 `setWriteCompressed(boolean)`** ⇒ 游戏**永远写明文**
-     *    （设备上那份 390 字节的实测文件也是明文，与这条吻合）。
-     * ⇒ 这条分支在现实里到不了；真遇到只可能是「别的工具写了一个压缩的」——
-     *   那时**不动它**才是对的（我们的序列化只输出明文，混着写会把格式搞成两边都不是）。
-     * ⚠️ 返回值 `null` = 「读不了」，调用方据此**不写**。 */
+     * ⭐ `arc.Settings` 的 `writeCompressed = false` 且全包无人调 `setWriteCompressed(boolean)`
+     *    ⇒ 游戏**永远写明文**（实测那份 390 字节文件也是明文）；真遇到压缩的只可能是别的工具写的。 */
     hilog.warn(DOMAIN, TAG, 'gamesettings: the file is zlib-compressed; the game never writes that '
                + '-- refusing to touch it');
     return null;
@@ -343,57 +308,78 @@ export function setIntSetting(rows: GameSetting[], key: string, value: number): 
   return true;
 }
 
-/* ====================================================================
- * 落盘
- * ==================================================================== */
 
-/** 把整份设置写回。返回 `''` 成功，否则一句给日志用的话。
- *
- * ⛔⛔ **三道闸门，缺一不可**（这是**玩家的游戏数据**）：
- *   ① **写之前**先把自己序列化出来的字节**重新解析一遍**，逐条比对 ⇒ 保证「我要写的东西
- *      我读得回来」。这一步把「格式理解错了」挡在磁盘之外。
- *   ② 写**临时文件**再 `rename` 覆盖 ⇒ 中途失败不会留下半个文件（同目录 rename 是原子的）。
- *   ③ 写完**读回来**再验一次那个键的值。
- * ⚠️ 游戏的 `settings_backups/` 是它自己管的，这里**不碰**；也别往游戏目录里塞我们自己
- *    的备份文件（那是给游戏看的目录）。可恢复性靠上面 ②③ 与游戏自己的备份机制。 */
-export function writeGameSettings(path: string, rows: GameSetting[]): string {
-  const bytes: Uint8Array = serializeGameSettings(rows);
-  const check: GameSetting[] | null = parseGameSettings(bytes);
-  if (check === null || check.length !== rows.length) {
-    return '写回前的自检没过（序列化出来的东西读不回来）—— 没有动文件';
+/**
+ * 写入游戏设置文件（原子替换写入，含自检与回读校验）。
+ * 实际写入Mindustry中直接生效的`Mindustry/settings.bin`文件，
+ * 目录`settings_backups/`，`Mindustry/settings_backup.bin`与该函数无关。
+ * **两处的文件用于兜底，防止设置出现错误，启动器无需处理。**
+ * @param targetPath 目标文件路径
+ * @param settings   要写入的设置条目列表
+ * @returns 成功返回空字符串，失败返回错误描述
+ */
+export function writeGameSettings(targetPath: string, settings: GameSetting[]): string {
+  // 1. 序列化-解析自检：保证可逆
+  const rawBytes: Uint8Array = serializeGameSettings(settings);
+  const parsedRows: GameSetting[] | null = parseGameSettings(rawBytes);
+  if (!parsedRows || parsedRows.length !== settings.length) {
+    return '自检失败：序列化-解析不可逆（文件未修改）';
   }
-  for (let i = 0; i < rows.length; i++) {
-    if (check[i].key !== rows[i].key || check[i].type !== rows[i].type) {
-      return '写回前的自检没过（第 ' + String(i + 1) + ' 条对不上）—— 没有动文件';
+  for (let i = 0; i < settings.length; i++) {
+    if (parsedRows[i].key !== settings[i].key || parsedRows[i].type !== settings[i].type) {
+      return `自检失败：第 ${i + 1} 条数据不一致（文件未修改）`;
     }
   }
 
-  const tmp: string = path + '.launchertmp';
+  // 2. 写入临时文件
+  const tempSuffix: string = '.launchertmp';
+  const tempPath: string = targetPath + tempSuffix;
   try {
-    const f: fs.File = fs.openSync(tmp,
+    const tempFile = fs.openSync(tempPath,
       fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE);
     try {
-      fs.writeSync(f.fd, bytes.buffer as ArrayBuffer);
+      fs.writeSync(tempFile.fd, rawBytes.buffer as ArrayBuffer);
     } finally {
-      fs.closeSync(f);
+      fs.closeSync(tempFile);
     }
-  } catch (e) {
-    const err = e as BusinessError;
-    return '写临时文件失败：' + err.message;
+  } catch (error) {
+    return `写入临时文件失败：${(error as BusinessError).message}`;
   }
+
+  // 3. 原子替换（重命名）
   try {
-    fs.renameSync(tmp, path);
-  } catch (e) {
-    const err = e as BusinessError;
-    /* ⚠️ 收尾清掉临时文件，别在游戏目录里留垃圾 —— 那个目录是给游戏看的。 */
-    try {
-      fs.unlinkSync(tmp);
-    } catch (e2) {
-      /* 收不掉也只能算了；下面那句已经把病因说清楚了。 */
-    }
-    return '替换失败：' + err.message;
+    fs.renameSync(tempPath, targetPath);
+  } catch (error) {
+    // 清理残留的临时文件，避免污染游戏目录
+    try { fs.unlinkSync(tempPath); } catch { /* 清除失败可忽略 */ }
+    return `替换文件失败：${(error as BusinessError).message}`;
   }
-  return '';
+
+  // 4. 回读校验
+  try {
+    const expectedLength: number = rawBytes.length;
+    const readBuffer = new ArrayBuffer(expectedLength);
+    const readHandle = fs.openSync(targetPath, fs.OpenMode.READ_ONLY);
+    let actualReadLength: number;
+    try {
+      actualReadLength = fs.readSync(readHandle.fd, readBuffer);
+    } finally {
+      fs.closeSync(readHandle);
+    }
+    if (actualReadLength !== expectedLength) {
+      return `回读长度不符：期望 ${expectedLength}，实际 ${actualReadLength}`;
+    }
+    const readData = new Uint8Array(readBuffer, 0, actualReadLength);
+    for (let i = 0; i < expectedLength; i++) {
+      if (readData[i] !== rawBytes[i]) {
+        return `回读字节验证失败，位置 ${i}`;
+      }
+    }
+  } catch (error) {
+    return `回读校验异常：${(error as BusinessError).message}`;
+  }
+
+  return ''; // 成功
 }
 
 /** 读并解析一个 `settings.bin`；打不开/解析不了 ⇒ `null`。 */
@@ -438,15 +424,9 @@ export interface GameDisplayValues {
 }
 
 /** 读游戏里**实际**的避让与缩放。
- *
- * ⭐⭐ 用途：**启动器界面显示的口径以它为准**（用户 2026-10-05：
- *    「外部看到（启动器）内的数值没有对应改变」）—— 原来滑块只读启动器自己那份偏好文件，
- *    于是玩家在游戏里改完之后，两边显示的数是**不一样的**，而界面上看不出哪个是真的。
- *
- * @returns 读不到（文件不存在 / 解析不了 / 被压过）⇒ `null`。
- *    ⛔ **`null` 与「读到 0」必须分开**：前者表示「不知道游戏里是什么」，
- *    调用方应当**保持原值不动**；后者是一个合法的真实取值。
- */
+ * ⭐⭐ 用途：**启动器界面的显示口径以它为准** —— 原来滑块只读启动器自己那份偏好文件，
+ *    玩家在游戏里改完后两边显示的数是**不一样的**。
+ * @returns 读不到（不存在/解析不了/被压过）⇒ `null`；⛔ `null` 与「读到 0」必须分开。 */
 export function readGameDisplayValues(dataDir: string): GameDisplayValues | null {
   const rows: GameSetting[] | null = loadGameSettings(dataDir + '/settings.bin');
   if (rows === null) {
@@ -458,46 +438,14 @@ export function readGameDisplayValues(dataDir: string): GameDisplayValues | null
   };
 }
 
-/* ⛔⛔ **不覆盖玩家在游戏里改过的值**（用户 2026-10-04 定的规则）。
- *
- * 判据靠三个数相比 —— 「游戏里现在的值」对「出厂默认」与「我们上次写的」：
- * ```
- *   == 出厂默认   ⇒ 玩家没碰过          ⇒ 写
- *   == 我们写的   ⇒ 那是我们的值，归我们管 ⇒ 写
- *   其它          ⇒ 玩家在游戏里改过了   ⇒ 不碰
- * ```
- * ⚠️ 第二行是承重的：少了它，**启动器写过一次之后就再也改不动了**
- *    （值既不是默认、也不被认作我们的 ⇒ 永远被当成「玩家改的」）。
- *
- * @returns `''` = 不需要动 / 动成功了；否则一句给人看的话。
- *
- * ⭐⭐ **`settings.bin` 不存在时【自己建一个】**（用户 2026-10-04 要的）。
- *    ⛔ 旧行为是「不存在就什么都不做」，而那让这个功能的承诺落空：
- *      全新安装没有 `settings.bin`（游戏跑一次才生成）⇒ **第一次启动必然用不上我们的设置**，
- *      玩家得「先跑一次游戏 → 回启动器 → 再跑一次游戏」才行 —— 那不叫「启动器默认调好」。
- *      ⚠️ 2026-10-04 实测踩到：他重装后第一次进游戏，探针报
- *      `settings-probe: cannot open …settings.bin`（文件那时还不存在），游戏用默认值建了它。
- *    ⭐ 建出来的文件**只含我们负责的那两个键**。其余键缺失 ⇒ 游戏的 `loadValues` 只把这 2 条放进
- *      `values`、其它全部走 `defaults` ⇒ 效果**等同于全新安装 + 我们这两个值**，正是想要的。
- *    ⚠️⚠️ **一个我没有验证过的风险**：`lastBuild` 会缺失，而游戏可能据此判断要不要跑迁移逻辑。
- *      风险低但非零 —— 若将来出现「第一次启动行为怪」的现象，**先怀疑这里**。 */
-/* ⛔⛔ **「这个路径存在吗」必须走双通道 —— 任何一路说有，就算有。**
- *
- * 这是 2026-10-05 子 agent 审查查出的一个**能抹掉玩家整份设置的缺陷**：
- * 本文件原来只问 ArkTS 的 `fs.accessSync`，而**本项目已实测它在外部数据根上会误报读不到**
- * （见 `Isolation.gameDataExists` 的注释：「ArkTS 的 `fs.accessSync` 在外部根上不可靠，
- * 而且已经有实测记录」—— native 列出 24 个文件而 ArkTS 一个都读不出来）。
- *
- * ⭐ 后果链条（`applyGameDisplay` 里）：
- *   读取失败 ⇒ `exists=false` **且** `rows===null` ⇒ 走进「照我们的建一份」分支
- *   ⇒ `writeGameSettings` 拿**只有两个键**的表 + `renameSync` **覆盖玩家那份
- *     settings.bin**（键位、语言、所有设置项一起没）。
- * ⛔ 所以「不知道」**绝不能**被当成「不存在」—— 详见下面的保守回退。
- *
- * ⚠️ 这里**复制**了一份 `Isolation.gameDataExists` 的判据，而不是 import 它：
- *    `Isolation` import 了本文件，直接反向 import 会**成环**。
- *    而 `StorageRoot` 的依赖图里没有本文件（它只到 `ModImporter`/`libstorprobe.so`）
- *    ⇒ 可以安全地借用它的 `nativePathExists`。 */
+/* ⛔⛔ **不覆盖玩家在游戏里改过的值**（用户 2026-10-04 定）：游戏现值 == 出厂默认 ⇒ 写；
+ * 「== 我们上次写的」⇒ 写（少了这条，启动器写过一次就再也改不动）；其它 ⇒ 玩家改过，不碰。
+ * ⭐ `settings.bin` 不存在时**自己建一个**，否则全新安装第一次启动必然用不上我们的设置。
+ * ⚠️⚠️ 未验证风险：建出的文件缺 `lastBuild`；若将来「第一次启动行为怪」，先怀疑这里。 */
+/* ⛔⛔ **「这个路径存在吗」必须走双通道 —— 任何一路说有，就算有。** 原来只问 `fs.accessSync`，
+ * 而它**在外部数据根上会误报读不到**（实测：native 列出 24 个文件而 ArkTS 一个都读不出）⇒ 会被当成
+ * 「不存在」⇒ 拿只有两个键的表覆盖玩家整份设置。
+ * ⚠️ 判据复制自 `Isolation.gameDataExists`（import 它会成环），`nativePathExists` 借自 `StorageRoot`。 */
 function pathExistsAnyChannel(path: string): boolean {
   try {
     if (fs.accessSync(path)) {
@@ -510,10 +458,8 @@ function pathExistsAnyChannel(path: string): boolean {
     return nativePathExists(path) !== 0;
   } catch (e) {
     const err = e as BusinessError;
-    /* ⚠️⚠️ **两路都问不到 ⇒ 保守地当作「存在」。**
-     * ⛔ 方向不能反：这个函数的返回值决定「要不要把玩家的设置**覆盖**掉」，
-     *    而两个方向的代价不对称 —— 误判「存在」只是**什么都不做**（下次再说）；
-     *    误判「不存在」是**把玩家的设置写没**。⭐ 同 `Isolation.gameDataExists` 的判据。 */
+    /* ⚠️⚠️ **两路都问不到 ⇒ 保守地当作「存在」。** 代价不对称：误判「存在」只是什么都不做，
+     *    误判「不存在」是**把玩家的设置写没** ⇒ 方向不能反（同 `Isolation.gameDataExists`）。 */
     hilog.warn(DOMAIN, TAG, 'gamesettings: cannot tell whether %{public}s exists (%{public}s) '
                + '-- assuming it does and leaving it alone', path, err.message);
     return true;
@@ -527,23 +473,14 @@ export function applyGameDisplay(dataDir: string, filesDir: string,
   let rows: GameSetting[] | null = loadGameSettings(path);
   if (rows === null) {
     if (exists) {
-      /* ⭐ **存在但读不了**（解析失败 / 被压过 / 权限 / **在外部根上 ArkTS 读不到**）
-       *    ⇒ **什么都不做**。
-       * ⛔ 与「不存在」必须分开：那两种情况要做的处置**相反** ——
-       *    一个是「照我们的建一份」，另一个是「别碰它」。
-       * ⚠️ 这也是外置存储下**正常**的一次结果（不是故障）：本应用读不到外部根，
-       *    而游戏自己（native）读得到 —— 所以「我们这次没写」是对的。 */
+      /* ⭐ **存在但读不了**（解析失败 / 被压过 / 权限 / **外部根上 ArkTS 读不到**）⇒ 什么都不做。
+       * ⛔ 与「不存在」相反：那是「照我们的建一份」，这是「别碰它」。
+       * ⚠️ 外置存储下这是**正常**结果（本应用读不到外部根、native 读得到），不是故障。 */
       return '';
     }
-    /* ⭐ 不存在 ⇒ 从空表开始建。⚠️ 先把目录建出来：全新安装时它可能还不存在，
-     *    而 `fs.openSync` **不建父目录**。
-     * ⛔⛔ **`mkdirSync(dataDir)` —— 别再拼 `/.local/share/Mindustry`。**
-     *    这个函数收到的 `dataDir` **本身就已经是** `…/.local/share/Mindustry`
-     *    （见 `Isolation.liveGameDataDir()` / `isolatedGameDataDir()`），
-     *    再拼一次会在游戏数据目录里造一棵没人读的
-     *    `…/Mindustry/.local/share/Mindustry`，而注释声称要建的那个只是被
-     *    `recursive=true` 顺带建出来的。（2026-10-05 审查查出；`mkdirSync` 的 `true`
-     *    参数掩盖了它，所以一直没报错。） */
+    /* ⭐ 不存在 ⇒ 从空表开始建；先建目录（`fs.openSync` **不建父目录**）。
+     * ⛔⛔ `mkdirSync(dataDir)` —— 收到的 `dataDir` **本身已经是** `…/.local/share/Mindustry`
+     *    （见 `Isolation.liveGameDataDir()`），再拼一次会造一棵没人读的 `…/Mindustry/.local/share/Mindustry`。 */
     try {
       fs.mkdirSync(dataDir, true);
     } catch (e) {
@@ -555,22 +492,15 @@ export function applyGameDisplay(dataDir: string, filesDir: string,
   }
 
   let changed: boolean = false;
-  /* ⛔⛔ `next` **只承载「我们真的写进游戏的值」**。初始化时先沿用上一次的记录（没有记录就用本次偏好），
-   *    然后**只在真的写成功的那一支里**更新对应字段。
-   *
-   * ⭐ 2026-10-05 修的缺陷（代码审查发现）：原来在「玩家在游戏里改过」那一支里写了 `next.edge = cur`
-   *    —— 于是**玩家自己的值被记成了「我们上次写的」**。下一次启动时 `ours = (cur === applied.edge)`
-   *    成立 ⇒ 判成「这是我们的值，归我们管」⇒ 走 `(ours || untouched) && cur !== pref.edge`
-   *    ⇒ **把玩家调的值改回去**。那正是用户 2026-10-04 定的「不覆盖玩家在游戏里改过的值」被破的路径。
-   * ⚠️ 原注释说那么写只为「少打日志」—— 代价是开了一条静默的覆盖路径，不值。
-   * ⚠️ 两个 `*Set` 标志对这个载体**无意义**（它们答的是「玩家动过启动器的滑条没有」），补 `false`。 */
+  /* ⛔⛔ `next` **只承载「我们真的写进游戏的值」**：初始化沿用上次记录（无则用本次偏好），只在**真的写成功
+   *    的那一支**更新。⛔ 绝不在「玩家在游戏里改过」那支写 `next.edge = cur` —— 那会把玩家的值冒充成
+   *    「我们写的」，下次启动就改回去（2026-10-05 修复）。⚠️ `*Set` 标志对这里无意义，补 `false`。 */
   const next: GameDisplayPref = {
     edge: (applied !== null) ? applied.edge : pref.edge,
     scale: (applied !== null) ? applied.scale : pref.scale,
     auto: pref.auto, edgeSet: false, scaleSet: false
   };
 
-  /* 边距。 */
   {
     const cur: number = intSetting(rows, KEY_EDGE_PADDING, GAME_EDGE_FACTORY);
     const ours: boolean = (applied !== null && cur === applied.edge);
@@ -583,8 +513,7 @@ export function applyGameDisplay(dataDir: string, filesDir: string,
                    KEY_EDGE_PADDING, cur, pref.edge);
       }
     } else if (!ours && !untouched) {
-      /* 玩家在游戏里调过 ⇒ **不碰它**，而且 `next.edge` 保持上一次的记录。
-       * ⛔ **绝不写 `next.edge = cur`** —— 那会把玩家的值冒充成「我们写的」，下次启动就覆盖回去了。 */
+      /* 玩家在游戏里调过 ⇒ **不碰它**，`next.edge` 保持上次的记录。 */
       hilog.info(DOMAIN, TAG, 'gamesettings: %{public}s is %{public}d (the player set it in game) '
                  + '-- leaving it alone', KEY_EDGE_PADDING, cur);
     }
@@ -610,17 +539,9 @@ export function applyGameDisplay(dataDir: string, filesDir: string,
   }
 
   if (!changed) {
-    /* ⛔⛔ 一个都没写 ⇒ **`applied` 保持原样，连文件都不必重写**。
-     *    ⭐ 2026-10-05 之前这里是「把 `next` 记回去」—— 而 `next` 那时会把玩家自己设的值
-     *      收进来（第 2 条缺陷的另一半）⇒ 正是那次写入把玩家的值冒充成了「我们写的」。
-     *    ⛔ 现在 `next` 只含「我们真的写过的值」，所以没写就没得记。
-     *
-     * ⛔ **几种「没写」的原因一律【不】在这里报文字。** 用户 2026-10-04 定了规矩：
-     *    **默认不加提示，他同意了才加** —— 而这一张卡上只留了两处文字，
-     *    其中 `只覆盖默认设置` 已经把「为什么没写」说完了。
-     * ⚠️ 我原来在这里为「自动开着但游戏里是玩家自己的值」单加过一句更啰嗦的提示，已删。
-     * ⭐ 真要查「为什么没写」，`storage_state.txt` 的 `game=` 那行有两个数，
-     *    再加上这里 `hilog` 打的「the player set it in game」就够定性了。 */
+    /* ⛔⛔ 一个都没写 ⇒ **`applied` 保持原样，连文件都不必重写**（2026-10-05 之前这里记回 `next`，
+     *    而那时的 `next` 会把玩家自己设的值冒充成「我们写的」）。
+     * ⛔ 「没写」的原因一律【不】在这里报文字 —— 用户定的规矩：**默认不加提示**，他同意了才加。 */
     return '';
   }
 

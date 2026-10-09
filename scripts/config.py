@@ -103,8 +103,12 @@ UPSTREAM_JAR = _env("ARK_UPSTREAM_JAR", os.path.join(PAYLOAD_SRC, "Mindustry.jar
 #
 # 它是什么：承载我们 Arc native 库的 jar，prep_arc.py
 # 从中解出到 entry/libs/arm64-v8a/arc/。由 build_variants.py 从
-# UPSTREAM_JAR 构建 -- 流水线中唯一无法从本仓库
-# 复现的东西（libarcarm64.so 的编译配方不在仓库里）。
+# UPSTREAM_JAR 构建，换掉里面的 libarcarm64.so。
+#
+# ⚠️ 2026-10-07 订正：这里原写「libarcarm64.so 的编译配方不在仓库里」。
+# 配方**已经收进仓库**：`tools/audio-build/`（build.sh + SDL3 后端 + JNI 生成
+# + 全部验证脚本）。仍然做不到「只凭仓库复现」的原因**只剩一条**：它要编译
+# 的上游 SoLoud 源码要另外下载（`Anuken/soloud` 的 tag 2026.09.04）。
 NATIVES_JAR = _env("ARK_NATIVES_JAR", os.path.join(PAYLOAD_SRC, "mindustry-1.0-audio.jar"))
 
 # 由 patch_mindustry.py 从 UPSTREAM_JAR 生成。2026-09-28 已废弃：我们的

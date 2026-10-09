@@ -18,13 +18,8 @@ const TAG = 'MindustryLauncher';
 const MAX_DEPTH = 32;
 
 /** 这个路径**自己**是不是一个目录 —— ⛔ **不跟随符号链接**（`lstatSync`）。
- *
- * ⛔⛔ 与下面导出的 `isDir()` **不是同一件事**，⛔ 别合并：
- *   · `isDir()` 用 `statSync`（**跟随**）—— 问的是「指向的地方是不是目录」。
- *     别的调用点要的是这个语义（比如「这个路径能不能当目录用」）。
- *   · 本函数用 `lstatSync`（**不跟随**）—— 问的是「它本身是不是一个目录」。
- *     **删除**必须用这个：软链自己不是目录，所以它该被 `unlink` 掉而不是被走进去。
- * ⚠️ 2026-10-05 修的那条正是不区分这两者造成的（见 `removeTree` 里那段）。 */
+ * ⛔ 与下面导出的 `isDir()`（用 `statSync`，**跟随**）**不是同一件事**，别合并：
+ *    **删除**必须用这个 —— 软链自己不是目录，该被 `unlink` 掉而不是被走进去。 */
 function isDirNoFollow(path: string): boolean {
   try {
     return fs.lstatSync(path).isDirectory();
@@ -51,11 +46,9 @@ export function newTreeStat(): TreeStat {
 }
 
 /* 记一次失败。⭐ `firstError` 保留、额外收样本，两个理由：
- *  ① 调用点的措辞（`'复制没完成（N 个文件没复制过去）：' + acc.firstError`）都读 `firstError`
- *     ⇒ 动它要改好几处，不值当。
- *  ② ⭐⭐ **只留第一条会把「整片写不进去」报告成「某一条失败」的样子。** 2026-10-04 的真实教训：
- *     存储迁移在外置根上失败，屏幕上只有一条 `复制失败 <路径>：操作不被允许` ⇒
- *     看起来像某个文件有病，而实际是那一整片都写不进去。⇒ 多留几条，一眼能看出分布。 */
+ *  ① 调用点的措辞都读 `firstError`（如 `'复制没完成（N 个文件没复制过去）：' + acc.firstError`），动它要改好几处。
+ *  ② **只留第一条会把「整片写不进去」报告成「某一条失败」** —— 2026-10-04 存储迁移在外置根上失败，
+ *     屏幕上只有一条「复制失败 … 操作不被允许」，看起来像某个文件有病。⇒ 多留几条，一眼看出分布。 */
 function recordFailure(acc: TreeStat, msg: string): void {
   acc.failed += 1;
   if (acc.firstError === '') {
@@ -121,10 +114,8 @@ export function copyTreeInto(src: string, dst: string, depth: number, acc: TreeS
         acc.files += 1;
       } catch (e) {
         const err = e as BusinessError;
-        /* ⛔⛔ **一定要把 `d` 也打出来。** 原来只打源路径，而 `copyFileSync(s, d)` 有**两个** open：
-         *     读 `s` 和写 `d`。EPERM（「操作不被允许」）在**读自己的沙箱文件**时几乎不可能出现，
-         *     它出现在**往外部文件夹写**的时候 ⇒ 只打源路径会把人引到**错的那一侧**去查
-         *     （2026-10-04 就是这样：我拿着一个沙箱路径分析了半天，而真正被拒的是外置那一侧）。 */
+        /* ⛔⛔ **一定要把 `d` 也打出来。** `copyFileSync(s, d)` 读 `s`、写 `d` —— EPERM（「操作不被允许」）
+         *     几乎只出现在**往外部文件夹写**的时候，只打源路径会把人引到**错的那一侧**去查。 */
         recordFailure(acc, '复制失败 ' + s + ' → ' + d + '：' + err.message);
       }
     }
@@ -141,18 +132,9 @@ export function removeTree(path: string, depth: number, acc: TreeStat): void {
     return;
   }
 
-  /* ⛔ 先判是不是目录 —— 它在**普通文件**上也必须能直接删。
-   * 原来是缺这一段的，而对文件调 `listFileSync` 只报 `Not a directory`：
-   * 隔离那边一直拿目录调它，所以「它删不了文件」从没暴露过，
-   * 是回收站的端到端探针（合成数据）才抓到的。
-   * ⇒ 它自己处理两种情况，⛔ 不靠调用方「记得只能传目录」。
-   * ⛔⛔ **`isDirNoFollow`，⛔ 不是 `isDir`**（2026-10-05 修的）：一个**指向目录的软链**
-   *    在 `statSync` 下是 `true` ⇒ 会走进下面那支、把**链接指向的那个目录的内容**删掉，
-   *    而链接本身还留着（最后那句 `rmdirSync` 对软链会失败）。
-   *    ⭐ 危害在于**它删的东西不在我们这棵树里**：外置根是玩家可见、可放东西的地方
-   *    （`Download/<包名>/`），一个指向别处的链接会让「清理游戏数据」变成
-   *    「删掉链接指向的那份东西」。`lstatSync` 下软链不是目录 ⇒ 走下面那支被 `unlink`
-   *    —— **只删链接本身，目标分毫不动**，正是这里想要的行为。 */
+  /* ⛔ 先判是不是目录：普通文件也要能直接删；且必须用 `isDirNoFollow`，**不是** `isDir` ——
+   *    `statSync` 下指向目录的软链会被当成目录、递归进**目标**里删，而删的东西不在我们这棵树里
+   *    （外置根是玩家可见的）；`lstatSync` 下软链不是目录 ⇒ `unlink` 只删链接本身。 */
   if (!isDirNoFollow(path)) {
     try {
       fs.unlinkSync(path);
@@ -174,11 +156,8 @@ export function removeTree(path: string, depth: number, acc: TreeStat): void {
   }
   for (const n of names) {
     const c: string = path + '/' + n;
-    /* ⛔⛔ **`lstatSync`，⛔ 不是 `statSync`**（2026-10-05 修的，理由同上面那句：
-     *    跟随时一个指向目录的软链会被当成目录、于是**递归进目标里删**）。
-     * ⚠️ 这里与 `copyTreeInto` 那边的选择一致 —— 而那边本来就用 `lstat` 判定，
-     *    也就是说「复制不跟软链、删除却跟」这个不一致是**真的存在过**，
-     *    它正是本文件顶部那条 MAX_DEPTH 注释所假设的形态。 */
+    /* ⛔⛔ **`lstatSync`，⛔ 不是 `statSync`**（2026-10-05 修的，理由同上：跟随时一个指向目录的
+     *    软链会被当成目录、**递归进目标里删**）。⚠️ 这里与 `copyTreeInto` 那边的选择一致。 */
     let sub: boolean = false;
     try {
       sub = fs.lstatSync(c).isDirectory();

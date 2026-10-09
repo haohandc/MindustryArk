@@ -5,9 +5,19 @@
 #   2. include the jni/ dir (the NDK has no jni.h, so we carry our own)
 #   3. link dl (we dlopen libjvm.so out of the bundled JDK)
 #
-# Two hard requirements from docs/README-harmonyos.md:
-#   - the artifact MUST be a shared library named libmain.so (not an executable)
-#   - SDL's source tree must be compiled into the project (add_subdirectory("SDL"))
+# Two hard requirements, both enforced by the platform rather than by the compiler,
+# and neither one reports an error when you get it wrong:
+#   - the artifact MUST be a shared library named libmain.so (not an executable).
+#     SDL's openharmony shim carries that name as a string literal and dlopens it
+#     when the XComponent is created; nothing else is ever loaded. See
+#     SDL/src/main/openharmony/SDL_sysmain_runapp.c and docs/paper.md 3.3.
+#   - SDL's source tree must be compiled into this project: see the
+#     add_subdirectory("SDL") at the bottom of this file.
+#
+# ⚠️ 2026-10-07: this header used to read "from docs/README-harmonyos.md". That path
+# has never existed in this repository -- it appears in no commit, in any branch --
+# so the citation pointed nowhere and could not be recovered from history. The two
+# requirements above are the ones it described; they live here and in paper.md now.
 
 cmake_minimum_required(VERSION 3.5.0)
 project(mindustry_launcher)
@@ -40,11 +50,13 @@ set(NATIVEAPP_ROOT_PATH ${CMAKE_CURRENT_SOURCE_DIR})
 # which together are 382 of those 395. It does not cover the other two, and they
 # are not oversights:
 #
-#   libarcarm64.so     the command that compiles it is not in this repository.
-#                      The .so is an intermediate built by hand in a temp tree
-#                      (see scripts/build_variants.py, which consumes it through
-#                      the AUDIO_SO override). Fixing it means first putting that
-#                      build into the repository, which is a separate job.
+#   libarcarm64.so     the recipe IS in the repository as of 2026-10-07
+#                      (tools/audio-build/ -- build.sh, the SDL3 backend, the
+#                      JNI generators and the verification scripts). What is
+#                      still external is the upstream SoLoud source tree it
+#                      compiles against (Anuken/soloud, tag 2026.09.04). The .so
+#                      itself is an intermediate consumed by
+#                      scripts/build_variants.py through the AUDIO_SO override.
 #   libcxxabi_shim.so  built in a different project (sdl-template), and shipped
 #                      byte-for-byte on purpose -- verify_hap.py checks its SHA-1
 #                      against the original. Rewriting it to drop a path string

@@ -193,10 +193,9 @@ function formatMsDateTime(ms: number): string {
 }
 
 /* 游戏内时长：毫秒 → 给人看的一句话。
- * ⛔⛔ 单位是**毫秒**（原按 60 tick/秒 换算，分钟数被放大 16.67 倍）。证据：游戏
- * `Saves.update()` 用 `Time.timeSinceMillis` 累加、`Strings.formatMillis` 用 3_600_000；
- * 实测 `sector-serpulo-142.msav` 36_202_317 按毫秒是 10.1 小时，按 tick 是 167 小时（不可能）。
- * 分档：<1 分钟「不足 1 分钟」，<60「约 N 分钟」，≥60「约 H 小时 M 分钟」（M 为 0 也照写）。一律 floor。 */
+ * ⛔ 单位是**毫秒**（原按 60 tick/秒 换算，分钟数被放大 16.67 倍）。证据：游戏 `Saves.update()` 用
+ * `Time.timeSinceMillis` 累加、`Strings.formatMillis` 用 3_600_000；实测 `sector-serpulo-142.msav`
+ * 36_202_317 按毫秒是 10.1 小时，按 tick 是 167 小时（不可能）。分档见下，一律 floor。 */
 function formatPlaytime(ms: number): string {
   const totalMin: number = Math.floor(ms / 60000);
   if (totalMin < 1) {
@@ -307,49 +306,24 @@ const PERM_BTN_H: number = 46;
  * ⛔ 也别改成「不写宽度、按标签自适应」—— 长按那个按钮里面那层进度是 `width('100%')`，
  *    若外层宽度由标签撑出来，就成了「占一个由自己撑出来的宽度的 100%」，是个循环依赖。 */
 const ASK_BTN_W: string = '64%';
-/** `长按永久删除` 那一个按钮的宽度 —— ⛔⛔ **必须比 `ASK_BTN_W` 窄**（用户 2026-10-05 明确要的层次）：
- *    越不可撤销的动作，占的地方越小、越得**刻意去够** ——
- *    而「回收 / 归档」那两个都进回收站、都找得回来，理当更好按。
+/** `长按永久删除` 那一个按钮的宽度 —— ⛔⛔ **必须比 `ASK_BTN_W` 窄**（用户 2026-10-05 要的层次）：
+ *    越不可撤销的动作，占的地方越小、越得**刻意去够**；而「回收 / 归档」都找得回来，理当更好按。
  * ⚠️ 但也不能窄到装不下那六个字 —— 它曾经在 1/3 宽度下显示不全（用户实测过）。
  * ⚠️ 两个数是**一对**，改一个要回头看另一个是否还满足「这个更窄」。 */
 const PERM_BTN_W: string = '50%';
 
-/* ⭐⭐ **弹窗里那些「独占一行的按钮」不写宽度** —— 让它按**标签自身**的宽度排，
- *    只加一条 `constraintSize({ maxWidth: '100%' })` 兜住「标签比弹窗还宽」的极端情况。
- *    ⛔ 别给它们写 `.width('72%')` 之类的百分比。
- *
- * ⛔⛔ 这里原来是一个 `const CANCEL_BTN_WIDTH = '34%'`，五个确认窗共用。
- *    它治好过一次病（2026-10-04：原本 25%，「取消」两字装不下、显示成 **「...」**），
- *    **但药方是错的** —— 这些按钮**每一个都独占一行**（不是并排挤在 `Row` 里），
- *    对独占一行的东西写百分比，等于同时制造两个毛病：
- *      · **长的被压**：`放进回收站（保留到 2026-10-09）` 约 232vp，塞进 72% × 280 = 202vp
- *        ⇒ 折成两行、按钮变高（用户 2026-10-04 说的「按钮比文字提示还大」就是它）
- *      · **短的被拉**：「取消」两个字占 95vp 宽，看着比它旁边的正文还重
- *    ⇒ 改成**按内容**。⭐ 关键是它把问题**从结构上消掉**了：不再是「宽度写得够不够」，
- *    而是**根本没有宽度可以写错** —— 当初那句「一个『今天刚好放得下』的宽度，就是明天
- *    会坏掉的宽度」在这里终于有了正确答案。
- *
- * ⚠️ **并排的按钮不适用**：`TransferDialog` 底下那两个（确定 / 取消）是真的挤在一个 `Row` 里，
- *    那里继续用 `layoutWeight(1)` —— 那是对的，⛔ 别一起改。 */
+/* ⭐⭐ **弹窗里那些「独占一行的按钮」不写宽度** —— 按**标签自身**宽度排，只加
+ *    `constraintSize({ maxWidth: '100%' })` 兜住「标签比弹窗还宽」的极端情况。
+ * ⛔⛔ 原来五窗共用一个 `CANCEL_BTN_WIDTH = '34%'`：它治过「取消装不下」的病，但药方是错的 ——
+ *    独占一行还写百分比 ⇒ 长的被压折行、短的被拉得比正文还重。⚠️ 并排的按钮不适用（继续 `layoutWeight(1)`）。 */
 
 /** 按钮字号。**显式给**，因为不给会按各自标签长度自适应，两个按钮的字不一样大。 */
 const BUTTON_FONT_VP = 16;
 
-/* 「按版本」那一屏存档行的三列宽度（vp）：文件名占剩下的全部，大小与时间**各占一列、右对齐**。
- * ⚠️ 宽度必须写死（`Text` 默认按内容自适应 ⇒ 列会歪），写死是安全的，因为两个格式**定长**：
- * 大小 ≤ 7 个字符（`1.2 MB`），时间恒为 10 个字符（`2026-10-02`）。
- *
- * ⭐⭐ **但「宽度写死」只在字号也写死时才成立。** 这一条是 2026-10-04 才补上的：
- * 原来那句理由默认了「字不会变大」，而 ArkUI 里 `fontSize(12)` 的单位是 **fp**（SDK 原文：
- * 「If fontSize is of the number type, the unit fp is used」）⇒ **它跟着系统字体缩放**。
- * 系统字体一调大，10 个字符的日期就会撑出 92vp，列宽写死反而变成裁切。
- *
- * ⇒ ⭐ **判据（全文件通用）**：
- *    · **标签 / 说明文字**（跟着读的字）—— 用数字（fp），**让用户按自己的需要放大**；
- *    · **装在定宽盒子里的数据**（大小、日期、勾）—— 用 `'12vp'` 这样的字符串，
- *      **不跟系统字体缩放**，否则那个盒子装不下它。
- * ⛔ 别反过来：给标签写 vp 会让看不清的用户没有出路；给数据列写 fp 会让列宽失效。
- * 手机窄屏上文件名只剩一百多 vp，靠 `TextOverflow.Ellipsis` 收尾 —— 比三列错开代价小。 */
+/* 「按版本」存档行的三列宽度（vp）：文件名占剩下的全部，大小与时间**各占一列、右对齐**。
+ * ⚠️ 宽度必须写死（`Text` 默认按内容自适应 ⇒ 列会歪）；而「写死」只在**字号也写死**时才成立。
+ * ⭐ 判据（全文件通用）：**标签 / 说明文字**用数字（fp）跟着系统字体缩放；**装在定宽盒子里的数据**
+ * （大小、日期、勾）用 `'12vp'` 这样的字符串，不跟缩放。反之会给看清的人断路 / 让列宽失效。 */
 const SAVE_SIZE_COL_VP = 74;
 const SAVE_DATE_COL_VP = 92;
 /** 选中那个 ✓ 也占定宽，否则「选中」会把后面几列推歪。 */
@@ -399,11 +373,10 @@ export struct LauncherHome {
   filesDir: string = '';
   bundleCodeDir: string = '';
 
-  /* Index.ets 在 Download 那个文件夹确认可用之后把它翻成 true。
-   * ⚠️ 那个文件夹是父组件**异步**创建的（mkdir 或 picker），本页 aboutToAppear 紧接着
-   * **同步**跑 ⇒ 全新安装的第一次读到状态文件还不存在、jarDirHint 为空（2026-10-01 在
-   * MatePad Pro 上实测，重启一次即恢复）。父组件不阻塞地通知一句，这里重读一遍。
-   * ⚠️ 反过来也不行：本页不能自己去 ensure（那要 UIAbilityContext，这里只有 filesDir 字符串）。 */
+/* Index.ets 在 Download 那个文件夹确认可用之后把它翻成 true。
+ * ⚠️ 那个文件夹是父组件**异步**创建的，本页 aboutToAppear 紧接着**同步**跑 ⇒ 全新安装第一次读到
+ * 状态文件还不存在、jarDirHint 为空（2026-10-01 MatePad Pro 实测，重启即恢复）。父组件不阻塞地通知。
+ * ⚠️ 反过来也不行：本页不能自己去 ensure（那要 UIAbilityContext，这里只有 filesDir 字符串）。 */
   @Prop @Watch('onFolderSettled') folderSettled: boolean = false;
 
   /** 玩家点了「启动游戏」。参数是最终决定要加载的那个 jar。 */
@@ -414,15 +387,10 @@ export struct LauncherHome {
   @State games: GameJar[] = [];
   @State selected: string = '';
   @State resolution: GameResolution = { path: '', source: 'none' };
-  /* ⚠️⚠️ **2026-10-03：从 @State 降成普通字段，这是一次一行实验 —— 别急着改回去。**
-   *
-   * 它是一个**只写不读**的遗留字段：全工程没有任何地方读它（当年的 `Tabs({index: this.currentTab})`
-   * 绑定已经撤掉）。但它是 `@State` ⇒ **每次赋值都让这个 4100 行的组件变脏** ⇒ `build()` 整棵重跑
-   * ⇒ 而三个页签是 `@Builder`（内容内联在 build() 里）⇒ **两千多行的构造代码每次切页签重跑一遍**。
-   * ⭐ 这正好解释用户报的「所有页签都一样、稳定地卡」：代价与切到哪个页签无关。
-   * ⭐ 对照 AMCL：它也在 onAnimationStart 里写同名字段（`Index.ets:2854`），但它的页签是**独立
-   *    `@Component`** ⇒ 父组件重跑时子组件不重新执行 ⇒ 所以它不卡。
-   * ⇒ 如果降级后不卡了，说明链条成立，下一步是把三个 @Builder 拆成独立 @Component（AMCL 的结构）。 */
+/* ⚠️⚠️ **2026-10-03：从 @State 降成普通字段，这是一次一行实验 —— 别急着改回去。**
+ * 它是一个**只写不读**的遗留字段（当年的 `Tabs({index: this.currentTab})` 绑定已撤掉），而 @State 的
+ * 每次赋值都让这个 4100 行组件变脏 ⇒ `build()` 整棵重跑 ⇒ 三个内联 @Builder 页签每次切页都重跑两千多行
+ * 构造代码 —— 正解释用户报的「所有页签都一样、稳定地卡」。对照 AMCL：它页签是独立 @Component，不卡。 */
   private currentTab: number = 0;
 
   /** 模组那个 Downloads 文件夹的路径提示；拿不到时为 ''。 */
@@ -482,12 +450,10 @@ export struct LauncherHome {
   @State gameScale: number = GAME_SCALE_FACTORY;
   /** ⭐ 实验性：避让由系统参数自动算（出厂关，见 LauncherPrefs）。 */
   @State gameAuto: boolean = false;
-  /* ⛔⛔ **探测完成之前不许用自动值** —— 这个标志是承重的，别删。
-   *    `initSafeArea()` 是 **async**，而 `refresh()` 是同步的：刷新先跑，那时
-   *    `detectedSafeVp` 还是 0 ⇒ 自动值算出来是 0 ⇒ 而 0 会被当成「我们要写 0」
-   *    ⇒ **把游戏里原来的避让抹掉**（而那正是自动模式最该保护的东西）。
-   *    ⚠️ 这个 bug 的症状是「刚拨上自动适配，避让就归零了」，而且只在启动的头一瞬间发生 ——
-   *    正是那种「手动复现要碰运气」的形态，所以用标志挡死而不是指望时序。 */
+/* ⛔⛔ **探测完成之前不许用自动值** —— 这个标志是承重的，别删。
+ * `initSafeArea()` 是 **async**，`refresh()` 是同步的：刷新先跑，那时 `detectedSafeVp` 还是 0 ⇒
+ * 自动值算出来是 0 ⇒ 而 0 会被当成「我们要写 0」⇒ **把游戏里原来的避让抹掉**。
+ * ⚠️ 症状是「刚拨上自动适配，避让就归零」，只在启动头一瞬间发生 ⇒ 用标志挡死而不是指望时序。 */
   private safeDetected: boolean = false;
   /* ⭐ 「玩家**显式**动过这两个滑条没有」。⛔ 承重 —— 见 `LauncherPrefs` 接口里那段：
    *    只有显式动过的值才写进文件；没动过的回退到启动器的出厂值。
@@ -541,13 +507,9 @@ export struct LauncherHome {
     if (this.showVaultClearAsk) { this.showVaultClearAsk = false; return true; }
     /* 删除版本的确认窗。⚠️ 与上面同理：一个会真删东西的窗必须能被返回键关掉。 */
     if (this.showGameDeleteAsk) { this.showGameDeleteAsk = false; return true; }
-    /* 整包导入的目标选择框。⛔ **2026-10-05 补的**：它在 `build()` 里是以 `if (this.importOpen)`
-     *    渲染的（与上面那些窗同类），但这条链上**没有它** ⇒ 框开着时按返回键会**穿过去**，
-     *    去关下面那一层（或者干脆什么都没关）。
-     * ⚠️ 与上面那些窗的不同之处：它是一个**会写盘**的窗（选完点确认就覆盖目标），
-     *    所以「关不掉」比别的窗更糟 —— 它挡着下面、又只能靠右上角那个 ✕ 出去。
-     * ⭐ 位置在 `transferOp` **之前**：`build()` 里 `importOpen` 那一段声明在 `transferOp` 之后，
-     *    而 Stack 后声明的在上层 ⇒ 它更靠外，返回键就该先关它（同本函数开头那条顺序说明）。 */
+/* 整包导入的目标选择框。⛔ **2026-10-05 补的**：它在 `build()` 里以 `if (this.importOpen)` 渲染，
+ * 但这条链上**没有它** ⇒ 框开着时按返回键会**穿过去**关下面那一层。⚠️ 它会写盘（选完点确认就覆盖），
+ * 「关不掉」比别的窗更糟。⭐ 位置在 `transferOp` **之前**：Stack 后声明的在上层 ⇒ 它更靠外，先关它。 */
     if (this.importOpen) { this.importOpen = false; return true; }
     if (this.transferOp !== '') { this.transferOp = ''; this.transferNote = ''; return true; }
     if (this.isolationConfirm !== '') { this.isolationConfirm = ''; return true; }
@@ -565,11 +527,10 @@ export struct LauncherHome {
     return false;
   }
 
-  /* 当前选中的那一行，形如 **`<目录>|<存档 id>`**。
-   * ⛔ 原来只存 `id`：隔离后不同版本里的存档会重名（每份数据里都有 `manual:0`）⇒ 一个 id 会
-   * 同时命中好几行。带上目录后「选的是哪一份」与「对它做哪个动作」才有唯一答案 ——
-   * 目录里不会出现 `|`，存档 id（`manual:0` / `sector:serpulo`）也不会 ⇒ 用第一个 `|` 切分是安全的。
-   * ⭐ 带 `@Watch` 读元数据；⚠️ 它只在值真的变化时触发 ⇒ `refresh()` 里还要显式调一次。 */
+/* 当前选中的那一行，形如 **`<目录>|<存档 id>`**。
+ * ⛔ 原来只存 `id`：隔离后不同版本里的存档会重名（每份数据里都有 `manual:0`）⇒ 一个 id 会命中好几行。
+ * 带上目录后「选的是哪一份」「对它做哪个动作」才有唯一答案 —— 目录里不会出现 `|`，存档 id 也不会。
+ * ⭐ 带 `@Watch` 读元数据；⚠️ 它只在值真的变化时触发 ⇒ `refresh()` 里还要显式调一次。 */
   @State @Watch('onSaveSelected') selectedSave: string = '';
 
 
@@ -598,9 +559,9 @@ export struct LauncherHome {
    *     和单个存档的删除走同一条规矩（那边的理由见 `showDeleteAsk`）。 */
   @State showVaultClearAsk: boolean = false;
 
-  /* 「删除这个版本」的确认窗开着没有。
-   * ⛔ 它与存档那个删除**不是一回事**：存档是搬进回收站（能找回），这里两个选项都是**真删**，
-   *     而「连数据一起删」还可能连带别的版本（见 `otherVersionsOnSelectedDir`）⇒ 必须过确认。 */
+/* 「删除这个版本」的确认窗开着没有。
+ * ⛔ 它与存档那个删除**不是一回事**：存档是搬进回收站（能找回），这里两个选项都是**真删**，
+ * 而「连数据一起删」还可能连带别的版本（见 `otherVersionsOnSelectedDir`）⇒ 必须过确认。 */
   @State showGameDeleteAsk: boolean = false;
   /* 「按『xxx』进行数据隔离」那个窗里，详情展开了没有。
    * ⭐ 默认收起 —— 里面那两块（这一档怎么分 / 版本→目录表）是**要看的人才有用**的，
@@ -666,18 +627,10 @@ export struct LauncherHome {
   @State importPicked: string[] = [];
   @State importNote: string = '';
 
-  /* ⭐⭐ 「未隔离的那一份」那三样，**在这里存下来给渲染用**（2026-10-05 加的）。
-   *
-   * ⛔⛔ 原来渲染里直接调 `liveImportTarget()`，而那**不是一个取值器** ——
-   *    它内部走 `countsOf(dir)`（列 `saves/` 等几个目录）+ `gameDataExists(dir)`，
-   *    是**真读盘**。而那段界面里它被调了 **6 次**（每个用到它的表达式一次）
-   *    ⇒ 每帧**至少六遍目录扫描**，还全在渲染路径上。
-   * ⭐ 本文件早就写着这条规矩（见 `granularityHintText` 上方那段）：
-   *    **凡是要读盘的，一律在事件处理里算好、存进 @State，渲染只读已算好的值。**
-   *    这一处只是漏了。⚠️ 它是三行原语而不是整个 `VersionEntry`：@State 里放接口对象
-   *    会让观测层次变复杂，而渲染真正需要的只有这三样。
-   * ⚠️ 填值的地点是 `startImport()`（唯一打开这个框的地方），⛔ 不是 `refresh()` ——
-   *    这个框开着的期间 `refresh()` 还会被别的事调，那会让「它有几个存档」在玩家眼皮下变。 */
+/* ⭐⭐ 「未隔离的那一份」那三样，**在这里存下来给渲染用**（2026-10-05 加的）。
+ * ⛔⛔ 原来渲染里直接调 `liveImportTarget()`，而它不是取值器 —— 内部走 `countsOf(dir)` +
+ * `gameDataExists(dir)`，是**真读盘**，且被调了 **6 次** ⇒ 每帧至少六遍目录扫描。
+ * ⚠️ 填值地点是 `startImport()`（唯一打开这个框的地方），⛔ 不是 `refresh()`。 */
   @State importLiveDir: string = '';
   @State importLiveHasData: boolean = false;
   @State importLiveCount: number = 0;
@@ -686,11 +639,9 @@ export struct LauncherHome {
   @State importToast: string = ''; /* 成功后的短提示 */
   @State exportMsg: string = '';
 
-  /* 选中那个存档的元数据：在【选中】时读一次存下来（右侧栏要显示「哪个版本写的」），而不是点开弹窗才读。
-   * ⚠️ 存的是**排好的行**而非 `SaveMeta` 原样：读它要**解压**（saveMetaText 走 zlib），常驻原始字段会让
-   * 每次重绘都依赖一堆「可能是空串」的判断；界面里也因此没有 native 类型。
-   * ⚠️ `selMetaNote` 非空 ⇒ 读失败了，`selMetaRows` 只有能确定的那一两行。
-   * ⛔ **不允许「读失败但界面上看起来正常」** —— 那会让玩家以为存档是空的。 */
+/* 选中那个存档的元数据：在【选中】时读一次存下来，而不是点开弹窗才读。
+ * ⚠️ 存的是**排好的行**而非 `SaveMeta` 原样：读它要**解压**；⛔ **不允许「读失败但界面上看起来正常」**。
+ * ⚠️ `selMetaNote` 非空 ⇒ 读失败了，`selMetaRows` 只有能确定的那一两行。 */
   @State selMetaRows: MetaRow[] = [];
   @State selMetaNote: string = '';
 
@@ -709,11 +660,10 @@ export struct LauncherHome {
    * ⚠️ 单独一个 @State 而非复用 `isolationNote`：这一块显示在**存档页**（动作在那儿按的），
    * 而 `isolationNote` 渲染在**设置页** —— 一个字段两个渲染点就是「按了没反应」的病。 */
   @State staleCopyNote: string = '';
-  /* **长按进入多选，一次删多个**（2026-10-02）。
-   * ⚠️ 选中的键与单选**同一套**（`<目录>|<id>`）⇒ 两个视图、两张列表指的是同一样东西，
-   * ⛔ 不需要第二套身份；而 `multiMode` **一个开关管两处**，进去后两张列表都按多选解释点击。
-   * ⭐ 删除走**同一条路**（搬进回收站，不是抹掉），保留方式用**全局那个保留期** ——
-   * 逐条问就把「一键」毁掉了；归档仍然可以事后在回收站里点。 */
+/* **长按进入多选，一次删多个**（2026-10-02）。
+ * ⚠️ 选中的键与单选**同一套**（`<目录>|<id>`）⇒ 两个视图、两张列表指的是同一样东西；`multiMode`
+ * **一个开关管两处**，进去后两张列表都按多选解释点击。⭐ 删除走**同一条路**（搬进回收站），保留方式
+ * 用**全局那个保留期**（逐条问就把「一键」毁掉了），归档仍可事后在回收站里点。 */
   @State multiMode: boolean = false;
   @State multiPicked: string[] = [];
   /* 多选删除的**确认框**（2026-10-02：「我最后点删除的时候没有提示框」）。
@@ -722,16 +672,10 @@ export struct LauncherHome {
   @State showMultiAsk: boolean = false;
   /** 确认框里那张名单展开了吗。⚠️ 默认收起 —— 一次选二十个会把窗撑爆。 */
   @State multiListOpen: boolean = false;
-  /* 存档页上那一句话（成功/失败都写这儿）。⚠️ 与 `vaultNote` 分开：
-   * 那个渲染在**回收站**里，而这里是**存档页** —— 一个字段两个渲染点就是「按了没反应」的病。
-   *
-   * ⛔⛔ **每一个会写它的动作都必须在【开头】先清空它**（2026-10-05 修的）。
-   *    它原来**从来不**被清：只在成功/失败时被重新赋值 ⇒ 上一次那句话会一直挂在存档页上，
-   *    而玩家已经做了另一个动作。最坏的一种是「永久删除」—— 它**成功时故意不说话**
-   *    （那一行消失本身就是反馈），于是屏幕上留着的必然是**上一条错误**
-   *    ⇒ 一次成功的删除之后，玩家读到一条错误。
-   * ⭐ 判据：**一条关于旧状态的提示，比没有提示更坏 —— 它指向一个已经不存在的问题。**
-   *    （同 `staleCopyNote` 那处：状态一解除就把它清掉。） */
+/* 存档页上那一句话（成功/失败都写这儿）。⚠️ 与 `vaultNote` 分开：那个渲染在**回收站**里。
+ * ⛔⛔ **每一个会写它的动作都必须在【开头】先清空它**（2026-10-05 修的）：它原来从来不被清 ⇒
+ * 上一次那句话一直挂在存档页，而玩家已经做了另一个动作；「永久删除」成功时故意不说话 ⇒ 屏幕上
+ * 留着必然是**上一条错误**。⭐ 判据：**一条关于旧状态的提示，比没有提示更坏。** */
   @State savesNote: string = '';
   @State copyTargets: CopyTarget[] = [];
   @State copyPicked: string[] = [];
@@ -744,15 +688,10 @@ export struct LauncherHome {
    * 反悔的地方，恰恰那时什么解释都没有。用玩家**真实的版本**算，不举 `160.5` 这种编的例子。
    * ⚠️ 在 `chooseGranularity()` 里算一次（要读每个 jar），⛔ 不在渲染里算。 */
   @State pendingPreview: string = '';
-  /* ⭐⭐ 说明那一行**存下来**，渲染只读这个字符串。
-   *
-   * ⛔ 我 2026-10-04 把它改成「算出来的」之后，忘了它被**渲染**调用（设置页 + 弹窗两处），
-   *    而它的实现要读**每一个 jar**（`gameVersionParts` 没有缓存，单个最大 88 MB）⇒
-   *    **每渲染一次就把所有 jar 读一遍**。讽刺的是我自己在下面写了「⛔ 绝不在渲染路径上」，
-   *    然后又违反了它。
-   * ⭐ 判据（本文件通用）：**凡是要读 jar 的，一律在 `refresh()` / 事件处理里算好，存进 @State**；
-   *    渲染里只允许读已经算好的值。
-   * ⚠️ 两份：设置页按 `this.granularity` 算，弹窗按 `pendingGranularity` 算，两者不同。 */
+/* ⭐⭐ 说明那一行**存下来**，渲染只读这个字符串。
+ * ⛔ 我 2026-10-04 把它改成「算出来的」之后忘了它被**渲染**调用（设置页 + 弹窗两处），而它要读
+ * **每一个 jar**（`gameVersionParts` 没有缓存，单个最大 88 MB）⇒ **每渲染一次就把所有 jar 读一遍**。
+ * ⭐ 判据（本文件通用）：**凡是要读 jar 的，一律在 `refresh()` / 事件处理里算好存进 @State**。 */
   @State granularityHintText: string = '';
   @State pendingHint: string = '';
 
@@ -761,20 +700,15 @@ export struct LauncherHome {
    * 他会以为功能坏了。真因是一条刻意的设计：内置那份永不移动，换内置 jar 时玩家数据不跟着搬。 */
   @State pendingUsesBundled: boolean = false;
 
-  /* 询问窗要点名的那个版本：「名字 · 版本号」。
-   * ⚠️ 原来整句话只有指代（「这个版本」），而那个版本的**身份**在那一屏上看不见（它在首页页签）
-   * ⇒ 这里点名。
-   * ⛔【曾经还有一个 `pendingKey`】—— 窗里单独写一行「这一档下，它用目录：xxx」。
-   *    2026-10-04 删了：下面那份「版本 → 目录」对照表**本来就含当前版本那一行**，
-   *    再单独写一遍是同一份信息的第二遍。⚠️ 顺带省掉一次 `resolveGameDirAndKey()` ——
-   *    它会**真读 jar**（最大 88 MB），而弹窗每打开一次要渲染好几遍。 */
+/* 询问窗要点名的那个版本：「名字 · 版本号」（原来只有指代「这个版本」，而它的身份在首页页签上）。
+ * ⛔【曾经还有一个 `pendingKey`】，窗里单独写一行「这一档下，它用目录：xxx」—— 2026-10-04 删了：
+ * 下面那份「版本 → 目录」表本来就含当前版本那一行。⚠️ 顺带省掉一次真读 jar（最大 88 MB）的调用。 */
   @State pendingVersionName: string = '';
 
-  /* **隔离开着，但那一份数据目录根本不存在** —— 即「开关拨过去了、数据没过去」。
-   * ⛔ 必须单独显出来：这种状态在界面上**完全看不出来**，玩家进游戏看到的是一整套空数据
-   * ⇒ 只会说「我的存档全没了」。顺序已改成「复制成功才落盘」，但已经踩进去的状态不会自己
-   * 出来，这个提示就是它的出口。
-   * ⚠️ 在 `refresh()` 里算一次，⛔ 不在渲染时 `accessSync`（渲染每帧都跑）。 */
+/* **隔离开着，但那一份数据目录根本不存在** —— 即「开关拨过去了、数据没过去」。
+ * ⛔ 必须单独显出来：界面上完全看不出来，玩家进游戏看到一整套空数据 ⇒ 只会说「我的存档全没了」。
+ * 顺序已改成「复制成功才落盘」，但已经踩进去的状态不会自己出来，这个提示就是它的出口。
+ * ⚠️ 在 `refresh()` 里算一次，⛔ 不在渲染时 `accessSync`。 */
   @State isolationStale: boolean = false;
 
   /* 询问窗要摆出来的【现在有什么】。打开询问窗那一刻读一次，不常驻。
@@ -795,27 +729,19 @@ export struct LauncherHome {
   /* 包内那份自带游戏**在不在**。⛔ 别从 `resolution.source` 反推 —— 那是「这次加载谁」。 */
   @State hasBundled: boolean = false;
 
-  /* 给**人**看的那个文件夹路径，形如 `Download/<应用名>/games`。⚠️ `Download` 单数 —— 磁盘上的真名。
-   * ⚠️ 真实路径不够用：那个文件夹**磁盘上叫包名**（ModImporter 用 bundle 名创建），
-   * 而文件管理器把它**显示成应用名** ⇒ 玩家照着找**找不到**（卸载后才退化成包名）。
-   * ⛔ 所以这里既不能写死包名、也不能写死应用名 —— 两个名字都随应用而变，见 `appLabel`。
-   * ⇒ 两行都给：这一行用来**找**，真实路径那一行用来**复制**。 */
+/* 给**人**看的那个文件夹路径，形如 `Download/<应用名>/games`。⚠️ `Download` 单数 —— 磁盘上的真名。
+ * ⚠️ 真实路径不够用：那个文件夹磁盘上叫**包名**，文件管理器显示成**应用名** ⇒ 玩家照着找找不到。
+ * ⛔ 两个名字都随应用而变，谁都不能写死（见 `appLabel`）⇒ 两行都给：这行用来**找**，真实路径用来**复制**。 */
   @State jarDirHuman: string = '';
 
   /* 应用自己的显示名，由 resolveAppLabel() 从资源读出；读不到时 ''。 */
   /* ⚠️ 名字叫 `appName` 而不是 `appLabel`：后者是 `utils/AppLabel` 导入的【函数】名。 */
   private appName: string = '';
 
-  /** 应用版本号，「关于」那一页要显示它。
-   *
-   * ⛔⛔ 它原来是**普通成员**（无 `@State`），而且**实际拿到的永远是空串**：
-   *     Index 传进来的是 `Index.appVersion`，而那个字段只由**游戏侧**的 `openAbout()`
-   *     赋值（`Index.ets:727`，悬浮球菜单触发）—— 启动器自己那个「关于」从没触发过它。
-   *     ⇒ 「关于」里 `this.appVersion === ''` 恒真 ⇒ **只显示应用名、没有版本号**
-   *     ⇒ 用户 2026-10-03 报「看版本号得到设置里去看」（那里的 About 是 Index 自己的，会查）。
-   * ⭐ 两处一起改：加 `@State`（否则异步/后写的值不重绘），并由本组件自己的 `openAbout()`
-   *    在**打开时**查一次 —— 与 `Index.ets` 那条注释同一个理由：
-   *    「版本号在打开时才读，不是启动时：它要花一次包查询，而那之前没人需要它」。 */
+/** 应用版本号，「关于」那一页要显示它。
+ * ⛔⛔ 它原来是**普通成员**、而且**实际拿到的永远是空串**（Index 传进来的是只由游戏侧 `openAbout()`
+ * 赋值的 `Index.appVersion`）⇒ 「关于」只显示应用名、没有版本号（用户 2026-10-03 报）。
+ * ⭐ 加 `@State` 并由本组件自己的 `openAbout()` 在**打开时**查一次（理由同 `Index.ets`：按需读）。 */
   @State appVersion: string = '';
 
   /* 上一次启动失败的记录；'' 表示没失败过。
@@ -823,18 +749,10 @@ export struct LauncherHome {
    * native 在游戏入口前留下的东西，要等**下一次启动**才被读到。 */
   launchFault: string = '';
 
-  /* 底部页签换成 HdsTabs（鸿蒙设计系统组件）之后，原来那两个字段都不需要了：
-   *
-   *   · canFloat（sdkApiVersion >= 26 的门槛）—— 裸 Tabs 的 barFloatingStyle 是 @since 26.0.0，
-   *     而 HdsTabs 的 barFloatingStyle 是 @since 6.0.0(20)（逐条核过本机 SDK 的
-   *     @hms.hds.hdsBaseComponent.d.ets）⇒ 我们 compatibleSdkVersion 24 ⇒ 门槛不存在了，
-   *     原来那两条分支因此合成一条（同一份内容复制两遍，本文件已为「只改一处」吃过苦）。
-   *   · barMaterial（uiMaterial.Material）—— 换成 systemMaterialEffect 里的两个枚举，
-   *     由系统按设备与主题自适应，比我们原先自己挑一个材质更稳。
-   * ⚠️ hdsMaterial 本身是 @since 6.1.0(23) ⇒ 仍要求 API 23+，与 compatibleSdkVersion(24) 相容。
-   *
-   * ⚠️ 控制器必须与 HdsTabs 配套（HdsTabsOptions.controller 收的是 HdsTabsController，
-   *    不是 TabsController）—— AMCL 也单独持有它。 */
+/* 底部页签换成 HdsTabs 之后，原来那两个字段都不需要了：
+ *   · canFloat（裸 Tabs 的 @since 26 vs HdsTabs 的 @since 20）⇒ 门槛不存在，两条分支合成一条；
+ *   · barMaterial → `systemMaterialEffect` 两个枚举，由系统自适应。⚠️ hdsMaterial 是 API 23+，与 compatibleSdkVersion(24) 相容。
+ * ⚠️ 控制器必须配套：`HdsTabsOptions.controller` 收的是 `HdsTabsController`，不是 `TabsController`。 */
   private tabController: HdsTabsController = new HdsTabsController();
 
   aboutToAppear(): void {
@@ -860,16 +778,10 @@ export struct LauncherHome {
     return n.join('/');
   }
 
-  /* 某一条边最终让开多少 vp。⭐⭐ 三条规则，按顺序：
-   *
-   *   ① 避让量为 0        ⇒ 四边都不让（玩家明确选了「不让」）
-   *   ② 探测**没命中任何边** ⇒ **只让上边**
-   *   ③ 探测命中了那几边   ⇒ **只让那几边**（用户 2026-10-03：「保留一个滑条，但只用在探测到的那几边」）
-   *
-   * ⛔ ② 曾经是「四边都让」，**那是错的**（用户 2026-10-03 当场指出：「左右避让干啥啊」）。
-   *    左右两条边在这台机器上白白少了一截可用宽度，而顶部那个孔根本没碰到它们。
-   *    ⇒ 探测不到时按**最常见的形状**假定：顶部一个挖孔。要上下都让的机器由玩家自己拖。
-   * ⚠️ 仍是猜测，但它的代价是「上边多让一点」而不是「左右各少一截」，而且**上边本来就最先被挡**。 */
+/* 某一条边最终让开多少 vp。⭐⭐ 三条规则，按顺序：
+ *   ① 避让量为 0 ⇒ 四边都不让；② 探测**没命中任何边** ⇒ **只让上边**；③ 命中了那几边 ⇒ 只让那几边。
+ * ⛔ ② 曾经是「四边都让」，**那是错的**（用户 2026-10-03：「左右避让干啥啊」）⇒ 探测不到时按最常见的
+ * 形状假定顶部一个挖孔，要上下都让的机器由玩家自己拖。 */
   private edgeVp(edge: string): number {
     if (this.safeVp <= 0) {
       return 0;
@@ -884,15 +796,10 @@ export struct LauncherHome {
    *   玩家自己设过 ⇒ **完全听他的**，探测值只用来在设置页里显示作参考；
    *   没设过     ⇒ 用这次探测的结论**播种**一次，之后那也成了「玩家的选择」。
    * ⛔ 「设过没有」看的是**文件在不在**，不是「值是不是 0」—— 0 是合法选择（不让开）。 */
-  /* 把存储位置 + 自动适配的那几行写成一个 hdc 读得到的小文件。
-   *
-   * ⛔ **抽成方法是因为它有【两个】调用点，而那两处缺一不可**：
-   *    ① `refresh()` —— 常规时机；
-   *    ② `initSafeArea()` 探测完成之后 —— ⭐ **少了它，自动适配的值永远不进这个文件**。
-   *       探测是 async、`refresh()` 是 sync：文件在探测完成前就写好了，而之后没有第二次
-   *       `refresh()`（我只在应用启动时跑一次）⇒ 文件里会永久留着一个 `derived:0`，
-   *       看起来像「公式算出来是 0」。**2026-10-04 真的这样量到过一次。**
-   * ⛔ 只在内容变了时写：它在 `refresh()` 里，而每渲染周期写一次文件本身就是卡顿源。 */
+/* 把存储位置 + 自动适配的那几行写成一个 hdc 读得到的小文件。
+ * ⛔ **抽成方法是因为它有【两个】调用点**：`refresh()`，以及 `initSafeArea()` 探测完成之后 ——
+ * 少了后者，自动适配的值永远不进这个文件（探测是 async、`refresh()` 是 sync，之后没有第二次 refresh，
+ * 文件里会永久留着 `derived:0`；2026-10-04 真的量到过）。⛔ 只在内容变了时写。 */
   private dumpStorageDiagnostics(): void {
     const dump: string = readStorageMode(this.filesDir) + '|' + this.storageUsed + '|'
                        + this.storageUsedReason + '|' + String(this.isolationStale)
@@ -922,22 +829,17 @@ export struct LauncherHome {
     }
   }
 
-  /* 系统设置里的**字体缩放**（`Configuration.fontSizeScale`，默认 1 = 没放大）。
-   *
-   * ⭐ 这是唯一一个「和界面缩放同类」的系统设置 —— 用户在系统里调大字体，就表示他偏好更大的字，
-   *    而那正是界面缩放要表达的事。⚠️ **别拿显示密度来推**：游戏已经用密度算过一次缩放了，
-   *    再乘一次就是叠加（理由与实测见 `GameAutoFit.ets` 文件头）。
-   * ⛔ 拿不到就返回 **1**（= 不放大），而不是 0 —— 0 会让缩放落到量程下限 25。 */
+/* 系统设置里的**字体缩放**（`Configuration.fontSizeScale`，默认 1 = 没放大）。⭐ 这是唯一一个
+ * 「和界面缩放同类」的系统设置。⚠️ **别拿显示密度来推**（游戏已用密度算过一次缩放，会叠加）。
+ * ⛔ 拿不到就返回 **1**（= 不放大），而不是 0 —— 0 会让缩放落到量程下限 25。 */
   private systemFontScale(): number {
     try {
       const ctx = getContext(this) as common.UIAbilityContext;
       /* ⚠️ `fontSizeScale` 在类型上是**可选**的（`number | undefined`）⇒ 必须判 `undefined`，
        *    否则编译不过（`number | undefined` 不能当 `number` 用）。 */
-      /* ⛔⛔ **按当前配置，这里读到的【永远是 1】** —— 我们没有在 `AppScope/app.json5` 声明
-       *    `configuration` 标签，而它缺省的含义就是「不跟随系统」（见 `GameAutoFit.systemGameScale`
-       *    那段的长注释，那里有出处）。⇒ 读它、判它、用它**都不会出错**，但它是个常数。
-       * ⚠️ 真发生过的误判：早先的记录里写着「界面缩放会跟随系统字体」——**那是假的**，
-       *    用户实测就是 150，因为倍率恒为 1。 */
+/* ⛔⛔ **按当前配置，这里读到的【永远是 1】** —— 我们没有在 `AppScope/app.json5` 声明 `configuration`
+ * 标签，缺省含义就是「不跟随系统」⇒ 读它/判它/用它都不会出错，但它是常数。
+ * ⚠️ 曾误判「界面缩放会跟随系统字体」——**那是假的**（用户实测就是 150，因为倍率恒为 1）。 */
       const v: number | undefined = ctx.config.fontSizeScale;
       if (v !== undefined && v > 0 && v <= 10 && Number.isFinite(v)) {
         return v;
@@ -949,18 +851,10 @@ export struct LauncherHome {
     }
   }
 
-  /* 按本机参数算一个避让值，并**直接采用它**（写进 `gameEdge`）。
-   *
-   * ⛔⛔ **为什么是「采用」而不是「并存两个值」**（2026-10-04 改的）：原来自动值与手动值分成
-   *    `gameAutoEdge` / `gameEdge` 两份，而滑条动的是**手动**那份 ⇒ **自动开着时拖滑条完全无效**
-   *    （滑条显示自动值、拖了却改不动生效的那个数）—— 那是「控件看起来能用、实际不起作用」，
-   *    与本项目反复记下的那类缺陷同族。
-   * ⭐ 现在的模型**只有一个值**：`gameEdge`，它就是会被写进游戏的那个数。
-   *    「自动适配」退化成一个**动作**：按本机挖孔算一个值并填进 `gameEdge`；
-   *    之后滑条就是唯一的编辑器，两者永远一致。
-   * ⚠️ 代价：自动值**不会**每次启动重算（那会抹掉玩家的微调）。要重算就再拨一次开关。
-   *
-   * @returns 有没有真的算出一个可用的值（探测没回来 / 本机没挖孔 ⇒ false，**不动**现有值）。 */
+/* 按本机参数算一个避让值，并**直接采用它**（写进 `gameEdge`）。
+ * ⛔⛔ **为什么是「采用」而不是「并存两个值」**（2026-10-04 改的）：原来自动/手动分成两份，滑条动的是
+ * 手动那份 ⇒ 自动开着时拖滑条完全无效（「控件看着能用、实际不起作用」）。⭐ 现在只有一个值 `gameEdge`，
+ * 「自动适配」退化成一个动作，之后滑条是唯一编辑器。@returns 探测没回来 / 无挖孔 ⇒ false，**不动**现有值。 */
   private seedGameEdgeFromDevice(): boolean {
     if (!this.safeDetected) {
       return false;                /* 探测没回来 ⇒ 算出来会是 0，而 0 是合法值 ⇒ 不能填 */
@@ -985,11 +879,10 @@ export struct LauncherHome {
     this.detectedSafeVp = uniformOf(ins);
     this.detectedEdges = edgesOf(ins);
 
-    /* ⭐⭐ 自动 / 手动的判定。
-     * ⛔ 第一版是「只播种一次」（文件不在就把探测值写进去，之后永远用文件里的值）——
-     *    那个设计**坏过**：前一版探测本身有 bug、永远得 0，而那唯一一次播种把 0 固化了，
-     *    从此探测值再也不被采用。用户 2026-10-03 报的「自动设置好异形屏避让没做」就是它。
-     * ⇒ 改成**状态**：只要玩家没动过滑条（文件里写着 auto），每次启动都重新采用探测结果。 */
+/* ⭐⭐ 自动 / 手动的判定。
+ * ⛔ 第一版是「只播种一次」——**坏过**：前一版探测本身有 bug、永远得 0，而那唯一一次播种把 0 固化了
+ * （用户 2026-10-03 报的「自动设置好异形屏避让没做」）。⇒ 改成**状态**：只要玩家没动过滑条
+ * （文件里写着 auto），每次启动都重新采用探测结果。 */
     const pref: SafePref = readSafePref(this.filesDir);
     this.safeAuto = pref.auto;
     this.safeVp = pref.auto ? this.detectedSafeVp : pref.vp;
@@ -1050,17 +943,10 @@ export struct LauncherHome {
     return '不隔离';
   }
 
-  /* 把「已装的版本」按**当前档位算出来的键**分组 —— 键相同 = 落进同一个目录 = 共用一份数据。
-   *
-   * ⭐⭐ 这是用户 2026-10-04 要的那张「哪几个版本共用存档」的表，也是【说明文字】的唯一来源。
-   * ⛔ 在它之前，说明那句是**写死的**（`'v8 的所有版本共用一份'`）而表是真算的 ⇒
-   *    只要装的不是 v8，**说明就在说谎**（用户原话：「我不知道你有没有做 v7 等等的提示」——
-   *    答案是没有）。现在两者同一处算，不可能分叉。
-   *
-   * ⚠️ 分组【不自己折版本字段】（number / build 那些）：`computeKey()` 已经把该并的并了，
-   *    包括「与内置同版本也走 bundled」那条规则 —— 再折一次就是把那条规则实现第二遍。
-   * ⚠️ 它会读每个 jar（`gameVersionParts` **没有缓存**）⇒ 只从 `chooseGranularity()` 与
-   *    设置页那次调用，⛔ 绝不在渲染路径上。 */
+/* 把「已装的版本」按**当前档位算出来的键**分组 —— 键相同 = 落进同一个目录 = 共用一份数据。
+ * ⭐⭐ 这是用户 2026-10-04 要的那张「哪几个版本共用存档」的表，也是【说明文字】的唯一来源：
+ * 以前说明是**写死的**而表是真算的 ⇒ 装的不是 v8 时说明就在说谎。
+ * ⚠️ 分组不自己折版本字段（`computeKey()` 已把该并的并了）；它读每个 jar ⇒ ⛔ 绝不在渲染路径。 */
   private isolationGroups(g: string): IsoGroup[] {
     const out: IsoGroup[] = [];
     const at: Map<string, number> = new Map<string, number>();
@@ -1082,23 +968,17 @@ export struct LauncherHome {
     return out;
   }
 
-  /* 键 → 它代表的**版本槽位**（`b160` → `160`、`n8` → `8`）；**不是槽位的键返回空串**。
-   *
-   * ⛔⛔ 这是 2026-10-04 用户当场看到那个 bug 的根：我在两个调用点各自写了
-   *      `key.substring(1)`，理由是「槽位键恒为 `n`/`b` + 数字」。而 `KEY_BUNDLED`
-   *      是 `bundled` ⇒ 被砍成 **`undled`**，又以 `b` 开头 ⇒ 还被当成「构建号系列」，
-   *      于是弹窗上写着 **「vundled 的所有版本共用一份」**。
-   * ⭐ 判据改成**形状**（`n`/`b` 后面必须跟数字）：`bundled`（b+u）与 `_unknown`（下划线）
-   *    自然落选，⛔ 不依赖任何白名单，将来多出别的键也不会再误判。 */
+/* 键 → 它代表的**版本槽位**（`b160` → `160`）；**不是槽位的键返回空串**。
+ * ⛔⛔ 这是 2026-10-04 那个 bug 的根：原来两处各写 `key.substring(1)`，而 `KEY_BUNDLED = 'bundled'`
+ * 被砍成 `undled`、又以 `b` 开头 ⇒ 弹窗上写着「vundled 的所有版本共用一份」。
+ * ⭐ 判据改成**形状**（`n`/`b` 后必须跟数字）：`bundled` / `_unknown` 自然落选，不依赖白名单。 */
   private slotOfKey(key: string): string {
     return /^[nb][0-9]/.test(key) ? key.substring(1) : '';
   }
 
-  /* 内置那份**在这一档下本来会落到哪个槽位**（`n8` / `b160`）—— ⛔ 不是它实际用的那个：
-   * 内置恒用 `bundled`，这个值只用来**告诉玩家它相当于哪一档**。
-   * ⭐ 用户 2026-10-04：「按大版本：内置游戏（v8）」「按构建号：内置游戏（b160）」。
-   * ⛔ 它读 jar（`gameVersionParts` 没有缓存）⇒ 只从 `buildGranularityPreview()` /
-   *    `isoGroupTitle()` 走，⛔ 不在渲染路径上。读不出返回 `''`（那时不显示括号）。 */
+/* 内置那份**在这一档下本来会落到哪个槽位**（`n8` / `b160`）—— ⛔ 不是它实际用的那个（内置恒用 `bundled`）。
+ * ⭐ 用户 2026-10-04：「按大版本：内置游戏（v8）」「按构建号：内置游戏（b160）」。
+ * ⛔ 它读 jar ⇒ 只从 `buildGranularityPreview()` / `isoGroupTitle()` 走，⛔ 不在渲染路径上。 */
   private bundledSlotKey(g: string): string {
     const p: string = bundledGamePath(this.bundleCodeDir);
     if (p === '') {
@@ -1118,12 +998,9 @@ export struct LauncherHome {
   /** 一个组在表里的标题。⛔ `bundled` / `_unknown` **不是版本槽位**，不能当版本号念。 */
   private isoGroupTitle(g: string, key: string): string {
     if (key === 'bundled') {
-      /* ⭐ 说人话：它对应的就是「内置游戏」那一行。
-       * ⭐⭐ 再带上它**相当于哪一档** —— 玩家看「内置游戏」不知道那一档把它分到了哪里，
-       * 而括号里那个才是他能和自己导入的 jar 对上的东西。
-       * ⚠️ 这个值是**算**出来的（读内置 jar 的版本），⛔ 不是写死的 ——
-       * 我们换内置游戏版本时它会自己跟着变（用户 2026-10-04：「文字需要是动态的，
-       * 不是固定死的，这样我们换了版本可以少改一处」）。 */
+/* ⭐ 说人话：它对应的就是「内置游戏」那一行；括号里带上它**相当于哪一档**（玩家能和自己导入的 jar 对上）。
+ * ⚠️ 这个值是**算**出来的（读内置 jar 的版本），⛔ 不是写死的 —— 换内置版本时自己跟着变
+ * （用户 2026-10-04：「文字需要是动态的」）。 */
       const sub: string = this.slotLabel(this.bundledSlotKey(g));
       return sub === '' ? '内置游戏' : ('内置游戏（' + sub + '）');
     }
@@ -1270,11 +1147,9 @@ export struct LauncherHome {
      * ⛔ 原来顺序是反的（先 `writeGranularity` 再复制），2026-10-02 那次复制失败就暴露了：
      * 隔离标记已落盘 ⇒ 进游戏 `user.home` 指向那棵**空的**新树 ⇒ 「存档全没了」，而报错只写在
      * 设置页一行小字里。判据是「玩家的意图有没有被执行」，不是「数据有没有丢」；开关留在原处还保住可重试。 */
-    /* **「复制过去」要给每个版本都补一份，不只当前那一个。**
-     * ⛔ 2026-10-02 报「粒度的复制似乎是不起作用的」，而日志说那次复制**成功了**
-     * （`copied 14 dir(s) / 188 file(s)`）—— 但它复制到 `instances/bundled`、那个目录**本来就有数据**
-     * ⇒ 界面上与「什么都没做」完全一样。「粒度」的含义是：**这一档下的每一个版本各有一份**。
-     * ⚠️ 只补**还没有数据**的那些，⛔ 不覆盖已有的（那等于又删了一次）；当前版本那份必须成功，其余尽力而为。 */
+/* **「复制过去」要给每个版本都补一份，不只当前那一个。**⛔ 2026-10-02 报「粒度的复制似乎不起作用」，
+ * 而日志说复制成功了 —— 它复制到本来就已有数据的 `instances/bundled` ⇒ 界面上一模一样。
+ * ⚠️ 只补**还没有数据**的那些，不覆盖（那等于又删了一次）；当前版本那份必须成功，其余尽力而为。 */
   const note: string = copyLiveDataInto(key);
   if (note !== '') {
     this.isolationNote = note + '。隔离没有打开，你的数据还在原来的位置。';
@@ -1326,15 +1201,10 @@ export struct LauncherHome {
     this.refresh();
   }
 
-  /* ⭐⭐ 「隔离开着，但**当前版本那一档**还是空的」—— 给它一个出口。复制只发生在**改粒度**
-   * 那一刻，而换 jar（键从 `bundled` 变成 `b159`）发生在改完粒度之后、粒度没变 ⇒
-   * `chooseGranularity` 第一行就 return、再也不弹那个窗 ⇒ 新键那份目录没有任何代码路径去建它。
-   * ⭐ 实测（2026-10-02 同一台平板）：`isolation: bridge written -- enabled=1 key=b159`，而
-   * `instances/` 下只有 `bundled` 与 `n8`（STALE 日志说 b159 那个目录 does not exist）。
-   * 判据（老账「门关上了也要有开它的路」）：目标目录空是一个**状态**，就必须有一个只针对它的出口。
-   * ⭐ 为什么是**内嵌的一块**而不是弹窗：状态一出现它就一直在（切页签、切版本回来都还在），
-   * 弹窗只在那一刻响一次、手一滑关掉就再也找不到；换一个 jar ⇒ 目标目录又空了 ⇒ 这块又出现。
-   * ⛔ 只补当前版本这一个键，别的键一律不动，已有的数据一律不覆盖。 */
+/* ⭐⭐ 「隔离开着，但**当前版本那一档**还是空的」—— 给它一个出口。
+ * 复制只发生在**改粒度**那一刻，而换 jar 发生在之后 ⇒ `chooseGranularity` 第一行 return、新键那份
+ * 目录没有任何代码路径去建它（2026-10-02 实测：bridge key=b159 而 `instances/` 下只有 bundled 与 n8）。
+ * ⭐ 为什么是**内嵌的一块**而不是弹窗：状态一出现就一直在，弹窗手一滑关掉就再也找不到。 */
   private copyStaleCurrent(): void {
     /* ⛔ 搬移中不给点（同那个开关的防呆）—— 它俩都在搬同一批数据。 */
     if (this.storageBusy) {
@@ -1390,12 +1260,9 @@ export struct LauncherHome {
           .width('100%').margin({ top: 6 })
       }
 
-      /* ⭐⭐ 按钮**必须比正文小**。原来用 `BUTTON_FONT_VP`（16）⇒ 按钮上的字**比要读的正文（12）还大**，
-       * 加上 `Button` 默认 40vp 高，整块看起来是「一句话 + 一个和它一样大的色块」。
-       * ⇒ 字号降到 14、高度压到 34（⛔ 不走 `BUTTON_FONT_VP`：那个常量同时管着 10 个**主**按钮，
-       *   这里是个次要出路，不该跟着它们一起定）。
-       * ⚠️ 34vp 低于 48vp 那个最小触控目标 —— 有意的取舍：它够宽（左右各 18vp 内边距），
-       *    而这块提示本身不该在屏幕上占掉主按钮的分量。 */
+/* ⭐⭐ 按钮**必须比正文小**：原来用 `BUTTON_FONT_VP`（16）⇒ 按钮字比正文（12）还大，加上 Button
+ * 默认 40vp 高，整块像「一句话 + 一个和它一样大的色块」⇒ 字号降 14、高度压 34。
+ * ⚠️ 34vp 低于 48vp 最小触控目标，是刻意取舍（它够宽，且这块提示不该占掉主按钮的分量）。 */
       /* ⭐ 两个选项。「复制过去」是**主**动作（填色），「忽略」是次级（描边感：卡片底色）。
        * ⚠️ 两个都不走 `BUTTON_FONT_VP` —— 那个常量管着 10 个主按钮，这里是提示里的出路，
        *    字号 14 / 高 34 是刻意的（用户 2026-10-04：「按钮相较文字提示过大」）。 */
@@ -1454,20 +1321,14 @@ export struct LauncherHome {
     return Math.max(DIALOG_MIN_VP, this.winW * DIALOG_WIDTH_FRACTION);
   }
 
-  /* 一个页签项 —— 用【原生】`BottomTabBarStyle`，不是自定义的 `@Builder`。
-   * ⛔ 走过的弯路：自定义 @Builder 图标能显示但**没有按下去的反馈**（`tabBar()` 收到自定义 builder 时
-   * 系统就不再绘制它自己的页签项，按压高光与沉浸光感只存在于系统画的那一个里）；自己补 `stateStyles`
-   * 时编译器内部崩过一次（`Node must have a real position`），修好后效果也是假的（一个半透明方块）。
-   * ⇒ 正解：图标交给 `TabBarSymbol`、页签项交给 `BottomTabBarStyle`，让系统去画它自己的页签 —— 按压、
-   * 选中高亮、与 `barFloatingStyle` 那层沉浸光感的配合就都是原生的了。
-   * ⭐ 颜色没丢：`TabBarSymbol` 的 `normal` / `selected` 两个 `SymbolGlyphModifier` 正好接住原来那套
-   * 「未选中用次要色 / 选中用品牌色」。⚠️ 图标仍是 `$r('sys.symbol.*')`（矢量、与字体无关）。 */
+/* 一个页签项 —— 用【原生】`BottomTabBarStyle`，不是自定义的 `@Builder`。
+ * ⛔ 走过的弯路：自定义 @Builder 图标能显示但**没有按下去的反馈**（`tabBar()` 收到自定义 builder 时
+ * 系统不再绘制自己的页签项）；自己补 `stateStyles` 时编译器内部崩过一次（`Node must have a real
+ * position`）。⇒ 图标交给 `TabBarSymbol`、页签项交给 `BottomTabBarStyle`，让系统去画。 */
   private tabItem(symbol: Resource, label: string): BottomTabBarStyle {
-    /* **系统符号，不是 emoji。** 之前用 🎮 / ⚙️ —— 那是**字符**，由字体决定长相（有的设备
-     * 是彩色 emoji、有的是单色轮廓），且**跟着系统字体漂移**。
-     * `$r('sys.symbol.*')` 是鸿蒙自己的矢量图标：扁平、随主题变色、**与字体无关**（AMCL 也用这一套）。
-     * ⚠️ 名字是在 SDK 资源索引里核过的（`house_fill`、`gearshape_fill` 都在），且编译器会校验：
-     * 写错名字报 `Unknown resource name`。 */
+/* **系统符号，不是 emoji。** 之前用 🎮 / ⚙️ —— 那是**字符**，由字体决定长相、且跟着系统字体漂移。
+ * `$r('sys.symbol.*')` 是鸿蒙矢量图标：扁平、随主题变色、与字体无关。⚠️ 名字在 SDK 资源索引里核过，
+ * 写错报 `Unknown resource name`。 */
     const marks: TabBarSymbol = {
       normal: new SymbolGlyphModifier(symbol).fontColor([$r('sys.color.font_secondary')]),
       selected: new SymbolGlyphModifier(symbol).fontColor([$r('sys.color.brand')]),
@@ -1481,21 +1342,10 @@ export struct LauncherHome {
     return bundledGamePath(this.bundleCodeDir);
   }
 
-  /** 重新读一遍磁盘。文件夹在这里【再确认一次】存在，因为玩家可能刚把它删掉。 */
-  /* 把外观偏好应用到系统。⭐ 两个开关合成**三个**状态，正好对上 `ConfigurationConstant.ColorMode`
-   * 的三个常量（本地 SDK `@ohos.app.ability.ConfigurationConstant.d.ts:48/57/66`）。
-   *
-   * ⚠️⚠️ **必须在页面加载完之后调**：`ApplicationContext.setColorMode()` 的文档写明
-   *    「ensure that the window has been created and the page corresponding to the UIAbility has
-   *    been loaded」（`ApplicationContext.d.ts:305-312`）⇒ ⛔ 不能放进 `EntryAbility.onCreate`。
-   *    从本文件（页面）里调它是安全的，这正是 `refresh()` 所在的位置。
-   *
-   * ⚠️⚠️ **它不跨进程保留** —— 文档没说它会，而实测行为也是回到系统默认 ⇒ 所以每次启动都要
-   *    重新应用一次（这就是它被 `refresh()` 调用的原因），而不是只在玩家拨开关时调。
-   * ⛔ 少这一次重放，「强制深色」就只在本次会话有效、下次打开变回系统色，而界面上开关还开着。
-   *
-   * ⚠️ 取 context 走 `getUIContext().getHostContext()`（本工程既有的那条没废弃的路，
-   *    见 `Index.ets:940-944` 的说明）；它可能返回 undefined ⇒ 检查它，别强转后直接用。 */
+/* 把外观偏好应用到系统。⭐ 两个开关合成**三个**状态，正好对上 `ConfigurationConstant.ColorMode` 的三个常量。
+ * ⚠️⚠️ **必须在页面加载完之后调**：`setColorMode()` 文档要求窗口已建、页面已加载 ⇒ ⛔ 不能放进
+ * `EntryAbility.onCreate`，从本文件（页面）里调是安全的。⚠️⚠️ **它不跨进程保留** ⇒ 每次启动都要重放一次
+ * （由 `refresh()` 调用），否则「强制深色」只在本次会话有效。⚠️ context 可能 undefined ⇒ 检查它。 */
   private applyColorMode(): void {
     const mode: ConfigurationConstant.ColorMode = this.darkFollow
       ? ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET      // -1：跟随系统
@@ -1517,18 +1367,10 @@ export struct LauncherHome {
     }
   }
 
-  /* ⛔ 这里原来有两个方法：`storageUsedLine()`（「游戏上次启动用的是：…　← 需要重启游戏才会生效」）
-   * 和 `storageUsedMismatch()`（给那行上警示色）。**2026-10-04 整行删了。**
-   *
-   * 用户的理由：**切换时游戏进程肯定是关着的** —— 而这条比听上去更强：
-   *   启动器的设置页与游戏**不可能同时在跑**（同一个应用、同一个进程）⇒ `usedUserHome()`
-   *   读到的永远来自**上一次**启动，**不存在活的冲突**。
-   * ⭐ 那行当年存在的理由是「界面上说的和实际用的会分叉」，而在这个功能里那个分叉
-   *   **构造上不可能出现** ⇒ 它是句废话，还把界面弄长了一行。
-   * ⚠️ **`usedUserHome()` / `usedUserHomeReason()` 仍然在调用** —— 它们进
-   *   `dumpStorageState()` → `storage_state.txt` 给 hdc 读。那是**排查通道**，
-   *   与「界面上要不要显示」是两件不同的事：⛔ 别因为界面不显示了就把那条路也删掉，
-   *   否则出问题时**只剩眼睛**可看（本应用的 hilog 读不到）。 */
+/* ⛔ 这里原来有两个方法：`storageUsedLine()` 与 `storageUsedMismatch()`（给那行上警示色），**2026-10-04 删了**。
+ * 用户的理由：**切换时游戏进程肯定是关着的** —— 启动器的设置页与游戏不可能同时在跑（同一进程）⇒
+ * 那行当年怕的「界面说的和实际用的分叉」**构造上不可能出现**，它是句废话。
+ * ⚠️ `usedUserHome()` / `usedUserHomeReason()` 仍在调用 —— 它们进 `storage_state.txt` 给 hdc 读，别删。 */
 
   /* 拨存储位置那个开关。
    * ⭐ 顺序：**先探针、再问要不要搬、最后才落盘**。任何一步不过就什么都不改。 */
@@ -1546,18 +1388,9 @@ export struct LauncherHome {
       return;
     }
 
-    /* ⭐⭐ **先把控件状态记成玩家刚拨到的这一档。这一步是承重的，别删。**
-     *
-     * ⛔⛔ 2026-10-04 我在这个问题上错了**两次**，两次都是同一个机制：
-     *    `Toggle` 只在**绑定值发生变化时**才重新应用视觉状态。而「取消」那条路上
-     *    `storageIntent` 没变 ⇒ `syncStorageToggle()` 算出来还是 `false`、**和之前同一个值**
-     *    ⇒ ArkUI 认为无事发生 ⇒ **控件照旧停在「开」**（用户两次都看到这个）。
-     *    ⭐ 我第一版甚至连 state 都没有（绑的是 `storageIntent` 的表达式）；
-     *      第二版加了 state 但那个 state **从头到尾没变过** —— 都一样坏。
-     * ⇒ **判据：要靠状态把控件弹回去，那个状态就必须在「拨了」与「没拨」两个值之间
-     *    真的动一次。** 只提供一个「正确的值」是不够的。
-     * ⚠️ 所以这里先设成 `on`（此时与控件自己的视觉一致、所以看不出变化），
-     *    而在**任何取消路径**上再设回意图那一档 —— 那一次才是真的变化，控件才会弹回去。 */
+/* ⭐⭐ **先把控件状态记成玩家刚拨到的这一档。这一步是承重的，别删。**
+ * ⛔⛔ `Toggle` 只在**绑定值发生变化时**才重新应用视觉状态，而「取消」那条路上 `storageIntent` 没变
+ * ⇒ 控件照旧停在「开」。⇒ **要靠状态把控件弹回去，那个状态就必须在「拨了」与「没拨」间真的动一次。** */
     this.storageToggleOn = on;
 
     if (on) {
@@ -1570,41 +1403,24 @@ export struct LauncherHome {
         return;
       }
     }
-    /* ⭐⭐ **拨完就直接搬**（用户 2026-10-04：「把提示框删了，这个就没用了」）。
-     *    ⛔ 原来这里弹一个确认窗，而它只剩「搬过去 / 取消」两个按钮 —— 一个动作的窗
-     *    只是多一次点按。删掉之后：**拨开关 = 立刻搬**。
-     *
-     * ⚠️⚠️ **这里有一个已知的、用户接受的取舍**：不再有确认，而搬会**删掉旧位置那份**。
-     *    可恢复性靠三样：① 复制**全部成功才删源**（中途失败源完好，重试即可）；
-     *    ② 搬反方向就是搬回来；③ 回收站留在沙箱、永远不跟着走。
-     *    ⛔ 别因为「太危险」就自己把确认窗加回来 —— 那是用户明确要去掉的东西。
-     * ⭐ **失败**仍然要说（用户 2026-10-04：「除非失败了才弹提示」）—— 见下面 `storageNote`。 */
+/* ⭐⭐ **拨完就直接搬**（用户 2026-10-04：「把提示框删了」）—— 一个只剩两按钮的确认窗只是多一次点按。
+ * ⚠️⚠️ 已有取舍：不再有确认，而搬会**删掉旧位置那份**。可恢复性靠三样：① 全部成功才删源；
+ * ② 搬反方向就是搬回来；③ 回收站留在沙箱。⛔ 别自己把确认窗加回来。⭐ **失败**仍要说。 */
     this.storageNote = '';
     const from: string = gameDataRoot(this.filesDir);
     const to: string = gameDataRootFor(this.filesDir,
                                        on ? STORAGE_MODE_EXTERNAL : STORAGE_MODE_SANDBOX);
 
-    /* ⭐⭐ **防呆：搬移期间把开关置灰、不给点**（用户 2026-10-04）。
-     *
-     * ⛔⛔ **不能直接在这下面调 `migrateGameData`，否则那个灰色永远看不到。**
-     *    搬移是**同步**的 —— 它在这一个事件回调里从头跑到尾，UI 线程被占着，
-     *    ArkUI **没有机会画出「置灰」那一帧**：先 `true` 再 `false`，中间没有渲染点，
-     *    玩家看到的只是「点下去卡一下」。
-     * ⇒ 所以**先让出一帧**（`setTimeout`）：置灰 → 渲染出去 → 再开始搬。
-     *    这也是唯一能给出可见反馈的办法 —— 搬移没有进度回调。
-     * ⚠️ 那之后 UI 仍然会**冻结一小段**（同步 IO，写 250 来个文件），这是已知的、
-     *    可接受的：冻结的时长与搬移时长相同，而它现在**有一个明确的视觉前因**
-     *    （开关已经灰了），不再是「点下去没反应」。⛔ 要彻底不卡只能把搬移挪进
-     *    worker，那是另一件事，别顺手做。 */
+/* ⭐⭐ **防呆：搬移期间把开关置灰、不给点**（用户 2026-10-04）。
+ * ⛔⛔ **不能直接调 `migrateGameData`**：搬移是**同步**的，UI 线程被占着，ArkUI 没机会画出「置灰」
+ * 那一帧 ⇒ 玩家看到的只是「点下去卡一下」。⇒ **先让出一帧**（`setTimeout`）：置灰 → 渲染 → 再搬。 */
     this.storageBusy = true;
     setTimeout(() => {
       const out: MigrateOutcome = migrateGameData(from, to);
       this.storageBusy = false;
-      /* ⛔⛔ **判「成没成」只看 `error`，⛔ 不看 `warning`。**
-       *    两者都非空是一种可能的误读，而代价是「存档全没了」：`warning` 的含义是
-       *    **已经搬好了、只是旧位置有残留**，那时源里的 `saves/` 可能已经删掉了
-       *    —— 这时候把开关弹回去 = native 下次启动仍指旧根 = 玩家看到空存档列表。
-       *    详见 `Isolation.ets` 的 `MigrateOutcome`。 */
+/* ⛔⛔ **判「成没成」只看 `error`，⛔ 不看 `warning`。** `warning` 的含义是「已经搬好了、只是旧位置
+ * 有残留」，那时源里的 `saves/` 可能已删掉 ⇒ 弹回开关 = native 下次仍指旧根 = 空存档列表。
+ * 详见 `Isolation.ets` 的 `MigrateOutcome`。 */
       if (out.error !== '') {
         /* ⛔ 没提交 ⇒ 控件必须弹回去（同探针不过那条）。 */
         this.storageNote = out.error;
@@ -1622,25 +1438,18 @@ export struct LauncherHome {
     }, 50);
   }
 
-  /* 把隔离/存储/语言的桥**立刻重写一遍**。
-   *
-   * ⛔ **为什么拨完开关要马上写**：native 在**启动那一刻**读这个文件，所以「拨完到下次启动」
-   *    之间那个窗口里，文件里还是旧值。玩家完全可能拨完就点「启动游戏」—— 那时这次启动用的
-   *    仍是旧的语言。⛔ 不重写就等于「开关看起来生效了，但这一次没用上」。
-   * ⭐ 与 `EntryAbility.onCreate` / `Index.ets` 启动前那两处**算的是同一套输入**
-   *    （当前粒度 + 当前解析到的游戏），所以三处写出来的内容一致。
-   * ⚠️ 它自己吞掉异常 —— 与那两处一样，绝不因为写不了桥而拦住什么。 */
+/* 把隔离/存储/语言的桥**立刻重写一遍**。
+ * ⛔ **为什么拨完开关要马上写**：native 在**启动那一刻**读这个文件，玩家可能拨完就点「启动游戏」
+ * ⇒ 那次启动用的仍是旧语言。⭐ 与 `EntryAbility.onCreate` / `Index.ets` 那两处算的是同一套输入，
+ * 所以三处内容一致。⚠️ 它自己吞掉异常 —— 绝不因为写不了桥而拦住什么。 */
   /* 滑条松手：存偏好，并**立刻**把值写进游戏那份 settings.bin。
    * ⚠️ 只有松手才写（`End` / `Click`）—— 拖动中每次变化都写盘会写上百次，而这是块闪存。
    *    同 `writeSafePref` 那条既有规矩。 */
   private saveGameDisplay(): void {
-    /* ⛔ **它【不】置 `gameEdgeSet` / `gameScaleSet`** —— 这一点是承重的：那两个标志的语义是
-     *    「**玩家自己设过**这一个值」，而「把当前值存一遍」不等于他设过（那正是让默认值改不动的
-     *    那个坑，2026-10-04 实测踩到）。
-     * ⚠️ 2026-10-05 起它**没有参数**了：原来那个 `which` 是给两个滑条用的
-     *    （`'edge'` / `'scale'` 各自置一个标志），而滑条已删 ⇒ 只剩「拨开关」这一个调用点。
-     * ⛔ 别把参数加回来「以备将来」：将来真要有手动入口，它该自己带一个明确的标志语义，
-     *    而不是复用这个已经与滑条绑在一起的形状。 */
+/* ⛔ **它【不】置 `gameEdgeSet` / `gameScaleSet`**：那两个标志的语义是「**玩家自己设过**这一个值」，
+ * 而「把当前值存一遍」不等于他设过（正是让默认值改不动的那个坑，2026-10-04 实测踩到）。
+ * ⚠️ 2026-10-05 起它**没有参数**了（原来那个 `which` 是给已删的两个滑条用的）。
+ * ⛔ 别把参数加回来「以备将来」。 */
     const p: GameDisplayPref = { edge: this.gameEdge, scale: this.gameScale,
                             auto: this.gameAuto,
                             edgeSet: this.gameEdgeSet, scaleSet: this.gameScaleSet };
@@ -1688,11 +1497,10 @@ export struct LauncherHome {
   }
 
   private refresh(): void {
-    /* ⭐⭐ **第一件事**：把游戏数据根告诉 `Isolation`（2026-10-04 起可切换）。
-     * ⛔ **必须在任何算出游戏数据目录的调用之前** —— 它下面紧接着就会用
-     *    `resolveGameDataDir()` / `liveGameDataDir()` 去列存档，而那两个读的就是这个根。
-     *    顺序反了 ⇒ 这一次刷新列的还是**上一个根**的存档，界面看起来正常、内容却是旧的。
-     * ⚠️ 根只有这一处设：别在事件处理里也调一次（两处赋值 = 两份真相，且不知道谁后跑）。 */
+/* ⭐⭐ **第一件事**：把游戏数据根告诉 `Isolation`（2026-10-04 起可切换）。
+ * ⛔ **必须在任何算出游戏数据目录的调用之前** —— 下面紧接着就用 `resolveGameDataDir()` 列存档。
+ * 顺序反了 ⇒ 这一次刷新列的还是**上一个根**的存档，界面看起来正常、内容却是旧的。
+ * ⚠️ 根只有这一处设：别在事件处理里也调一次（两处赋值 = 两份真相）。 */
     setGameDataRoot(gameDataRoot(this.filesDir));
     /* ⚠️ 紧接着把根建出来（外置那一层可能是新的）。⛔ 顺序仍在任何「算游戏数据目录」之前 ——
      * 理由同上面那条。失败不拦：native 那边还有一道 mkdir + 回退。 */
@@ -1734,17 +1542,13 @@ export struct LauncherHome {
     this.savesDirShown = dir;
     this.saves = listSaves(dir);
 
-    /* ⭐ 游戏语言（2026-10-04）。界面上只有标题 + 开关，所以这里只需读偏好。
-     * ⚠️ 那两样**曾经**在这里算：翻译好的值（`gameLocaleValue`）与「游戏那份 settings.bin
-     *    里已经写死了什么」（`gameLocalePinned`）—— 它们只喂那段被删掉的解释文字。
-     *    ⛔ 别因为「也许以后要显示」就留着：留着的是**每次 refresh 都要问一次 i18n、还要读
-     *    一次游戏正在读的那个 settings.bin 头部**的代价，而当前没有任何界面用到它们。
-     *    ⭐ 真需要看游戏那份写的是什么，`storage_state.txt` 里每个数据目录都有 `locale=` 一行
-     *      （`dumpDataDirs` → `settingsLocaleIn`），那条路才是排查用的。 */
+/* ⭐ 游戏语言（2026-10-04）。界面上只有标题 + 开关，所以这里只需读偏好。
+ * ⚠️ 翻译好的值与「游戏那份 settings.bin 里写死了什么」**曾经**在这里算 —— 它们只喂被删掉的解释文字。
+ * ⛔ 别因为「也许以后要显示」就留着：那要每次 refresh 问一次 i18n、还要读一次 settings.bin 头部。
+ * ⭐ 真需要看游戏那份写的是什么，`storage_state.txt` 里每个数据目录都有 `locale=` 一行。 */
     this.gameLocaleFollow = readGameLocaleFollow(this.filesDir);
     /* ⭐ 游戏内显示：先读偏好，再落进游戏（`applyGameDisplayNow` 自己有缓存，重复调用很便宜）。
      * ⚠️ 必须在 `dataDir` 解得出来之后 —— 它内部要算同一件事。所以放在这一段的**末尾**。 */
-    /* 游戏内显示：读偏好 + 落进游戏。⚠️ 排在 `dataDir` 之后（上面刚解出来）。 */
     {
       const gd: GameDisplayPref = readGameDisplay(this.filesDir);
       if (gd.edge !== this.gameEdge) { this.gameEdge = gd.edge; }
@@ -1758,13 +1562,10 @@ export struct LauncherHome {
       this.gameEdgeSet = gd.edgeSet;
       this.gameScaleSet = gd.scaleSet;
 
-      /* ⭐⭐ **显示以游戏里【实际】的值为准**（用户 2026-10-05：「外部看到（启动器）内的数值
-       *    没有对应改变」）。原来这里只读了启动器自己那份偏好文件 ⇒ 玩家在游戏里改完，
-       *    启动器显示的仍是旧数，而**界面上看不出哪个才是游戏在用的**。
-       * ⚠️ 读不到（没有 settings.bin / 解析不了）⇒ `null` ⇒ **原值不动**。
-       *    ⛔ 别把「读不到」当成 0 —— 那会把玩家原有的值在界面上抹成出厂值。
-       * ⚠️ 代价：每次 `refresh()` 多读一次 game 的 settings.bin（切页签也会跑到）。
-       *    它是个小文件，而这个代价换来的是「两块屏幕说的是同一个数」。 */
+/* ⭐⭐ **显示以游戏里【实际】的值为准**（用户 2026-10-05：「外部看到（启动器）内的数值没有对应改变」）——
+ * 原来只读启动器自己那份偏好 ⇒ 玩家在游戏里改完，启动器显示的仍是旧数。
+ * ⚠️ 读不到（没有 settings.bin / 解析不了）⇒ `null` ⇒ **原值不动**；⛔ 别把「读不到」当成 0。
+ * ⚠️ 代价：每次 `refresh()` 多读一次 game 的 settings.bin（小文件）。 */
       const actual: GameDisplayValues | null = readGameDisplayValues(dataDir);
       const applied: GameDisplayPref | null = readAppliedGameDisplay(this.filesDir);
       if (actual !== null) {
@@ -1775,26 +1576,10 @@ export struct LauncherHome {
         const scaleIsYours: boolean = (actual.scale !== GAME_SCALE_FACTORY
             && (applied === null || actual.scale !== applied.scale));
 
-        /* ⛔⛔ **回显必须【只】发生在「这是玩家自己设的」那一支里** —— 这是 2026-10-05 修的一个
-         *    **我自己引入的回归**（本轮加"显示游戏实际值"时写成无条件回显，子 agent 审查查出）：
-         *
-         *    无条件回显会把**「我们要写进去的那个值」也一起改掉** —— 因为 `applyGameDisplayNow()`
-         *    写进游戏用的就是 `this.gameEdge` / `this.gameScale` 这两个字段（见它构造的 `pref`）。
-         *    于是对一份**从没被碰过**的游戏（`uiscale` 还是出厂 100）：
-         *      · 先按偏好算出 `wantScale = 150` 并赋给 `this.gameScale`
-         *      · 紧接着回显把 `this.gameScale` 压回游戏里的 **100**
-         *      · `applyGameDisplay` 收到 `pref.scale = 100` ⇒ `cur(100) === pref.scale(100)`
-         *        ⇒ `cur !== pref.scale` 为假 ⇒ **一次都不写**
-         *    ⇒ **「启动器默认帮你调到 150%」这个承诺永远不会生效**，而界面上完全看不出来。
-         *      这正是本项目最忌讳的「功能看着在、实际不生效」。
-         *
-         * ⭐ 判据：**「用来显示的」和「要写进去的」是同一个字段，那就不能让回显去动它** ——
-         *    除非回显的那个值恰好就是「该由玩家做主」的值。
-         *    ⚠️ 出厂值/我们自己写的值**都不需要回显**：前者本来就是我们要覆盖的对象，
-         *      后者我们本来就知道它是什么。
-         * ⛔ **必须置 `*Set`**：否则下面那句自动适配会把刚显示出来的那个值又算掉 ——
-         *    那就成了「界面明明显示着他的值，一转身被自动值盖了」。
-         * ⭐ 它是**每次 refresh 现推的**，所以不依赖 `edgeSet` 有没有被持久化过 —— 更不容易错。 */
+/* ⛔⛔ **回显必须【只】发生在「这是玩家自己设的」那一支里** —— 这是 2026-10-05 修的一个**我自己引入的
+ * 回归**：无条件回显会把**「我们要写进去的那个值」也改掉**（`applyGameDisplayNow()` 用的就是
+ * `this.gameEdge`/`gameScale`）⇒ 对一份从没被碰过的游戏，回显把 `this.gameScale` 压回游戏里的 100，
+ * `applyGameDisplay` 便一次都不写 ⇒ **「默认帮你调到 150%」这个承诺永远不生效**，而界面看不出来。 */
         if (edgeIsYours) {
           if (actual.edge !== this.gameEdge) { this.gameEdge = actual.edge; }
           this.gameEdgeSet = true;
@@ -1811,32 +1596,19 @@ export struct LauncherHome {
       if (this.gameAuto && !this.gameEdgeSet) {
         this.seedGameEdgeFromDevice();
       }
-      /* ⛔⛔ **挖孔探测还没回来时，自动模式下这一句不许跑。**
-       *    `refresh()` 是**同步**的、探测是**异步**的，所以 `refresh()` 常常跑在探测之前；
-       *    那一刻 `readGameDisplay()` 在「玩家没设过避让」时回退的是**出厂值 0**
-       *    ⇒ 写下去就是把游戏里的避让**擦成 0**（写 0 能过 `applyGameDisplay` 的判据：
-       *    它那时正好等于我们上次写的那份记录，于是被判成「这是我们的值」）。
-       * ⭐ 探测完成时 `initSafeArea()` 末尾会自己再调一次 `applyGameDisplayNow()`
-       *    ⇒ 跳过这一次**不会漏写**，只是往后挪几毫秒。 */
+/* ⛔⛔ **挖孔探测还没回来时，自动模式下这一句不许跑。** `refresh()` 是**同步**的、探测是**异步**的，
+ * 那一刻 `readGameDisplay()` 在「玩家没设过避让」时回退到**出厂值 0** ⇒ 写下去就是把游戏里的避让
+ * **擦成 0**（写 0 能过 `applyGameDisplay` 的判据）。
+ * ⭐ 探测完成时 `initSafeArea()` 末尾会自己再调一次 ⇒ 跳过这一次不会漏写，只是往后挪几毫秒。 */
       if (!(this.gameAuto && !this.gameEdgeSet && !this.safeDetected)) {
         this.applyGameDisplayNow();
       }
     }
 
-    /* 「开关拨过去了、数据没过去」。判据是两条**都**成立：① 隔离开着；② **蓝图 / 自制地图
-     * 只在未隔离那棵树里**（那说明玩家一直在用的是未隔离那一份，而游戏现在读的是隔离目录）。
-     *
-     * ⛔⛔ **这个判据的形态改过两次，两次都是被同一个机制打败的**（2026-10-04 实测）：
-     *     · 第一版：`!gameDataExists(dataDir)` —— **游戏每跑一次就会在那个目录里写一份
-     *       `settings.bin`** ⇒ 目录立刻「存在」⇒ 判据**从第一次启动之后永久为假**，提示一次没出现过。
-     *     · 第二版：改成「目标目录里没有玩家的东西（存档/模组/蓝图）」—— 仍然不对，因为
-     *       **存档两棵树各自都会长出来**。实测形状：当前隔离目录里 **40 个 `.msav`（整个战役）**，
-     *       未隔离那棵里 **53 KB 的设置 + 27 张蓝图 + 1 张自制地图、零存档** ⇒
-     *       用「有没有存档」去问「哪一棵是他在用的」，答案正好是反的。
-     * ⭐ 现在只问**蓝图与自制地图**（`.msch` / `maps/*.msav`）—— 那两样**只有玩家会放进去**。
-     * ⭐ 一般化：**判据要落在「游戏不会自己生成的东西」上。** 凡是游戏自己会写的文件
-     *    （`settings.bin`、存档、`steam_autocloud.vdf`），都只能证明「游戏在这里跑过」，
-     *    不能证明「玩家的东西在这里」。 */
+/* 「开关拨过去了、数据没过去」。判据：① 隔离开着；② **蓝图 / 自制地图只在未隔离那棵树里**。
+ * ⛔⛔ 这个判据改过两次，都被同一机制打败（2026-10-04）：第一版 `!gameDataExists(dataDir)` —— 游戏每跑
+ * 一次就写一份 settings.bin ⇒ 判据从第一次启动后永久为假；第二版「有没有存档」也不对，因为**两棵树各自
+ * 都会长存档**（实测隔离目录 40 个 msav、未隔离那棵零存档）。⭐ 判据要落在「游戏不会自己生成的东西」上。 */
     this.isolationStale = (this.granularity !== GRANULARITY_OFF)
                        && !hasUserMadeFiles(dataDir)
                        && hasUserMadeFiles(liveGameDataDir());
@@ -1865,16 +1637,10 @@ export struct LauncherHome {
     /* ⚠️ 版本列表要在 `resolution` / `hasBundled` / `games` **都算好之后**才能建（三样都用），
      * 而建它的那一步会**读每个 jar**（见 versionEntryOf）⇒ 整轮 refresh 只建一次，渲染只用结果。 */
     this.versions = this.buildVersions();
-    /* ⭐ 设置页那一行的说明。⚠️ **必须在 `this.versions` 之后**（2026-10-05 修的）：
-     *    `granularityHint()` 走 `isolationGroups()`，而那个**遍历 `this.versions`**
-     *    —— 排在它前面时就拿到**上一轮**的版本列表。
-     * ⚠️ 症状是**静默的**：导入或删掉一个游戏 jar 之后，那一行说的还是旧分组
-     *    （「v160 的所有版本共用一份」而那个版本已经不在列表里了），
-     *    而它**不会自己纠正** —— 要等下一次 refresh 才变成对的，中间玩家看到的是错的。
-     * ⛔ 原来它排在 `hasBundledGame` 那一带（`versions` 之前约 160 行），看着像「和列表同一批算的」，
-     *    其实差了一整段。**「同一批」必须变成「在它之后」，不是「在它附近」。**
-     * ⚠️ 它按 `this.granularity`（当前档），而弹窗那份按 `pendingGranularity`（待确认档）
-     *    —— 两者在玩家正切换时不同，不能共用。 */
+/* ⭐ 设置页那一行的说明。⚠️ **必须在 `this.versions` 之后**（2026-10-05 修的）：`granularityHint()` 走
+ * `isolationGroups()`，而那个遍历 `this.versions` ⇒ 排在前面时拿到**上一轮**的版本列表。
+ * ⚠️ 症状静默：导入或删掉一个 jar 之后，那一行说的还是旧分组，且**不会自己纠正**。
+ * ⚠️ 它按 `this.granularity`（当前档），弹窗那份按 `pendingGranularity`（待确认档），不能共用。 */
     this.granularityHintText = this.granularityHint(readGranularity(this.filesDir));
     /* 选中的版本没了（jar 被删了）⇒ 退回当前版本，别让右边空着。
      * ⚠️ 「当前版本」一定在这一批里（要么内置、要么来自 games），这个兜底是可靠的。 */
@@ -2058,11 +1824,10 @@ export struct LauncherHome {
     return out;
   }
 
-  /* ⭐⭐ 把**所有版本**的存档按数据目录聚起来 —— 「按存档」那一屏的数据源。
-   * ⚠️ 按**目录**分组而不是按版本：隔离关着时所有版本共用一份数据，按版本分会让同一批存档出现 N 遍；
-   * 按目录分恰好一组，组头的版本名单正好是「属于哪几个版本」。⭐ 顺序 = `this.versions` 的顺序。
-   * ⚠️ 另外补一组**未隔离的那一份**（只在它不属于任何版本时）：「复制过去」刻意不动源目录，那份原始
-   * 数据会一直留着；⛔ 不列出来玩家会以为它不见了 —— 它其实是最后一道保险。隔离关着时它**就是**各版本那一组。 */
+/* ⭐⭐ 把**所有版本**的存档按数据目录聚起来 —— 「按存档」那一屏的数据源。
+ * ⚠️ 按**目录**分组而不是按版本：隔离关着时所有版本共用一份数据，按版本分会让同一批存档出现 N 遍。
+ * ⚠️ 另外补一组**未隔离的那一份**（只在它不属于任何版本时）：「复制过去」刻意不动源目录，那份原始数据
+ * 会一直留着，⛔ 不列出来玩家会以为它不见了。 */
   private buildSaveGroups(): SaveGroup[] {
     const out: SaveGroup[] = [];
     const byDir: Map<string, SaveGroup> = new Map<string, SaveGroup>();
@@ -2101,12 +1866,10 @@ export struct LauncherHome {
       hilog.warn(DOMAIN, TAG, 'save group: %{public}s has %{public}d save(s) but no version reads it',
                  k, saves.length);
     }
-    /* ⛔ **订正（2026-10-02，用户报上来的）：空组不再丢掉。** 我原来丢掉空组的理由（「一屏 5 组、
-     * 3 组空，噪音大过信息」）是我自己的判断，代价他立刻就说出来了：「我按最小粒度，只显示了内置游戏
-     * 和159.7，**其他的消失了**」。⭐⭐ 真正让那个判断站不住的是后来加的东西：每一组现在都是「把未隔离的
-     * 那份复制过来」的**去处**（见 `StaleCopyOffer`）⇒ 空组**不是噪音，是一个还没填的槽位**；藏起来玩家
-     * 就没法把数据放进那个版本。⚠️ 判据因此从「有没有存档」换成「**有没有版本**」：有版本读的目录一律列出来。
-     * ⛔ 未隔离那一份仍只在真有存档时才补（它不属于任何版本，空的时候确实没有意义）。 */
+/* ⛔ **订正（2026-10-02，用户报的）：空组不再丢掉。** 我原来丢空组的理由（「噪音大过信息」）代价立刻
+ * 被说出来了：「我按最小粒度，只显示了内置游戏和159.7，**其他的消失了**」。⭐⭐ 真正让那个判断站不住
+ * 的是后来加的东西：每组都是「把未隔离那份复制过来」的**去处** ⇒ 空组是**一个还没填的槽位**。
+ * ⚠️ 判据从「有没有存档」换成「**有没有版本**」；⛔ 未隔离那一份仍只在真有存档时才补。 */
     for (const g of out) {
       hilog.info(DOMAIN, TAG, 'save group: %{public}d save(s), %{public}d version(s), %{public}s',
                  g.saves.length, g.versions.length, g.dir);
@@ -2114,19 +1877,15 @@ export struct LauncherHome {
     return out;
   }
 
-  /* ⭐⭐ 一组的标题。**顺序是用户定的**（2026-10-02）：「先展示**版本**，再展示**文件名**」。
-   * ⇒ 形状 `v8 Build 160.5（内置游戏, Mindustry160.5.jar）`（我上一版是反的，那个理由只在单个版本时成立）。
-   * ⚠️ **一组里可能有两个不同的版本号**（构建号档下 `160.4` 与 `160.5` 折进同一槽位）⇒ 版本号要
-   * 去重后**全部列出来**（`/` 分隔），⛔ 只写第一个会让 160.4 的数据看起来属于 160.5。
-   * ⚠️ 版本读不出来时写「未知版本」，⛔ 不留空 —— 空着会被读成「没有版本」。 */
+/* ⭐⭐ 一组的标题。**顺序是用户定的**（2026-10-02）：「先展示**版本**，再展示**文件名**」⇒
+ * 形状 `v8 Build 160.5（内置游戏, Mindustry160.5.jar）`。
+ * ⚠️ **一组里可能有两个不同的版本号**（构建号档下 160.4 与 160.5 折进同一槽位）⇒ 版本号去重后
+ * **全部列出来**（`/` 分隔），⛔ 只写第一个会让 160.4 的数据看起来属于 160.5。读不出写「未知版本」。 */
   private groupTitle(g: SaveGroup): string {
     if (g.versions.length === 0) {
-      /* 两种「没人读」：以前某一档留下的键 vs 未隔离的那一份本身。 */
-      /* ⚠️ `orphanKey` 是**内部隔离键**（`b160.5` / `n8` / `_unknown`），它长得几乎就是版本号
-     *    ⇒ 原来写成「没有版本读它（b160.5）」会被读成「又一个 160.5」，而玩家可能正看着一个
-     *    真叫 160.5 的分组（内置那一份）⇒ 两条看起来完全一样，用户 2026-10-03 就是这么报的。
-     * ⛔ 键不能删 —— 它说明这份数据来自哪个槽位，是「它从哪来」的唯一线索。
-     *    ⇒ 所以只是把「这是一个内部标记」说出来，让它不再像版本号。 */
+/* ⚠️ `orphanKey` 是**内部隔离键**，长得几乎就是版本号 ⇒ 原来写成「没有版本读它（b160.5）」会被读成
+ * 「又一个 160.5」，用户 2026-10-03 就是这么报的。⛔ 键不能删（它说明这份数据来自哪个槽位）⇒
+ * 只是把「这是一个内部标记」说出来，让它不再像版本号。 */
     return g.orphanKey === ''
       ? '未隔离的那一份'
       : ('没有版本读它（内部键 ' + g.orphanKey + '）');
@@ -2164,12 +1923,10 @@ export struct LauncherHome {
     return head + String(g.versions.length) + ' 个版本共用同一份数据';
   }
 
-  /* ⭐⭐ **一行存档的键** —— 全文件**唯一**的一处定义。
-   *
-   * 凡是「渲染某份存档的那一行」的 `ForEach`，键都必须用它：`id` 只回答「这是哪一份」，
-   * 而这一行还显示**大小与时间**，那两个字段**同一份存档也会变**（玩一局游戏就把它覆盖了）。
-   * ⛔ 别再在别处手写 `sv.id` 当键 —— 那个 `id` 看着像个稳定标识，**正因如此它是个陷阱**。
-   * ⚠️ 三个调用点：「按版本」列表、「按存档」分组的内层、以及 `groupKey()` 内部。 */
+/* ⭐⭐ **一行存档的键** —— 全文件**唯一**的一处定义。
+ * 凡是「渲染某份存档那一行」的 `ForEach`，键都必须用它：`id` 只回答「这是哪一份」，而这一行还显示
+ * **大小与时间**，那两个字段同一份存档也会变。⛔ 别在别处手写 `sv.id` 当键 —— 它像稳定标识，正因如此是陷阱。
+ * ⚠️ 三个调用点：「按版本」列表、「按存档」分组的内层、`groupKey()` 内部。 */
   private saveRowKey(sv: SaveEntry): string {
     return sv.id + '|' + sv.label + '|' + sv.kind + '|' + String(sv.sectors)
          + '|' + String(sv.bytes) + '|' + String(sv.mtime);
@@ -2181,28 +1938,10 @@ export struct LauncherHome {
     return g.path + '|' + g.name + '|' + g.version + '|' + String(g.size) + '|' + String(g.mtime);
   }
 
-  /* ⭐⭐ 「按存档」分组列表**外层** `ForEach` 的键。⛔ 不能只用 `g.dir`，理由见下。
-   *
-   * 机制（官方文档 `arkts-rendering-control-foreach` 的原话）：
-   *   「框架**不会为保留的数组项执行项构造函数**」
-   * ⇒ 键没变的那一项**不重跑项构造函数** ⇒ 它里面**嵌套的** `ForEach(g.saves, …)` 拿到的还是
-   *   **旧** `g.saves`（项构造函数闭包里捕获的那个数组）。而这一层原来的键只有 `g.dir`，
-   *   **删掉一个存档并不会改目录名** ⇒ 那一组被当成「保留」⇒ 删掉的那一行**留在屏幕上**，
-   *   切一下页面（子树整体重建）才消失。
-   * ⚠️ 2026-10-03 用户报的正是它：「按存档」下长按进多选、只勾一条，**删掉了但列表不刷新**。
-   * ⭐ 这是本项目**第二次**踩同一个坑 —— 第一次是回收站那张列表（见它 `ForEach` 上方那段注释）。
-   *
-   * ⭐ 写法：**键 = 这一组渲染出来的那两行字 + 这一组每一行的 `saveRowKey()`**。
-   * ⚠️⚠️ **这里必须是每一行的 `saveRowKey()`，不能只放 `s.id`** —— 这是我 2026-10-03 那一版
-   *   自己犯的错：`id` 是**稳定**的（`manual:0` 永远是 `manual:0`），而**字节数与修改时间会变**
-   *   ⇒ 只放 id 的话外层仍被判为「保留」⇒ 不重建 ⇒ 内层更不会跑，那一行就一直显示旧的
-   *   「多大 / 什么时候存的」。⭐ 判据：**外层键要覆盖内层渲染的一切** —— 外层不重建时，
-   *   内层**根本没有机会**跑，内层的键写得再对也没用。
-   * ⛔ 故意**不逐字段列**（目录、孤儿键、版本名单、`isCurrent`、存档 id…）：那种写法**漏一个字段
-   *   就复发一次**；而「组头那两行」正好是 `groupTitle` / `groupSub` 的返回值 ⇒ 它们就是
-   *   渲染依赖的**全集**，以后改组头版式也不会忘。
-   * `g.dir` 放在最前面：分组本来就按目录去重（见 buildSaveGroups），它保证键唯一。
-   * ⚠️ 键变 ⇒ 那一组的子树被**重建**（而不是移动）。这一组里没有需要保留的行内状态，代价可以接受。 */
+/* ⭐⭐ 「按存档」分组列表**外层** `ForEach` 的键。⛔ 不能只用 `g.dir`。
+ * 机制（官方文档原话）：「框架**不会为保留的数组项执行项构造函数**」⇒ 键没变的项不重跑，它里面嵌套的
+ * `ForEach(g.saves,…)` 拿到的还是**旧**数组。⚠️ 2026-10-03 用户报的正是它：「按存档」下删一条，**删掉了
+ * 但列表不刷新**。⭐ 写法：**键 = 组头那两行字 + 每一行的 `saveRowKey()`**（外层键要覆盖内层渲染的一切）。 */
   private groupKey(g: SaveGroup): string {
     const ids: string[] = [];
     for (const s of g.saves) {
@@ -2226,11 +1965,10 @@ export struct LauncherHome {
     return this.versions.find((v: VersionEntry) => v.path === this.selectedVersion);
   }
 
-  /* 读选中版本的数据目录里有哪些存档。
-   * ⚠️ 这里**只列文件名**（`listSaves` 不读内容、不解压），很便宜 —— 与选中存档时那次解压不是一回事。
-   * ⚠️ 它读的是**那个版本自己的**目录，而 `savesDirShown` 是**当前版本**的目录，两者在「看的是别的
-   * 版本」时**不一样** ⇒ 这里绝不能借 `savesDirShown`；同理这个列表里**不做**任何元数据读取
-   * （`loadSelectedMeta()` 只认 `savesDirShown`，混着用会读到另一个目录的元数据而界面上看不出不对）。 */
+/* 读选中版本的数据目录里有哪些存档。
+ * ⚠️ 这里**只列文件名**（`listSaves` 不解压），很便宜。⚠️ 它读的是**那个版本自己的**目录，而
+ * `savesDirShown` 是**当前版本**的目录 ⇒ 这里绝不能借它；同理**不做**任何元数据读取
+ * （`loadSelectedMeta()` 只认 `savesDirShown`，混着用会读到另一个目录的元数据而看不出来）。 */
   private loadVersionSaves(): void {
     const v: VersionEntry | undefined = this.selectedVersionEntry();
     if (v === undefined) {
@@ -2251,11 +1989,10 @@ export struct LauncherHome {
       v.dataDir === dir && v.path !== exceptPath);
   }
 
-  /* 「哪些版本能看到【当前这个存档】」。⭐ 判据是**目录相等**，⛔ 不是比较版本号或 `build` ——
-   * 游戏按 `user.home` 选数据目录，而它由隔离键算出来 ⇒ **「谁看得到」是一个目录问题，不是兼容性
-   * 问题**，这是能确切回答的那个。⚠️「这个存档能不能被某个版本**读**」是另一件事（要看模组与版本
-   * 规则），我们答不了。
-   * ⚠️ 隔离关着时所有版本都指向同一目录 ⇒ 这里自然是「全部」，那是**对的**，正是「不隔离」的含义。 */
+/* 「哪些版本能看到【当前这个存档】」。⭐ 判据是**目录相等**，⛔ 不是比较版本号或 `build` ——
+ * 游戏按 `user.home` 选数据目录，而它由隔离键算出来 ⇒「谁看得到」是一个目录问题，不是兼容性问题。
+ * ⚠️「这个存档能不能被某个版本**读**」是另一件事（要看模组与版本规则），我们答不了。
+ * ⚠️ 隔离关着时所有版本都指向同一目录 ⇒ 自然是「全部」，那正是「不隔离」的含义。 */
   private savesSeenByText(): string {
     const seen: VersionEntry[] = this.selectedSaveVersions();
     if (seen.length === 0) {
@@ -2370,11 +2107,9 @@ export struct LauncherHome {
     return '它和这些版本共用同一份数据：' + names.join('、');
   }
 
-  /* 读当前选中存档的元数据，存进 `selMetaRows`。⚠️ 会**解压一个 .msav**（`saveMetaText`），有真实
-   * 成本 —— 但一次只读**一个**文件、且只在选中变化时做。⭐ **读组里最新的那个文件并把名字放进第一行**
-   * （见 `metaRowsOf`）：一个 Serpulo 战役有 14 个区块文件，全解压是几 MB 的 CPU，而「这是哪个版本
-   * 写的」通常指**最近在玩的那一个** ⇒ 读一个，同时让「其他区块可能不同」看得见。
-   * ⚠️ 三种情形都要各自有话说，⛔ **不允许「读失败但界面上看着正常」**（无可用文件 / native 读不出来 / 正常）。 */
+/* 读当前选中存档的元数据，存进 `selMetaRows`。⚠️ 会**解压一个 .msav**，有真实成本 —— 但一次只读一个。
+ * ⭐ **读组里最新的那个文件**（见 `metaRowsOf`）：一个战役有 14 个区块文件，全解压是几 MB 的 CPU。
+ * ⚠️ 三种情形都要各自有话说，⛔ **不允许「读失败但界面上看着正常」**。 */
   private loadSelectedMeta(): void {
     const sv: SaveEntry | undefined = this.selectedSaveEntry();
     /* ⭐ 去重。读一次就是**解压一个 .msav**，而这件事会被两条路径同时触发：`@Watch`（选中变了）与
@@ -2410,15 +2145,10 @@ export struct LauncherHome {
                file, String(m.ok), m.build);
   }
 
-  /* 点一行的落点。⭐ 窄屏时**同时**打开子页 —— 手机上列表与详情放不下两栏，所以「选中」与「进去看」
-   * 是同一个动作；⚠️ 宽屏时不设 `panelOpen`（那时详情一直在右边）。
-   * ⭐⭐ 点**已经选中的那一行** = 取消选中（2026-10-02：「点击我选中过的，取消选中，右边界面变空」）：
-   * `selectedSave` 之前**只增不减**，一旦点过任何一行右边就永远挂着一份详情，而「我不想看任何东西」
-   * 这个状态**无法到达** —— 而右边那块占屏幕的三分之一（3:7 两栏），显示什么完全由很久以前的一次点击决定。
-   * ⚠️ **只在单选态生效**：多选态的点击是「勾/取消勾」、走 `toggleMultiPick`（调用点已分开）——
-   * 两件事都叫「取消选中」，但取消的东西不同：这里取消的是**详情**，那里取消的是**勾选**。
-   * ⚠️ 窄屏（手机）**不在这里退子页**：手机上一个存档本来就是「进去看」，再点一下应当还是「看」，
-   * ⛔ 不是把自己弹出去（那会让人以为点坏了）；出口是左上角那个返回箭头。 */
+/* 点一行的落点。⭐ 窄屏时**同时**打开子页（手机上列表与详情放不下两栏）；⚠️ 宽屏时不设 `panelOpen`。
+ * ⭐⭐ 点**已经选中的那一行** = 取消选中（2026-10-02）：`selectedSave` 之前只增不减 ⇒「我不想看」这个
+ * 状态无法到达。⚠️ **只在单选态生效**：多选态走 `toggleMultiPick`（那里取消的是**勾选**）。
+ * ⚠️ 窄屏**不在这里退子页** —— 出口是左上角那个返回箭头。 */
   private openSaveRow(dir: string, id: string): void {
     const key: string = this.saveKey(dir, id);
     if (this.selectedSave === key) {
@@ -2449,11 +2179,10 @@ export struct LauncherHome {
    * 回收站
    * ================================================================== */
 
-  /* ⭐ 回收站**只碰自己那点数据**的重新读盘，单独一条路。
-   * ⚠️ 为什么不靠 `refresh()`：那是**整页**重算（读每个 jar、扫三个目录），其中任何一步抛了，
-   * 后面那些 `@State` 就一个都不会被赋值 —— 而玩家看到的正是「点了没反应」⇒ 回收站的动作先走
-   * 这条**短**路，界面立刻是对的，`refresh()` 再去做剩下的（「取消归档和放回点了 UI 不刷新」有一半
-   * 是这个形状：磁盘上确实发生了，而界面没跟上）。 */
+/* ⭐ 回收站**只碰自己那点数据**的重新读盘，单独一条路。
+ * ⚠️ 为什么不靠 `refresh()`：那是**整页**重算，其中任何一步抛了，后面那些 `@State` 就一个都不会被赋值
+ * —— 玩家看到的正是「点了没反应」⇒ 回收站的动作先走这条**短**路。
+ * ⭐ 「取消归档和放回点了 UI 不刷新」有一半是这个形状：磁盘上确实发生了，而界面没跟上。 */
   /** 回收站里**归档**的条数。清空之前要说出来 —— 那几条本来是不会自动消失的
    * （归档的定义就是「不参与自动清理，只能手动删或放回」），所以「清空」对它们是一次明确的推翻。 */
   private vaultArchivedCount(): number {
@@ -2466,12 +2195,9 @@ export struct LauncherHome {
     return n;
   }
 
-  /** 一键清空：逐个走 `vaultPurge`。
-   *
-   * ⛔ **不要**自己拼一个 `removeTree(VAULT_ROOT)` 一把删掉：那样绕过了这个模块自己的日志，
-   *    而且**失败时说不清是哪一个条目出的问题** —— 而「少了几个、不知道为什么」正是回收站最不该有的状态。
-   * ⭐ 即便有失败也重新读一遍列表：成功的那些确实已经没了，界面必须跟上，
-   *    否则玩家会看着一堆已经不存在的东西。失败的那几个则**具名**写在 `vaultNote` 里。 */
+/** 一键清空：逐个走 `vaultPurge`。
+ * ⛔ **不要**自己拼一个 `removeTree(VAULT_ROOT)` 一把删掉：那样绕过模块自己的日志，而且**失败时说不清
+ * 是哪一个条目出的问题**。⭐ 即便有失败也重新读一遍列表（成功的确实已经没了），失败的那几个**具名**写出。 */
   private clearVaultAll(): void {
     this.showVaultClearAsk = false;
     const total: number = this.vaultEntries.length;
@@ -2485,11 +2211,8 @@ export struct LauncherHome {
         fails.push(e.label + '：' + err);
       }
     }
-    /* ⛔ **只在失败时写 `vaultNote`**，两重理由：
-     * ① 那个字段在界面里是 `$r('sys.color.warning')` —— 它是**错误通道**（别的调用点写进去的都是错），
-     *    把「已清空 N 个」放进去会用警示色报一件成功的事。
-     * ② 全部成功时**列表变空本身就是反馈**（那一屏会显示「回收站是空的」），
-     *    再补一句话是冗余。而失败必须说，否则玩家只看到少了几个、不知道剩下的为什么还在。 */
+/* ⛔ **只在失败时写 `vaultNote`**：① 那个字段在界面里是 warning 色，是**错误通道**，写「已清空 N 个」
+ * 会用警示色报成功；② 全部成功时**列表变空本身就是反馈**。而失败必须说，否则玩家不知道剩下的为什么还在。 */
     this.vaultNote = fails.length === 0
       ? ''
       : ('清掉了 ' + String(done) + ' 个；有 ' + String(fails.length) + ' 个没删掉：' + fails.join('；'));
@@ -2502,13 +2225,10 @@ export struct LauncherHome {
     this.vaultEntries = listVault();
   }
 
-  /** 打开「关于」，顺手把版本号读出来。
-   *
-   * ⭐ **按需读**（打开时才查），不是启动时读 —— 那次包查询在没人看之前没有意义，
-   *    这条与 `Index.ets:727` 的注释是同一条规则。
-   * ⚠️ 用的是**同步**那一版 `getBundleInfoForSelfSync`（`ExportDiagnostics.ets:44` 已在本项目用它），
-   *    这样值在重绘前就位，不会先闪一下没有版本号的标题。
-   * ⚠️ 读不到就留空串 —— 界面那边 `=== ''` 的分支就是兜底，⛔ 不要在这里编一个号。 */
+/** 打开「关于」，顺手把版本号读出来。
+ * ⭐ **按需读**（打开时才查），不是启动时读 —— 那次包查询在没人看之前没有意义（同 `Index.ets:727`）。
+ * ⚠️ 用**同步**那版 `getBundleInfoForSelfSync`，值在重绘前就位，不会先闪一下没有版本号的标题。
+ * ⚠️ 读不到就留空串 —— 界面那边的分支就是兜底，⛔ 不要在这里编一个号。 */
   private openAbout(): void {
     this.showAbout = true;
     if (this.appVersion !== '') {
@@ -2603,12 +2323,9 @@ export struct LauncherHome {
     return this.multiMode ? (this.multiPicked.indexOf(key) >= 0) : (this.selectedSave === key);
   }
 
-  /* ⛔ **长按与点击都要把 `selectedSave` 挪到刚碰的那一行**（2026-10-02：「长按选中时页面信息
-   * 要刷新成我刚刚长按选中的。进入多选后再单点选中也是一样」）。
-   * ⛔ 不改的后果就是他报的那个 bug：右边详情**还停在最开头选的那个** ⇒ 屏幕上同时有**两个
-   * 「删除」**（多选条一个、详情下面单条一个），而玩家分不出哪个是哪个。
-   * ⭐ 两处都改（进入时 + 已在多选态时）不是重复：它们是**两条入口**，而「详情显示哪一条」必须与
-   * 「我刚碰了哪一条」一致 —— 这条不变量只要有一个入口漏了，症状就是同一个。 */
+/* ⛔ **长按与点击都要把 `selectedSave` 挪到刚碰的那一行**（2026-10-02）。
+ * ⛔ 不改的后果就是他报的 bug：右边详情**还停在最开头选的那个** ⇒ 屏幕上同时有**两个「删除」**。
+ * ⭐ 两处都改不是重复：它们是**两条入口**，而「详情显示哪一条」必须与「我刚碰了哪一条」一致。 */
   private enterMulti(key: string): void {
     this.selectedSave = key;
     if (!this.multiMode) {
@@ -2632,11 +2349,9 @@ export struct LauncherHome {
     } else {
       this.multiPicked = this.multiPicked.concat([key]);
     }
-    /* ⛔ **一个都不剩也【不】退出多选**（2026-10-03：「再点击选中的唯一一项不应该退出多选。
-     * 要退出只能点取消」）。我原来在这里自动退出（理由「留着一个『已选 0 项』的条会让人以为卡住了」）——
-     * ⭐ 那句话把一个**正常状态**当成异常：一次点击做了两件事（取消勾选 **＋** 退出模式），而玩家只要求
-     * 了第一件 ⇒ 后果是**取消按钮形同虚设**，玩家学不会「退出是它管的」。
-     * ⚠️ 0 项时「删除」是 `enabled(false)`（见 `MultiBar`），这个状态没有危险动作可做。 */
+/* ⛔ **一个都不剩也【不】退出多选**（2026-10-03：「再点击选中的唯一一项不应该退出多选」）——
+ * 一次点击做了两件事（取消勾选 **＋** 退出模式），而玩家只要求了第一件 ⇒ 后果是**取消按钮形同虚设**。
+ * ⚠️ 0 项时「删除」是 `enabled(false)`，没有危险动作可做。 */
   }
 
   /* 退出多选。⚠️ 顺带把那两个只属于多选的开关也清掉 —— 不清的话下次进来会**直接弹着上一次的
@@ -2673,22 +2388,16 @@ export struct LauncherHome {
     return out;
   }
 
-  /* 勾选里**还在列表上**的那些的个数。
-   * ⛔ 别用 `multiPicked.length` —— 那里面可能留着**已经不在的键**（移动部分成功就是这样：
-   * 搬走的那些已经从 `saveGroups` 里没了，而键还留在数组里）⇒ 提示条会报一个比屏幕上真实
-   * 存在的多的数，按钮也会在无事可做时仍可点。
-   * ⭐ 判据：**说给玩家听的那个数，必须是接下来真的会被操作的那些**。 */
+/* 勾选里**还在列表上**的那些的个数。⛔ 别用 `multiPicked.length` —— 那里面可能留着**已经不在的键**
+ * （移动部分成功就是这样）⇒ 提示条会报一个比屏幕上真实存在的多的数。
+ * ⭐ 判据：**说给玩家听的那个数，必须是接下来真的会被操作的那些**。 */
   private multiPickCount(): number {
     return this.pickedRows().length;
   }
 
-  /* 一次处理所有勾上的。`archived` 决定去向：
-   *   · `false` ⇒ **回收**（搬进回收站，到期自动清理）
-   *   · `true`  ⇒ **归档**（搬进回收站，且不自动清理）
-   * ⚠️ 一条条走**同一条**搬进回收站的路，⛔ 不是批量直接删 —— 批量删要额外的回滚逻辑，
-   *    而这条路已经带回了回滚（见 `SaveVault.vaultDelete`）。⚠️ 部分失败要**说出来**。
-   * ⭐ 为什么用一个参数而不是两个函数：与单删那条 `doVaultDelete(archived)` **形状一致**，
-   *    免得两条路的措辞与判据慢慢分叉。（`永久删除` 是另一条路，见 `deleteMultiPermanent`。） */
+/* 一次处理所有勾上的。`archived` 决定去向：`false` ⇒ **回收**，`true` ⇒ **归档**（不自动清理）。
+ * ⚠️ 一条条走**同一条**搬进回收站的路，⛔ 不是批量直接删（批量删要额外的回滚逻辑，而这条路已经带回滚）。
+ * ⚠️ 部分失败要**说出来**。⭐ 用一个参数而不是两个函数：与单删那条 `doVaultDelete(archived)` **形状一致**。 */
   private deleteMultiToVault(archived: boolean): void {
     this.stopPermHold();
     const rows: SaveRow[] = this.pickedRows();
@@ -2773,12 +2482,9 @@ export struct LauncherHome {
     const err: string = vaultDelete(sv, dir, this.vaultDays, now,
                                     this.ownerOfDir(dir), this.keyOfDir(dir));
     if (err !== '') {
-      /* ⛔⛔ **写 `savesNote`，⛔ 不是 `vaultNote`**（2026-10-05 修的）。
-       *    `vaultNote` 只在**回收站那一屏**渲染；而这个动作是玩家在**存档页**按的
-       *    ⇒ 失败时他在自己正看着的那一屏上**看不到任何东西**：按了删除、存档还在、
-       *    没有任何解释（那条消息在十几行之外、另一个页面里等着他）。
-       * ⭐ 判据与 `doPermanentDelete` 那条一样：**失败要说在玩家正看着的这一屏。**
-       *    ⚠️ 这两个字段分开本来就是为这个（见 `savesNote` 的声明），只是这个调用点漏了。 */
+/* ⛔⛔ **写 `savesNote`，⛔ 不是 `vaultNote`**（2026-10-05 修的）：`vaultNote` 只在**回收站那一屏**渲染，
+ * 而这个动作是玩家在**存档页**按的 ⇒ 失败时他在自己正看着的那一屏上**看不到任何东西**。
+ * ⭐ 判据：**失败要说在玩家正看着的这一屏。** */
       this.savesNote = err;
       this.refresh();
       return;
@@ -2800,11 +2506,10 @@ export struct LauncherHome {
     this.refresh();
   }
 
-  /* 永久删除（**真的抹掉**，不进回收站）。⭐ 2026-10-05 用户新增的第三个去向。
-   * ⛔ 它**不可撤销** —— 界面把「永久删除 / 回收 / 归档」三个并列在同一行，就是为了让玩家能比较着选。
-   * ⚠️ 走 `vaultPermanentDelete`（直接删源），⛔ 与 `doVaultDelete` 那条「搬走」不是同一条路。
-   * ⚠️ 成功时**不说话** —— 那一行从列表里消失本身就是反馈（与 `doVaultDelete` 一致）；
-   *    只有失败才必须说，而且要说在**玩家正看着的这一屏**（`savesNote`，⛔ 不是回收站那屏的 `vaultNote`）。 */
+/* 永久删除（**真的抹掉**，不进回收站）。⭐ 2026-10-05 用户新增的第三个去向。
+ * ⛔ 它**不可撤销** —— 界面把「永久删除 / 回收 / 归档」并列在同一行，就是为了让玩家比较着选。
+ * ⚠️ 走 `vaultPermanentDelete`（直接删源），⛔ 与 `doVaultDelete` 那条「搬走」不是同一条路。
+ * ⚠️ 成功时**不说话**（那一行消失本身就是反馈）；只有失败才必须说，而且要说在**玩家正看着的这一屏**。 */
   private doPermanentDelete(): void {
     this.stopPermHold();
     const sv: SaveEntry | undefined = this.selectedSaveEntry();
@@ -2855,12 +2560,10 @@ export struct LauncherHome {
     this.refresh();
   }
 
-  /* ---- 「长按永久删除」的计时器 -----------------------------------------------
-   * ⭐ 为什么不用 `LongPressGesture` 而是自己数：那个手势只给「按够了」这一次回调，
-   *    **没有中间过程** ⇒ 进度条无从画起。而进度条是这个设计里承重的一半 ——
-   *    它让「还要按多久」看得见，玩家才不会以为按钮坏了。
-   * ⛔ 也不要改用 `animateTo` 去动一个浮层宽度：这个值要**读出来**（到 100 才动手），
-   *    而动画的中间值读不到。 */
+/* ---- 「长按永久删除」的计时器 ----
+ * ⭐ 为什么不用 `LongPressGesture` 而是自己数：那个手势只给「按够了」一次回调，**没有中间过程** ⇒
+ * 进度条无从画起。⛔ 也不要改用 `animateTo` 去动浮层宽度：这个值要**读出来**（到 100 才动手），
+ * 而动画的中间值读不到。 */
 
   /** 停表 + 归零。⛔ **每一条关闭路径都要调它**（见 `permTimer` 那句注释）。 */
   private stopPermHold(): void {
@@ -2899,12 +2602,10 @@ export struct LauncherHome {
     }, PERM_TICK_MS);
   }
 
-  /* 「长按永久删除」那一个按钮 —— 单删与多选两个确认窗**共用这同一份**。
-   * ⛔ 别在两个窗里各写一遍：它的三个数（时长/节拍/高度）与那个红色的语义必须一字不差地一致，
-   *    两份实现迟早分叉。
-   * ⭐ 视觉：**红底**（`danger`，用户 2026-10-05 要求「底色改成红色警告用户」）
-   *    ＋ 一层**从左往右长出来的半透明白**当进度。⚠️ 用半透明白而不是「更亮的红」：
-   *    这样浅色与深色两套主题下都读得出来，⛔ 不必为 `danger` 再定义第二个色。 */
+/* 「长按永久删除」那一个按钮 —— 单删与多选两个确认窗**共用这同一份**。
+ * ⛔ 别在两个窗里各写一遍：它的三个数（时长/节拍/高度）与那个红色的语义必须一字不差地一致。
+ * ⭐ 视觉：**红底**（`danger`）＋ 一层**从左往右长出来的半透明白**当进度。⚠️ 用半透明白而不是「更亮的红」：
+ * 这样浅色与深色两套主题下都读得出来，⛔ 不必为 `danger` 再定义第二个色。 */
   @Builder
   PermanentDeleteButton() {
     /* ⚠️ 红色底与圆角放在**外层这个 `Stack` 上**，进度是它里面的一层矩形，靠 `.clip(true)` 被裁成胶囊形。
@@ -2958,12 +2659,10 @@ export struct LauncherHome {
     return g === undefined || g.versions.length === 0 ? '' : g.versions[0].key;
   }
 
-  /* 回收站一行里「原来属于谁」。⛔ 三级回退，**顺序是用户定的**（2026-10-02）：
-   * 版本 → 文件夹路径 → 不知道是谁的。
-   * ① 版本（`内置游戏（v8 Build 160.5）`）就是他选的那一项；② 目录 —— 老条目、以及
-   * 「留了很久没人读的孤立档」（`b160.5` 这种）只有这个，而它恰好**指得准**：那个键就是他当时那一档的名字；
-   * ③ 都没有 ⇒ 实话实说。⛔ 别把 ③ 写成一句空话（「未知」）—— 要让人看出我们真的不知道。
-   * ⚠️ 老条目没有 `owner` ⇒ **现算一次**，拿 `from` 去当前的分组里找；⛔ 都失败就说实话，别留空。 */
+/* 回收站一行里「原来属于谁」。⛔ 三级回退，**顺序是用户定的**（2026-10-02）：版本 → 文件夹路径 → 不知道。
+ * ① 版本就是他选的那一项；② 目录 —— 老条目、以及「留了很久没人读的孤立档」只有它，而它恰好**指得准**；
+ * ③ 都没有 ⇒ 实话实说，⛔ 别写成「未知」。
+ * ⚠️ 老条目没有 `owner` ⇒ **现算一次**，拿 `from` 去当前的分组里找。 */
   private vaultOwnerText(e: VaultEntry): string {
     if (e.owner !== '') {
       return e.owner + (e.key === '' ? '' : ('（' + e.key + '）'));
@@ -3017,19 +2716,10 @@ export struct LauncherHome {
 
   /* ---- 复制 / 移动 ---- */
 
-  /* ⭐⭐ **这次操作作用在哪几份存档上。**
-   *
-   * 多选态 ⇒ **勾上的那批**（2026-10-04 用户：「多选再加一个：多选后的复制与移动」）；
-   * 平时   ⇒ 选中的那一个。
-   *
-   * ⭐ 这套东西以前**只认一个源**：`confirmTransfer` 从头到尾读 `selectedSaveEntry()`，
-   *    `transferTargets` 只排除那一个目录，对话框标题直接念 `selectedSaveLabel()`
-   *    ⇒ 「对一批存档做复制/移动」在结构上做不到。这个函数就是把那个前提拆掉的地方 ——
-   *    **其余每个动作（标题、副标题、目标表、执行循环）都从这里取源**，⛔ 别再各处自己读 `selectedSave`。
-   *
-   * ⚠️ **渲染期也会调它**（对话框的标题与副标题）⇒ 它只读内存里的 `saveGroups`，
-   *    ⛔ **不读磁盘、不读 jar**（本文件那条「要读 jar 的一律在 refresh()/事件里算好」的规则）。
-   * ⭐ 复用 `pickedRows()`（多选删除走的就是它）—— 映射逻辑只有一份。 */
+/* ⭐⭐ **这次操作作用在哪几份存档上。** 多选态 ⇒ **勾上的那批**（2026-10-04）；平时 ⇒ 选中的那一个。
+ * ⭐ 这套东西以前**只认一个源**（`confirmTransfer` 从头到尾读 `selectedSaveEntry()`）⇒「对一批存档做
+ * 复制/移动」在结构上做不到；**其余每个动作都从这里取源**，⛔ 别再各处自己读 `selectedSave`。
+ * ⚠️ **渲染期也会调它** ⇒ 只读内存里的 `saveGroups`，⛔ 不读磁盘、不读 jar。 */
   private transferSourceRows(): SaveRow[] {
     if (this.multiMode) {
       return this.pickedRows();
@@ -3089,15 +2779,10 @@ export struct LauncherHome {
     this.transferTargetCounts = new Map<string, number>();
   }
 
-  /* 目标那一行要显示的「它现在有几个存档」—— 一次算好，渲染只查表。
-   *
-   * ⛔⛔ **原来是渲染期算的**：`transferTargetNote()` 内部调 `countSavesIn(v.dataDir + '/saves')`，
-   *    而它被 `ForEach` 里**每个目标**调一次 ⇒ 每帧每个目标都真读一次盘。
-   *    本项目已经为同一件事写过规矩（见 `granularityHintText` 上方那段）：
-   *    **凡是要读盘的，一律在事件处理里算好存进 @State，渲染只读已算好的值。**
-   * ⚠️ 与那条规则唯一的区别是这里要的是**每个目标一个数**，所以用 Map。
-   * ⚠️ 也把源那一份的数目一起存住：`transferSourceRows()` 同样会读盘，
-   *    而它在渲染里被判据和文案用到好几处。 */
+/* 目标那一行要显示的「它现在有几个存档」—— 一次算好，渲染只查表。
+ * ⛔⛔ **原来是渲染期算的**：`transferTargetNote()` 内部调 `countSavesIn(...)`，而它被 `ForEach` 里
+ * **每个目标**调一次 ⇒ 每帧每个目标都真读一次盘。同 `granularityHintText` 上方那条规矩：**凡是要读盘的，
+ * 一律在事件处理里算好存进 @State**。⚠️ 这里要的是每个目标一个数，所以用 Map。 */
   private cacheTransferCounts(): void {
     const m: Map<string, number> = new Map<string, number>();
     for (const v of this.versions) {
@@ -3136,11 +2821,9 @@ export struct LauncherHome {
    * 否则会出现一个看起来能选、点下去报「源和目标在同一个目录」的选项。
    */
   private transferTargets(): VersionEntry[] {
-    /* ⭐ 「源」= **源那几行自己的目录**，不再是当前版本的目录 —— 列表里可能有别的版本的存档。
-     * ⛔ 用 `savesDirShown` 的话会把**当前版本那一份**当成源（而它可能根本没有这些存档）。
-     * ⚠️ 多选时**每一个**源目录都要排除：勾上的两个存档可能来自同一个版本，而「复制到原地」
-     * 是没意义的（`copySaveTo` 会当场报「源和目标在同一个目录」）⇒ 让玩家**选不出**这种组合，
-     * 比让他按下去再报错好（同 L3142 对「移动单选」的处理理由）。 */
+/* ⭐ 「源」= **源那几行自己的目录**，不再是当前版本的目录 —— 列表里可能有别的版本的存档。
+ * ⛔ 用 `savesDirShown` 会把**当前版本那一份**当成源（而它可能根本没有这些存档）。
+ * ⚠️ 多选时**每一个**源目录都要排除：「复制到原地」没意义 ⇒ 让玩家**选不出**这种组合，比按下去再报错好。 */
     const dirs: string[] = this.transferSourceDirs();
     return this.versions.filter((v: VersionEntry) => dirs.indexOf(v.dataDir + '/saves') < 0);
   }
@@ -3168,11 +2851,9 @@ export struct LauncherHome {
       : (head + '；复制一份过去，两边都有。');
   }
 
-  /* 一条失败行。⭐ 源不止一个时**必须带上存档名** —— 否则「A → B：原因」里那个 A 是谁，
-   * 玩家从屏幕上读不出来（而批量操作失败时，他正需要知道**是哪一个**没成）。
-   * ⛔ 源 =1 时保持改动前那句话（`目标：原因`），别因为重构改了已经在用的措辞。
-   * ⚠️ 写成方法而不是局部箭头函数：本文件通篇是这个形状，而 ArkTS 比 TS 严
-   * （文件里没有任何局部函数定义的先例，不拿它试）。 */
+/* 一条失败行。⭐ 源不止一个时**必须带上存档名** —— 否则「A → B：原因」里那个 A 是谁读不出来。
+ * ⛔ 源 =1 时保持改动前那句话（`目标：原因`），别因为重构改了已经在用的措辞。
+ * ⚠️ 写成方法而不是局部箭头函数：ArkTS 比 TS 严，文件里没有局部函数定义的先例。 */
   private transferFailLine(src: SaveRow, where: string, why: string): string {
     if (this.transferSourceRows().length > 1) {
       return src.entry.label + ' → ' + where + '：' + why;
@@ -3204,17 +2885,10 @@ export struct LauncherHome {
       : '原来那一份不动。可以选多个目标。';
   }
 
-  /* 按下「确定」——**这才是真正动手的地方**。
-   *
-   * ⚠️ **源 × 目标**：多选态下源是一批（`transferSourceRows`），复制还可以有多个目标
-   * ⇒ 最坏是 N×M 次文件操作。⛔ 单源时它与改动前逐字等价（一层循环退化成一次）。
-   *
-   * ⚠️ **不遇到第一个失败就停**：停下来的话，玩家会以为后面那些也没做，而其实前面已经成功了 ——
-   * 那种「状态不明」比失败本身更难受。⇒ 成功的照做，失败的汇总，并且**照旧刷新**。
-   *
-   * ⚠️ **失败行要给上限**：源×目标可以到几十条，而这段文字渲染在**一个** `Text` 里
-   * ⇒ 全列出来会把对话框顶爆。取前 6 条 + 一句「还有 N 条」。⛔ 但**总数照报** ——
-   * 只说 6 条会让人以为只错了 6 个。 */
+/* 按下「确定」——**这才是真正动手的地方**。
+ * ⚠️ **源 × 目标**：多选态下源是一批、复制还可多目标 ⇒ 最坏 N×M 次文件操作。⛔ **不遇到第一个失败就停**：
+ * 停下来的话玩家会以为后面那些也没做，而其实前面已经成功了 —— 那种「状态不明」比失败本身更难受。
+ * ⚠️ **失败行要给上限**（取前 6 条 + 一句「还有 N 条」），⛔ 但**总数照报**。 */
   private confirmTransfer(): void {
     const srcs: SaveRow[] = this.transferSourceRows();
     if (srcs.length === 0 || this.transferPicked.length === 0) {
@@ -3269,13 +2943,9 @@ export struct LauncherHome {
     }
 
     if (fails.length === 0) {
-      /* ⚠️⚠️ **先记住是哪个动作，再关窗。** `closeTransferDialog()` 会把 `transferOp` 清成 `''`
-       * ⇒ 关窗之后再写 `this.transferOp === 'move'` 是**恒假**，下面那个分支永远不进。
-       *
-       * ⛔ 2026-10-04 我正是这么写的第一版，用户当场看到：**移动完还留在多选态** ——
-       * 提示条上「已选 2 项」停在旧数上（那两行已经从源里搬走了），勾选也没散。
-       * ⭐ 教训：**一个函数把某个字段清掉之后，它就不是「那个动作」的证据了** ——
-       * 想拿它做判断，就把值在读得到的时候先取出来。 */
+/* ⚠️⚠️ **先记住是哪个动作，再关窗。** `closeTransferDialog()` 会把 `transferOp` 清成 `''` ⇒ 关窗之后再写
+ * `this.transferOp === 'move'` 是**恒假**（2026-10-04 第一版，用户当场看到「移动完还留在多选态」）。
+ * ⭐ **一个函数把某个字段清掉之后，它就不是「那个动作」的证据了** —— 判断要在读得到时先取出来。 */
       const wasMove: boolean = this.transferOp === 'move';
       this.closeTransferDialog();
       /* ⭐⭐ 收场按「源还在不在」而定（2026-10-04 用户选定）：
@@ -3341,12 +3011,10 @@ export struct LauncherHome {
     hilog.info(DOMAIN, TAG, 'launcher: picked (bundled)');
   }
 
-  /* 打开确认窗。`g` = **刚被左滑的那一行**（见 `SwipeDeleteAction`），不是「选中的那个」。
-   * ⭐⭐ 三样东西都在这里算一次并存住，理由有两条，缺一条都不行：
-   *   ① `computeKey()` **没有缓存** —— 每调一次就真读一次那个 jar（最大 88 MB），
-   *      而对话框会渲染好几遍，⛔ 不能每遍都去读；
-   *   ② 删除流程走到一半 jar 就没了，**那时同一个版本会算到别的键上**
-   *      ⇒「删它的数据」会删到另一份上去。 */
+/* 打开确认窗。`g` = **刚被左滑的那一行**（见 `SwipeDeleteAction`），不是「选中的那个」。
+ * ⭐⭐ 三样东西都在这里算一次并存住：① `computeKey()` **没有缓存**，每调一次就真读一次那个 jar
+ * （最大 88 MB），而对话框会渲染好几遍；② 删除流程走到一半 jar 就没了，**那时同一个版本会算到别的键上**
+ * ⇒「删它的数据」会删到另一份上去。 */
   private openGameDeleteAsk(g: GameJar): void {
     this.gameDeletePath = g.path;
     /* ⭐⭐ **文件名在前**（用户 2026-10-04：「具体哪个文件」）。
@@ -3401,14 +3069,10 @@ export struct LauncherHome {
     return countSavesIn(this.gameDeleteDir + '/saves');
   }
 
-  /* 真删一个版本。`withData = true` ⇒ 连它的数据一起删。
-   *
-   * ⚠️ 目录用 `this.gameDeleteDir`（打开窗时算好的），⛔ **不在这里重算** —— 见 `openGameDeleteAsk`。
-   *
-   * ⚠️ 顺序是**先数据、后 jar**，而且数据没删干净就**整个停下**：
-   *    · 反过来先删 jar，会留下一个「没有版本读它」的孤儿目录 —— 界面上本来就有一类专门显示
-   *      它，但那是**另一件事**，不该由「删除」制造出来；
-   *    · 数据删一半就停，玩家还能看着这个版本再试一次，而不是剩一个游戏配半份数据。 */
+/* 真删一个版本。`withData = true` ⇒ 连它的数据一起删。
+ * ⚠️ 目录用 `this.gameDeleteDir`（打开窗时算好的），⛔ **不在这里重算**。⚠️ 顺序是**先数据、后 jar**，
+ * 而且数据没删干净就**整个停下**：反过来先删 jar 会留下一个孤儿目录；数据删一半就停，玩家还能看着这个
+ * 版本再试一次，而不是剩一个游戏配半份数据。 */
   private deleteGame(withData: boolean): void {
     const path: string = this.gameDeletePath;
     this.showGameDeleteAsk = false;
@@ -3463,23 +3127,18 @@ export struct LauncherHome {
     this.refresh();
   }
 
-  /** 内容一栏的宽度（vp）。**靠左**摆，见 CONTENT_MIN_VP。
-   * ⚠️ 它返回**数值 width** 而不是配 `width('100%')` 用的 `constraintSize` —— 这个选择为动画服务：
-   * `animateTo` 动的是**渲染属性**，而 `constraintSize` 是**布局约束**（约束变了布局直接重排、
-   * 没有中间帧）⇒ 用 `constraintSize` 时动画根本没跑（用户说「**还是**太快了」），改回来。
-   * ⚠️ 窗口宽度还没量到时给下限；`winW <= 0` 只出现在第一帧。 */
+/** 内容一栏的宽度（vp）。**靠左**摆，见 CONTENT_MIN_VP。
+ * ⚠️ 它返回**数值 width** 而不是 `constraintSize` —— `animateTo` 动的是**渲染属性**，而 `constraintSize`
+ * 是**布局约束**（约束变了直接重排、没有中间帧）⇒ 用 `constraintSize` 时动画根本没跑，改回来。
+ * ⚠️ 窗口宽度还没量到时给下限。 */
   private gamesWidthVp(): number {
     if (this.winW <= 0) {
       return CONTENT_MIN_VP;
     }
-    /* ⭐⭐ **窄屏（手机比例）⇒ 直接铺满窗口宽度。**
-     * ⛔ 原来靠 `max(360, 30%)` 里那个**下限**去「退回全宽」，而 360 是写死的数、不是窗口宽度：
-     * 窗口在 361–599 vp 时内容 = 360、窗口比如 420 ⇒ 右边空 60vp；而外层 `HorizontalAlign.Start`
-     * （靠左，宽屏的规格）⇒ 屏幕上是**一条靠左的窄栏 + 右边一条空白**（2026-10-03 报的
-     * 「首页在手机比例下，列表不是居中的…而且此时最好占满左右」）。
-     * ⇒ 判据：**「退回全宽」不能用常量表达** —— 只有窗口宽度本身是全宽。
-     * ⚠️ 走 `isNarrow()`（同一个 600vp 阈值）而不是再写一个判断（阈值两处各写一遍会有一天只改一处）。
-     * ⚠️ 返回值必须仍是**数值**（`animateTo` 只对渲染属性插值）⇒ 给 `this.winW` 而不是 `'100%'`。 */
+/* ⭐⭐ **窄屏（手机比例）⇒ 直接铺满窗口宽度。**
+ * ⛔ 原来靠 `max(360, 30%)` 里那个**下限**去「退回全宽」，而 360 是写死的数、不是窗口宽度 ⇒ 窗口
+ * 361–599 时右边空一截，加上外层靠左 ⇒ 屏幕上是「一条靠左的窄栏 + 右边空白」（2026-10-03 报的）。
+ * ⇒ 判据：**「退回全宽」不能用常量表达。**⚠️ 返回**数值**（`animateTo` 只对渲染属性插值）。 */
     if (this.isNarrow()) {
       return this.winW;
     }
@@ -3505,11 +3164,9 @@ export struct LauncherHome {
   @Builder
   GamesTab() {
     Column() {
-      /* 下拉刷新。列表上直接下拉就重扫；设置页那个「重新扫描」按钮**保留**当备份（下拉是一条手势，
-       * 手势失败时按钮还在 —— 出口多一点比少一点安全）。
-       * ⚠️ 刷新的动作就是 `refresh()`，与按钮**完全同一个函数** —— 不要在两边各写一份读盘逻辑。
-       * ⚠️ `refresh()` 是**同步**的 ⇒ 这里可以立刻把 isRefreshing 放回 false，转圈一闪而过是诚实的；
-       * 刻意**不**加延时去「让动画好看一点」，那等于让界面撒谎。 */
+/* 下拉刷新。列表上直接下拉就重扫；设置页那个「重新扫描」按钮**保留**当备份（出口多一点比少一点安全）。
+ * ⚠️ 刷新的动作就是 `refresh()`，与按钮**完全同一个函数**。
+ * ⚠️ `refresh()` 是**同步**的 ⇒ 立刻把 isRefreshing 放回 false，转圈一闪而过是诚实的；刻意**不**加延时。 */
       Refresh({ refreshing: $$this.isRefreshing }) {
         /* ⚠️ 必须有一个**可滚动**的子节点，否则下拉手势不一定触发 —— Refresh 是靠内容能滚动
          * 来判断「用户拉的是列表」的（原来那层直接是 Column、不可滚）⇒ 这里包一层 Scroll。
@@ -3524,15 +3181,10 @@ export struct LauncherHome {
            * 问题 ⇒ 必须能出去：一个「仍然尝试启动」的入口。没有它，一次路径判断失误就把应用变成
            * 永远打不开游戏的启动器，而玩家没有任何办法绕过去（本项目为「门关上了却没有开的路径」付过代价）。 */
           Column() {
-            /* ⛔⛔ **先分叉：这个包到底带不带运行时。**
-             *  `resolution.source === 'no-runtime'` 由 `resolveGame()` 给出，而那是
-             *  **运行期文件探测**（`hasRuntime()`，查包里有没有 `libjvm_real.so`），
-             *  ⛔ 不是编译期常量 ⇒ 三种形态（master / lite / tools）的 ArkTS 因此可以逐字节相同。
-             *
-             *  ⚠️ 为什么这里非分叉不可：这个空状态原本一律说「把 .jar 放进文件夹」——
-             *     而那对**没有运行时的包**是**空头承诺**：jar 放进来了也跑不起来
-             *     （包里没有 JVM）。玩家会照做、然后发现「点了没反应」，
-             *     而那是最难查的一种失败。⇒ 这个分支的**全部价值就是不给那条错指引**。 */
+/* ⛔⛔ **先分叉：这个包到底带不带运行时。** `resolution.source === 'no-runtime'` 由 `resolveGame()` 给出，
+ * 而那是**运行期文件探测**（查包里有没有 `libjvm_real.so`），⛔ 不是编译期常量。
+ * ⚠️ 非分叉不可：原来一律说「把 .jar 放进文件夹」—— 那对**没有运行时的包**是**空头承诺**（放了也跑不起来，
+ * 包里没有 JVM），玩家照做后「点了没反应」。⇒ 这个分支的**全部价值就是不给那条错指引**。 */
             if (this.resolution.source === 'no-runtime') {
               Text('这个包不能运行游戏')
                 .fontSize(18).fontColor($r('sys.color.font_primary'))
@@ -3546,11 +3198,10 @@ export struct LauncherHome {
                 .margin({ top: 12 })
                 .textAlign(TextAlign.Center)
             } else {
-            /* ⚠️ 标题**据实**说，别一律说「没有找到游戏」。进入条件是 `games.length === 0`，
-             * 而 `games` 是 `listGameJars()` 列出来的 —— 也就是**玩家自己放在 Download 里的 jar**，
-             * 内置那份不在里面 ⇒ 内置在时写「没有找到游戏」会和下面的「内置游戏：有」**自相矛盾**，
-             * 更糟的是底下「启动游戏」按钮是**可用**的。⭐ 只有**内置也不在**时那句话才是真的。
-             * ⚠️ 判据用 `hasBundled`（直接问文件在不在），不是 `resolution.source`（那是「这次加载谁」）。 */
+/* ⚠️ 标题**据实**说。进入条件是 `games.length === 0`，而 `games` 是 `listGameJars()` 列的 —— 也就是
+ * **玩家自己放在 Download 里的 jar**，内置那份不在里面 ⇒ 内置在时写「没有找到游戏」会和下面的
+ * 「内置游戏：有」**自相矛盾**。⭐ 只有**内置也不在**时那句话才是真的。
+ * ⚠️ 判据用 `hasBundled`（直接问文件在不在），不是 `resolution.source`。 */
             Text(this.hasBundled ? '还没有导入其他游戏版本' : '没有找到游戏')
               .fontSize(18).fontColor($r('sys.color.font_primary'))
             /* 内置在时补一句「其实可以直接玩」—— 标题已经不再说「找不到」了，得让玩家知道这不是死路。 */
@@ -3623,11 +3274,9 @@ export struct LauncherHome {
               ListItem() {
                 Row() {
                   Column() {
-                    /* 第一行 = **版本号**，第二行 = 文件名 · 大小 · 日期。⚠️ 与内置那一行的次序相反
-                     * 是刻意的：内置那份没有文件名可看（「内置游戏」就是它的标题），而玩家导入的文件名
-                     * 五花八门，**版本号才是选的时候真正要比的东西**。
-                     * ⚠️ 读不出就写「未知版本」，**不是**留空或让条目消失 —— 不是游戏的 jar（例如模组）
-                     * 本来就会走到这里，照样要能被选中。 */
+/* 第一行 = **版本号**，第二行 = 文件名 · 大小 · 日期。⚠️ 与内置那一行的次序相反是刻意的：内置那份没有
+ * 文件名可看，而玩家导入的文件名五花八门，**版本号才是选的时候真正要比的东西**。
+ * ⚠️ 读不出就写「未知版本」，**不是**留空或让条目消失 —— 不是游戏的 jar（例如模组）本来就会走到这里。 */
                     Text(g.version === '' ? '未知版本' : g.version)
                       .fontSize(16).fontColor($r('sys.color.font_primary'))
                       .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -3643,22 +3292,18 @@ export struct LauncherHome {
                 }
                 .width('100%')
                 .padding({ left: 16, right: 16, top: 14, bottom: 14 })
-                /* ⭐⭐ 白底与圆角**必须在【内容】这一层**，不能挂在 `ListItem` 上。
-                 * ⛔ 挂在 ListItem 上的后果（用户 2026-10-04 报的）：`swipeAction` 移动的是
-                 *    **内容**，而 ListItem 自己的背景不动 ⇒ 左滑时**文字滑走了、白卡片原地不动**，
-                 *    看起来像"只有字在动"。挪进来之后整张卡片一起滑。
-                 * ⚠️ `onClick` 与 `swipeAction` 留在 `ListItem` 上 —— 后者是 `ListItemAttribute`
-                 *    的方法，挪不下来。 */
+/* ⭐⭐ 白底与圆角**必须在【内容】这一层**，不能挂在 `ListItem` 上。
+ * ⛔ 挂在 ListItem 上的后果（用户 2026-10-04 报的）：`swipeAction` 移动的是**内容**，而 ListItem 自己的
+ * 背景不动 ⇒ 左滑时**文字滑走了、白卡片原地不动**。⚠️ `onClick` 与 `swipeAction` 留在 `ListItem` 上
+ * —— 后者是 `ListItemAttribute` 的方法，挪不下来。 */
                 .backgroundColor($r('app.color.launcher_card'))
                 .borderRadius(CARD_RADIUS_VP)
               }
               .onClick(() => { this.pick(g.path); })
-              /* ⭐ 左滑露出「删除」。用系统原生的 `ListItem.swipeAction`，**不自写手势** ——
-               * 回弹、只允许一行展开、与纵向滚动抢手势，这些它都已经处理好了。
-               * ⚠️ `end` = 垂直列表里**向左滑**露出的那一侧（向右滑是 `start`）。
-               * ⛔ 不给 `onAction`（滑到底自动触发）：「滑到底」是个顺手就会做出来的动作，
-               *    让它直接弹确认窗比「点一下露出来的按钮」容易误触。
-               * ⚠️ 内置那一行没有这个 —— 它在 HAP 里，不是文件，删不掉。 */
+/* ⭐ 左滑露出「删除」。用系统原生的 `ListItem.swipeAction`，**不自写手势** —— 回弹、只允许一行展开、
+ * 与纵向滚动抢手势，这些它都已经处理好了。⚠️ `end` = 垂直列表里**向左滑**露出的那一侧。
+ * ⛔ 不给 `onAction`（滑到底自动触发）：「滑到底」顺手就会做出来，让它直接弹确认窗容易误触。
+ * ⚠️ 内置那一行没有这个 —— 它在 HAP 里，不是文件，删不掉。 */
               .swipeAction({ end: { builder: () => { this.SwipeDeleteAction(g) } },
                              edgeEffect: SwipeEdgeEffect.Spring })
             }, (g: GameJar): string => this.gameRowKey(g))
@@ -3730,13 +3375,10 @@ export struct LauncherHome {
     /* 给悬浮栏让位，见 BAR_CLEARANCE_VP。 */
     .padding({ bottom: BAR_CLEARANCE_VP })
   }
-  /* ==================================================================
-   * 存档页的两个详情面板
-   *
-   * ⭐⭐ 抽成**零参** `@Builder` 是为了让**宽屏内嵌**与**窄屏子页**共用同一份。
-   * ⛔ 注意是零参：开头那条「@Builder 的参数按值传递，`selected` 变了不会重跑」**只针对带参数的**；
-   * 零参的那种只读 `this`，`this` 上任何 @State 变化都会让它重新执行 ⇒ 若哪天要加参数，先读文件头第 2 条。
-   * ================================================================== */
+/* ==================================================================
+ * 存档页的两个详情面板 —— 抽成**零参** `@Builder` 让**宽屏内嵌**与**窄屏子页**共用同一份。
+ * ⛔ 注意是零参：开头那条「@Builder 的参数按值传递」**只针对带参数的**；零参的那种只读 `this`。
+ * ================================================================== */
 
   @Builder
   SaveDataPanel() {
@@ -3745,11 +3387,9 @@ export struct LauncherHome {
         Text(this.saves.length === 0 ? '还没有存档' : '从左边选一个存档')
           .fontSize(13).fontColor($r('sys.color.font_tertiary'))
       } else {
-        /* 「这个存档对哪些版本可见」与**标题同一行、靠最右**（2026-10-02 要的）。⭐ 不只是好看：它是
-         * 这个存档的**属性**，摆在整张元数据表**下面**会让人以为它是表格的最后一行。
-         * ⚠️ 内部按 **2 : 1** 分，⛔ 不是按内容自适应（否则存档名一长就把右边挤掉/挤到换行，同一屏上
-         * 换个存档那行字就跳一次位）⇒ 位置**由结构保证**。⚠️ 别与外层那两栏的 3 : 7 搞混。
-         * ⚠️ 顶部对齐；右边整块 `HorizontalAlign.End` 贴右边缘。 */
+/* 「这个存档对哪些版本可见」与**标题同一行、靠最右**（2026-10-02）。⭐ 它是这个存档的**属性**，摆在
+ * 元数据表**下面**会让人以为它是表格的最后一行。⚠️ 内部按 **2 : 1** 分（⛔ 不是自适应，否则存档名一长
+ * 就把右边挤掉/挤到换行）⇒ 位置由结构保证。⚠️ 别与外层那两栏的 3 : 7 搞混。 */
         Row() {
           Column() {
             Text(this.selectedSaveLabel())
@@ -3827,11 +3467,9 @@ export struct LauncherHome {
             Column() {
               ForEach(this.metaRowsExcept(), (r: MetaRow) => {
                 Row() {
-                  /* ⭐⭐ 这里**不能**用 `.width(88)`。它是**标签**（要跟着系统字体放大），
-                   * 而 88vp 是个**定宽盒子** —— 两者只能选一个：
-                   * 「写入时的构建号」7 个汉字，系统字体调到 1.75 倍就约 147vp ⇒ **被裁掉**。
-                   * ⇒ 改成 `constraintSize({ minWidth: 88 })`：短标签仍从 88 起（列还是齐的），
-                   *   长标签**把它撑开**而不是被裁 —— 代价是那一行的值列右移，但那比缺字好。 */
+/* ⭐⭐ 这里**不能**用 `.width(88)`。它是**标签**（要跟着系统字体放大），而 88vp 是**定宽盒子** ——
+ * 「写入时的构建号」7 个汉字，系统字体 1.75 倍就约 147vp ⇒ **被裁掉**。⇒ 改成
+ * `constraintSize({ minWidth: 88 })`：短标签仍从 88 起（列还是齐的），长标签**把它撑开**而不是被裁。 */
                   Text(r.label)
                     .fontSize(12).fontColor($r('sys.color.font_tertiary'))
                     .constraintSize({ minWidth: 88 })
@@ -3853,15 +3491,10 @@ export struct LauncherHome {
           .scrollBar(BarState.Off)
         }
 
-        /* ⛔ 只有**当前版本**的存档能操作（`saves` 列表本来就只列当前版本的）；别的版本的存档要动，
-         * 得先在「首页」把版本切过去（提示在「按版本」那边）。
-         * ⭐⭐ **多选态下把这一条整根藏掉**（2026-10-02 同意）：不藏的话屏幕上会同时出现**两个「删除」**
-         * （删勾上的这一批 / 删详情里那一个），长得一样、位置又近 ⇒ 玩家按下哪一个都是赌 —— 两个意思
-         * 不同的同名按钮并存，比少一个按钮糟得多。
-         * ⭐ **2026-10-04 起这条理由更硬了**：多选条上现在**也有复制/移动**，于是同名的冲突从
-         * 「删除」一处变成**删除/复制/移动三处**。⚠️ 而两组按钮**意思确实不同**（多选条作用于
-         * **勾上的那一批**、这一排只作用于**详情里那一个**）⇒ 判据不变、结论不变：**藏**。
-         * ⛔ 别因为「现在两边都有复制了」就把这一排放出来。 */
+/* ⛔ 只有**当前版本**的存档能操作；别的版本的存档要动，得先在「首页」把版本切过去。
+ * ⭐⭐ **多选态下把这一条整根藏掉**：不藏的话屏幕上会同时出现**两个「删除」**（删勾上的这批 / 删详情里
+ * 那一个），长得一样、位置又近 ⇒ 按下哪个都是赌。⚠️ 2026-10-04 起多选条上**也有复制/移动** ⇒ 冲突从
+ * 「删除」一处变成三处，判据不变、结论不变：**藏**。⛔ 别因为「两边都有复制了」就放出来。 */
         if (!this.multiMode) {
           Divider()
             .strokeWidth(1).color($r('app.color.launcher_border'))
@@ -3922,12 +3555,9 @@ export struct LauncherHome {
     }
   }
 
-  /* 多选条上的四个按钮。⭐ **零参**（所以没有 L6 那条「参数按值传递 ⇒ 不刷新」的问题），
-   * 两个分支共用同一份。
-   * ⭐ 顺序与 `SaveActionRow`（删除 / 复制 / 移动）对齐 —— 用户 2026-10-03 说过这个顺序
-   * 「看着更顺眼」，两处别分叉；`取消` 收尾。
-   * ⚠️ `margin({ left: 8 })` 的分布照 `SaveActionRow`：**第一个按钮不能有左间距**，
-   * 否则整排会往右缩 8vp。 */
+/* 多选条上的四个按钮。⭐ **零参**（所以没有「参数按值传递 ⇒ 不刷新」的问题），两个分支共用同一份。
+ * ⭐ 顺序与 `SaveActionRow`（删除 / 复制 / 移动）对齐 —— 用户 2026-10-03 说过这个顺序「看着更顺眼」，两处别分叉。
+ * ⚠️ `margin({ left: 8 })` 的分布照 `SaveActionRow`：**第一个按钮不能有左间距**，否则整排会往右缩 8vp。 */
   @Builder
   MultiBarButtons() {
     Row() {
@@ -3965,15 +3595,10 @@ export struct LauncherHome {
   @Builder
   SaveActionRow() {
     Row() {
-      /* ⭐ 顺序是**删除 / 复制 / 移动**（2026-10-03 用户：「看着更顺眼」）。
-       *
-       * ⚠️⚠️ **配色在 2026-10-04 反了过来**（用户定的）：复制/移动是**主操作**（品牌蓝实底 + 白字），
-       *    删除是**灰底 + 警示色字**。这一段原来写的是「删除自己带底色与警示色，与另外两个拉开」——
-       *    ⛔ 那句话现在**不成立**了，删除反而是这三者里最不显眼的那个。别照着旧理由去「修」它。
-       *    ⭐ 判据：靠颜色轻重说话，而不是靠位置。主操作给满色，破坏性动作给底色 + 警示词
-       *    ——**不要**因为它是危险的就给它最亮的颜色（那会把鼠标往危险的那个上面引）。
-       * ⛔ 三个都在同一个 `Row` 里靠右，改动顺序时**别动 `margin({ left: 8 })` 的分布** ——
-       * 第一个按钮不能再有左间距，否则整排会往右缩 8vp。 */
+/* ⭐ 顺序是**删除 / 复制 / 移动**（2026-10-03 用户：「看着更顺眼」）。
+ * ⚠️⚠️ **配色在 2026-10-04 反了过来**：复制/移动是**主操作**（品牌蓝实底 + 白字），删除是**灰底 +
+ * 警示色字**。⭐ 判据：靠颜色轻重说话 —— 破坏性动作给底色 + 警示词，**不要**给它最亮的颜色。
+ * ⛔ 三个都在同一个 `Row` 里靠右，第一个按钮不能再有左间距，否则整排会往右缩 8vp。 */
       Button('删除')
         .fontSize(BUTTON_FONT_VP)
         .fontColor($r('sys.color.warning'))
@@ -4067,11 +3692,9 @@ export struct LauncherHome {
                 .fontSize(12).fontColor($r('sys.color.font_secondary'))
                 .margin({ top: 8 })
             }
-            /* ⭐⭐ 这一段一起改掉了三件事（2026-10-02）：① 字体过小 ⇒ 名字 14、元数据 12；
-             * ② 对齐 ⇒ 改成**三列**（名字吃剩余宽度，大小与时间各占定宽右对齐，原来是一整句拼的、三列全歪）；
-             * ③ 热区太小 ⇒ 补内边距/圆角/底色，热区变成一整块（与左边版本列表同一形状）。
-             * ⚠️ ✓ 用 `visibility` 而不是 `if`：`if` 会让未选中的行**少一个节点** ⇒ 两种行的列宽不一样
-             * ⇒ 点一下整列就跳；`Visibility.Hidden` 照样占位，列不会动。 */
+/* ⭐⭐ 这一段一起改掉了三件事（2026-10-02）：① 字体过小 ⇒ 名字 14、元数据 12；② 对齐 ⇒ 改成**三列**
+ * （名字吃剩余宽度，大小与时间各占定宽右对齐）；③ 热区太小 ⇒ 补内边距/圆角/底色。
+ * ⚠️ ✓ 用 `visibility` 而不是 `if`：`if` 会让未选中的行**少一个节点** ⇒ 两种行列宽不一样 ⇒ 点一下整列跳。 */
             ForEach(this.versionSaves, (sv: SaveEntry) => {
               Row() {
                 Text(sv.label)
@@ -4139,15 +3762,10 @@ export struct LauncherHome {
     .alignItems(HorizontalAlign.Start)
   }
 
-  /* 存档页。布局是「左侧列表选择存档/版本」＋右侧详情，且左右**对称**（不管左边选的是什么，
-   * 右边永远是同一套「详情 + 对它可做的事」）。三处要点：① 宽度 100%（原 30–60% 可调，
-   * 为的是把「查看存档数据」挪进右侧空白区）；② 「查看存档数据」不再弹窗（那个按钮与 `metaShown`
-   * 弹窗**都已删除**）；③ 窄屏走子页。
-   * ⛔ 没有用 `Navigation`/`NavDestination` —— 这一页的 `Navigation` 是 `NavigationMode.Stack`
-   * 且**一个 NavDestination 都没有**，附近还栽过两次；这里用一个 `panelOpen` 开关在**同一个页签内**
-   * 换内容，出口是左上角的返回箭头。
-   * ⚠️ 两栏按 **3 : 7** 分（`layoutWeight`）：左边只是存档名与一行摘要，右边要放下整张元数据表；
-   * 用 layoutWeight 而非写死 vp 是为了在任何窗口宽度下都自成比例（手机走子页，这条不参与）。 */
+/* 存档页。布局是「左侧列表」＋右侧详情，且左右**对称**。三处要点：① 宽度 100%；② 「查看存档数据」
+ * 不再弹窗（那个按钮与 `metaShown` 弹窗**都已删除**）；③ 窄屏走子页。⛔ 没有用 `Navigation`/`NavDestination`
+ * —— 本页一个 NavDestination 都没有，附近栽过两次，所以用一个 `panelOpen` 开关在**同一个页签内**换内容。
+ * ⚠️ 两栏按 **3 : 7** 分。 */
   /* 回收站。⭐ 它**不是第三种「视图」**（那种要挤进「按存档 / 按版本」那一排），而是**另一个地方** ——
    * 进出靠一个返回，与手机的详情子页同一套做法。理由：分段控件那两档回答「我怎么看这批存档」，
    * 回收站回答「我删掉的东西去哪了」，不是同一个问题。
@@ -4173,14 +3791,10 @@ export struct LauncherHome {
 
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
 
-        /* ⭐⭐ **先多选、再确定**（2026-10-02：「先多选再确定，而不是现在点了就尝试复制」）。⛔ 原来
-         * 「点一行 = 立刻复制」，复制到三个版本要来回三趟，而且**没有后悔的机会** ⇒ 现在点只是**选中**，
-         * 动作统一由底下的「确定」执行。
-         * ⚠️ **移动是单选** —— 第一次搬走之后源就没了，第二个目标会搬一个不存在的东西。⛔ 按操作分：
-         * 复制可多选、移动单选，并把这条差别做进**交互**（而不是做进报错）—— 让玩家选不出一个做不到的
-         * 组合，比事后告诉他「不行」好。
-         * ⚠️ 选中的样子**复用本项目已有的那套**（文字变 `brand` 色 + 右侧 ✓），⛔ 不引入 `Checkbox`
-         * （它有自己的一套主题与获焦行为，本项目在焦点上栽过）。 */
+/* ⭐⭐ **先多选、再确定**（2026-10-02）。⛔ 原来「点一行 = 立刻复制」，复制到三个版本要来回三趟，
+ * 而且**没有后悔的机会**。⚠️ **移动是单选** —— 第一次搬走之后源就没了。⛔ 按操作分并把差别做进**交互**
+ * （让玩家选不出一个做不到的组合，比事后告诉他「不行」好）。
+ * ⚠️ 选中的样子**复用本项目已有的那套**（文字变 `brand` 色 + 右侧 ✓），⛔ 不引入 `Checkbox`。 */
         Scroll() {
           Column() {
             /* ---- 同版本再存一份（只有复制 + 源全是手动存档）----
@@ -4303,10 +3917,8 @@ export struct LauncherHome {
     .width('100%').height('100%')
     .backgroundColor('#80000000')
     .justifyContent(FlexAlign.Center)
-    /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
-     * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
-     * ⚠️ 四边的 32 是**卡片自己的**边距（原本就有，只作用在左右），与避让无关，所以两者相加而不是覆盖。
-     * ⚠️ 避让为 0 时这里与从前**逐像素相同**。 */
+    /* ⭐ 异形屏避让：遮罩要铺满（背景全屏），卡片落在避让区里 —— 加在遮罩的 padding 上而非外层 Stack
+     * （理由见 Navigation 那处）。⚠️ 那 32 是卡片自己的边距，与避让无关，两者相加；避让为 0 时逐像素同从前。 */
     .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
                top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
     /* 整层淡入（遮罩 + 卡片一起）。 */
@@ -4440,11 +4052,10 @@ export struct LauncherHome {
               .backgroundColor($r('app.color.launcher_card'))
               .margin({ bottom: 8 })
               .alignItems(HorizontalAlign.Start)
-            /* ⛔ **key 必须带上【会变的字段】** —— 这就是 2026-10-02 报的「取消归档 / 放回，点了
-             * UI 不刷新」的成因之一。⭐ ArkUI 的 `ForEach` 按 key 做差分：**key 没变的那一项会被
-             * 【复用】、不会重建** ⇒ 行里的文字永远停在旧值上；而 `e.id` 只在**增删**时变，归档/取消
-             * 归档是**原地改内容** ⇒ key 一模一样 ⇒ 界面一动不动。
-             * ⚠️ 所以 key 里要放**渲染真正依赖的**那几个字段：归档位与到期时刻。⛔ 别只写 `e.id`。 */
+/* ⛔ **key 必须带上【会变的字段】** —— 这就是 2026-10-02 报的「取消归档 / 放回，点了 UI 不刷新」的成因：
+ * `ForEach` 按 key 差分，**key 没变的那一项会被【复用】、不会重建** ⇒ 行里的文字永远停在旧值上；而
+ * `e.id` 只在增删时变，归档/取消归档是**原地改内容** ⇒ key 一模一样。
+ * ⚠️ key 里要放**渲染真正依赖的**字段：归档位与到期时刻。⛔ 别只写 `e.id`。 */
             }, (e: VaultEntry) => e.id + '|' + (e.archived ? 'a' : 'n') + '|' + String(e.expiresMs))
           }
           .width('100%')
@@ -4456,11 +4067,9 @@ export struct LauncherHome {
       }
       .width('100%')
       .layoutWeight(1)
-      /* ⭐ 与「按存档」/「按版本」那两个列表写成同一形状（那两处是对的，这里原来不是）：
-       * ⛔ 内层那句 `height('100%')` 让内容高度**恒等于视口** ⇒ 可滚动余量 0 ⇒ 列表滚不动；
-       *    而它在界面上看起来只是「列表就这么长」，能藏很久（用户 2026-10-03 报的就是它）。
-       * ⚠️ 去掉之后会露出第二个毛病：`Scroll.align` **默认居中**，条目少时会停在屏幕中间
-       *    ⇒ 所以必须补上 `TopStart`。**只改一行都不够** —— 这两件事互相遮丑。 */
+/* ⭐ 与「按存档」/「按版本」那两个列表写成同一形状：⛔ 内层那句 `height('100%')` 让内容高度**恒等于
+ * 视口** ⇒ 可滚动余量 0 ⇒ 列表滚不动（用户 2026-10-03 报的）。⚠️ 去掉之后会露出第二个毛病：
+ * `Scroll.align` **默认居中**，条目少时会停在屏幕中间 ⇒ 必须补上 `TopStart`。**只改一行都不够。** */
       .align(Alignment.TopStart)
       .scrollBar(BarState.Off)
 
@@ -4475,11 +4084,9 @@ export struct LauncherHome {
    * 回收站里条目的两种状态：到期清理 / 归档不清理）⇒ 不需要第二个窗。
    * ⚠️ 结构照抄「打开数据隔离」那个窗（同屏遮罩 + 卡片 + 点卡片不冒泡 + **点空白不关**）——
    * 手滑点空白就消失的确认框比没有更糟。⛔ 别照「关于 / 查看数据」那两个窗加「点外面也关」，它们只读。 */
-  /* ⭐⭐ 多选删除的确认框（2026-10-02）。形状是他指定的：「标题显示多个，超长改成 ...，**用户可以点击**，
-   * 出现一个小的提示窗展示**所有选中的存档（包括来源于哪里）**」⇒ ① 标题写出**有几个**；② 名字超长截成
-   * `...`；③ 可点，点开小名单、每条带**来源**。⚠️ 名单**默认收起**且**放在这个窗里面**而不是再弹一层
-   * （两层弹窗叠在一起时返回键该关哪一层会变成问题）。⛔ 没有「逐条选择保留方式」那一套 —— 一批就是一次
-   * 决定，保留期用全局那个。⚠️ 结构照抄 `DeleteAskDialog`（同屏遮罩 + 卡片 + 点卡片不冒泡 + **点空白不关**）。 */
+/* ⭐⭐ 多选删除的确认框（2026-10-02）。形状是他指定的：① 标题写出**有几个**；② 名字超长截成 `...`；
+ * ③ 可点，点开小名单、每条带**来源**。⚠️ 名单**默认收起**且**放在这个窗里面**（两层弹窗叠在一起时返回键
+ * 该关哪一层会变成问题）。⛔ 没有「逐条选保留方式」那一套 —— 一批就是一次决定，保留期用全局那个。 */
   @Builder
   MultiDeleteAskDialog() {
     Column() {
@@ -4546,11 +4153,9 @@ export struct LauncherHome {
          *   ⚠️ 那个按钮本体也是**共用同一个 `@Builder`**，不是各写一份。 */
         this.PermanentDeleteButton()
 
-        /* ⚠️ 两个按钮**必须真的等宽**。⚠️ 空隙用 `Row({ space: 8 })`，⛔ **不要**改成
-         *    「给第二个按钮加 `margin.left`」—— 边距挂在其中一个孩子身上时，两个 `layoutWeight(1)`
-         *    分到的宽度就**不再必然相等**（取决于框架把那段 margin 算进哪一边）。
-         *    ⭐ 那正是用户 2026-10-05 看到「回收好像比归档宽一点」的来源 —— **不是视错觉，是源码里真有的不对称**。
-         *    现在两个按钮结构上一模一样，只有 handler 不同。⛔ 别再改回去。 */
+/* ⚠️ 两个按钮**必须真的等宽**。⚠️ 空隙用 `Row({ space: 8 })`，⛔ **不要**改成「给第二个按钮加
+ * `margin.left`」—— 边距挂在其中一个孩子身上时，两个 `layoutWeight(1)` 分到的宽度就**不再必然相等**。
+ * ⭐ 那正是用户 2026-10-05 看到「回收好像比归档宽一点」的来源 —— 不是视错觉，是源码里真有的不对称。 */
         Row({ space: 8 }) {
           Button('回收')
             .fontSize(15)
@@ -4590,23 +4195,18 @@ export struct LauncherHome {
     .width('100%').height('100%')
     .backgroundColor('#80000000')
     .justifyContent(FlexAlign.Center)
-    /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
-     * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
-     * ⚠️ 四边的 32 是**卡片自己的**边距（原本就有，只作用在左右），与避让无关，所以两者相加而不是覆盖。
-     * ⚠️ 避让为 0 时这里与从前**逐像素相同**。 */
+    /* ⭐ 异形屏避让：遮罩要铺满（背景全屏），卡片落在避让区里 —— 加在遮罩的 padding 上而非外层 Stack
+     * （理由见 Navigation 那处）。⚠️ 那 32 是卡片自己的边距，与避让无关，两者相加；避让为 0 时逐像素同从前。 */
     .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
                top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
     /* 整层淡入（遮罩 + 卡片一起）。 */
     .transition(enterFade())
   }
 
-  /** 清空回收站的二次确认。
-   *
-   * ⭐ 与 `DeleteAskDialog` 的写法**不同**，而且这里是有意的：那个窗把区别写在**按钮标签**上就够
-   * （「放进回收站」vs「归档」是两种去向）；而这里**没有第二种去向可选** ——
-   * 玩家唯一需要知道的是**它不可撤销**，那只能写成一句话。
-   * ⚠️ 那句话不能省：「删到回收站」这一整套设计一直在告诉玩家「删了还能找回」，
-   * 所以「这一次找不回」必须由界面主动说，⛔ 不能指望他自己推断出来。 */
+/** 清空回收站的二次确认。
+ * ⭐ 与 `DeleteAskDialog` 写法**不同**：那个窗把区别写在**按钮标签**上就够；而这里**没有第二种去向可选**
+ * —— 玩家唯一需要知道的是**它不可撤销**，只能写成一句话。
+ * ⚠️ 那句话不能省：「删到回收站」整套设计一直说「删了还能找回」，所以「这一次找不回」必须主动说。 */
   @Builder
   VaultClearAskDialog() {
     Column() {
@@ -4661,24 +4261,13 @@ export struct LauncherHome {
     .transition(enterFade())
   }
 
-  /* 「删除这个版本」的确认窗。
-   * ⭐ 取舍与 `DeleteAskDialog` 同一条：把**代价写进按钮标签**，而不是在按钮上面写一段说明 ——
-   * 玩家应当看一眼按钮就知道自己在选什么。
-   * ⚠️ 但有一件事没法塞进标签：**共用数据**（还有别的版本在读）和**唯一那份未隔离数据**，
-   * 那两个必须单独说，因为按下去损的不止是刚选的那个版本。 */
-  /* 左滑露出的那一块。
-   *
-   * ⭐⭐ **只画一个图标，不画底色** —— 这一条同时解掉两个问题：
-   *   ① 露出区的**尺寸就是 `builder` 内容的尺寸**（`actionAreaDistance` 是「滑多远才触发
-   *      `onAction`」的阈值，**不是**色块大小，别被名字骗了）。做成整块底色的话，那块矩形
-   *      比列表项高、又没有圆角 ⇒ 拉出来时**卡片右下角那个圆角就被盖掉了**。
-   *   ② 露出区自己**没有背景**，所以唯一画出来的东西就是这里的内容。
-   *      ⇒ 内容是圆的 ⇒ 圆角问题从根上不存在，⛔ 不需要去和框架较劲。
-   *
-   * ⚠️ 外层 `Row` 只负责给一个**够大的点击区域**（图标本身 26fp 小于 48vp 的最小触控目标），
-   *    它自己不画任何东西；真正被看见的只有里面那个符号。
-   * ⛔ `onAction`（滑到底自动触发）仍然不给 —— 「滑到底」顺手就能做出来，让它直接弹确认窗太容易误触。
-   * ⚠️ 以后要加编辑、重命名之类，每个动作各占一个这样的小图标，**挤在一起要留出间距**。 */
+/* 「删除这个版本」的确认窗。⭐ 取舍与 `DeleteAskDialog` 同一条：把**代价写进按钮标签**。
+ * ⚠️ 但有一件事没法塞进标签：**共用数据**（还有别的版本在读）和**唯一那份未隔离数据** ——
+ * 那两个必须单独说，因为按下去损的不止是刚选的那个版本。 */
+/* 左滑露出的那一块。
+ * ⭐⭐ **只画一个图标，不画底色**：① 露出区的**尺寸就是 `builder` 内容的尺寸**（`actionAreaDistance`
+ * 是触发阈值，**不是**色块大小），做成整块底色的话那块矩形比列表项高、又没圆角 ⇒ **卡片右下角圆角被盖掉**；
+ * ② 内容圆的 ⇒ 圆角问题从根上不存在。⛔ `onAction` 仍不给（滑到底太容易误触）。 */
   @Builder
   SwipeDeleteAction(g: GameJar) {
     Row() {
@@ -4693,26 +4282,18 @@ export struct LauncherHome {
   }
 
 
-  /** 询问窗里那段话：说清**往哪切**、**现在有多少东西**、**复制是搬运还是抄一份**。 */
-  /* ⛔ 这里原来有一个 `storageSwitchLine()`，拼那段说明文字（往哪切 / 有多少存档 / 两个选项
-   * 各对旧那份做什么）。**用户 2026-10-04 要求整段去掉，函数删了。**
-   * ⚠️ 它顺带丢掉了三件事，都记在这儿，将来要加回来知道该加什么：
-   *    ① 目标位置是「下载」里的应用文件夹（`data` 子目录）；
-   *    ② 这份数据里有多少存档 / 模组 / 蓝图（`countsOf()`）；
-   *    ③ **「移动会把旧那份删掉」** —— 这一条最要紧：它是玩家**唯一**可能在事后去旧位置
-   *       找一个已经不在了的东西的情形。⛔ 要加回来时**别再用 `**` 写粗体**，
-   *       `Text()` 不认 markdown、会原样显示两个星号（那次就是这么被发现的）。 */
+/* ⛔ 这里原来有一个 `storageSwitchLine()`，拼那段说明文字。**用户 2026-10-04 要求整段去掉，函数删了。**
+ * ⚠️ 它顺带丢掉了三件事，记在这儿：① 目标位置是「下载」里的应用文件夹；② 这份数据里有多少存档/模组/
+ * 蓝图（`countsOf()`）；③ **「移动会把旧那份删掉」**。⛔ 要加回来时**别再用 `**` 写粗体** ——
+ * `Text()` 不认 markdown、会原样显示两个星号。 */
 
   @Builder
   GameDeleteAskDialog() {
     Column() {
       Column() {
-        /* ⭐ 标题两行（用户 2026-10-04 给的形状）：
-         *   第一行 = **「永久删除」**，用危险色 —— 它说明【动作的性质】；
-         *   第二行 = **具体哪个文件** —— 它说明【对象】。
-         * ⛔ 原来是一行「删除「160.5（文件名）」」：既没说清是永久删除，又把两件事挤在一起。
-         * ⚠️ 第二行用文件名而不是版本号为主：同一版本号可能有好几个 jar，
-         *    而玩家要确认的正是"删的是哪一个文件"。 */
+/* ⭐ 标题两行（用户 2026-10-04）：第一行 = **「永久删除」**（危险色，说明【动作的性质】）；
+ * 第二行 = **具体哪个文件**（说明【对象】）。⛔ 原来是一行「删除「160.5（文件名）」」，既没说清是永久删除，
+ * 又把两件事挤在一起。⚠️ 第二行用文件名而不是版本号：同一版本号可能有好几个 jar。 */
         Text('永久删除')
           .fontSize(17).fontColor($r('app.color.danger'))
           .width('100%').textAlign(TextAlign.Center)
@@ -4790,12 +4371,9 @@ export struct LauncherHome {
           .fontSize(17).fontColor($r('sys.color.font_primary'))
           .width('100%').textAlign(TextAlign.Center)
 
-        /* ⛔ 说明文字**只在按钮下面那一行小字里**（用户 2026-10-05 定的位置与措辞）。
-         *    ⛔ 不在按钮**上面**写一段解释（2026-10-02 的判据：区别写进按钮标签，
-         *    玩家不用「先读上面、再看下面」才知道自己在选什么）—— 这条仍然成立。
-         * ⭐ 三个去向**并排在同一行**：它们要能被**比较着**选 ——
-         *    `永久删除`（不可撤销）／`回收`（进回收站，到期自动清理）／`归档`（进回收站，不自动清理）。
-         * ⛔ **别把「永久删除」藏进二级菜单**：它是三个里唯一找不回来的，必须与另两个同时可见。 */
+/* ⛔ 说明文字**只在按钮下面那一行小字里**（用户 2026-10-05 定的位置与措辞）；⛔ 不在按钮**上面**写一段解释。
+ * ⭐ 三个去向**并排在同一行**：它们要能被**比较着**选 —— `永久删除`（不可撤销）／`回收`／`归档`。
+ * ⛔ **别把「永久删除」藏进二级菜单**：它是三个里唯一找不回来的，必须与另两个同时可见。 */
         Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
 
         /* ① 永久删除 —— **独占一行**。⛔ 不能与另两个挤在同一行：三个平分的宽度装不下
@@ -4847,10 +4425,8 @@ export struct LauncherHome {
     .width('100%').height('100%')
     .backgroundColor('#80000000')
     .justifyContent(FlexAlign.Center)
-    /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
-     * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
-     * ⚠️ 四边的 32 是**卡片自己的**边距（原本就有，只作用在左右），与避让无关，所以两者相加而不是覆盖。
-     * ⚠️ 避让为 0 时这里与从前**逐像素相同**。 */
+    /* ⭐ 异形屏避让：遮罩要铺满（背景全屏），卡片落在避让区里 —— 加在遮罩的 padding 上而非外层 Stack
+     * （理由见 Navigation 那处）。⚠️ 那 32 是卡片自己的边距，与避让无关，两者相加；避让为 0 时逐像素同从前。 */
     .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
                top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
     /* 整层淡入（遮罩 + 卡片一起）。 */
@@ -4868,25 +4444,10 @@ export struct LauncherHome {
     return '/data/storage/el2/base/files/.temp/datapack';
   }
 
-  /** 本应用在 Downloads 里的数据根 —— **就是那个【包名】文件夹本身**。
-   *
-   * ⭐⭐ **必须用包名，不能自己起名字。** 这条是从参考项目 AMCL 那儿学来的、也是本项目
-   *     写在 README 致谢里的一条：**文件夹用【包名】命名，系统才认作本应用的
-   *     （「所有权式访问」），跨重启有效**；自取的名字（它早期用的 `AMCL`）系统认不出来。
-   * ⛔ 我第一版正是踩了这个坑：拿**显示名**建了个新顶层文件夹 `Download/MindustryArk`
-   *     ⇒ 建不出来 ⇒ 导出直接失败（用户 2026-10-03 当场报）。**「Mindustry Ark」是
-   *     玩家看到的名字，不是磁盘上的名字。**
-   *
-   * ⭐ 布局（用户 2026-10-03 定）—— 与 `games/` **并列**、⛔不塞进它里面：
-   *     ```
-   *     <Download>/<包名>/games/     游戏 jar（模组那边建立的，游戏自带浏览器打开它）
-   *     <Download>/<包名>/exports/   导出的数据包      ← 本次新增
-   *     <Download>/<包名>/backups/   覆盖导入前的备份  ← 本次新增
-   *     ```
-   *
-   * ⚠️ 直接就用 `externalRootPath()` 那个值（平台报给我们、且**探针实测能写**的那个），
-   *    不自己拼 Download 的绝对路径 —— 设备之间不一样。
-   * ⚠️ 拿不到时返回 `''`，调用方要**如实说明**落在了哪，不要静默换地方。 */
+/** 本应用在 Downloads 里的数据根 —— **就是那个【包名】文件夹本身**。
+ * ⭐⭐ **必须用包名，不能自己起名字**（AMCL 那条）：**文件夹用【包名】命名，系统才认作本应用的**
+ * （所有权式访问、跨重启有效）；⛔ 第一版拿**显示名**建 `Download/MindustryArk` ⇒ 建不出来、导出直接失败。
+ * ⭐ 布局与 `games/` **并列**：`<Download>/<包名>/{games,exports,backups}`。⚠️ 拿不到时返回 `''`。 */
   private packRoot(): string {
     const base: string = externalRootPath(this.filesDir);
     if (base === '') {
@@ -4907,13 +4468,10 @@ export struct LauncherHome {
     return ensureDir(dir) ? dir : '';
   }
 
-  /** 覆盖导入前的自动备份放哪。
-   *
-   * ⛔⛔ **不能放在沙箱里** —— 我第一版放在 `.temp/datapack/`，用户当场问
-   *     「存沙箱我没看到怎么恢复啊」。**一个恢复不了的备份等于没有备份**，
-   *     而且它还会让人以为有退路。
-   * ⭐ 现在放用户可见的 `MindustryArk/backups/`：拷得出来，
-   *    而**恢复的方式就是「导入数据」再选它一遍** —— 不需要任何新的恢复 UI。 */
+/** 覆盖导入前的自动备份放哪。
+ * ⛔⛔ **不能放在沙箱里** —— 第一版放在 `.temp/datapack/`，用户当场问「存沙箱我没看到怎么恢复啊」。
+ * **一个恢复不了的备份等于没有备份**，而且会让人以为有退路。
+ * ⭐ 放用户可见的 `backups/`：拷得出来，恢复方式就是「导入数据」再选它一遍 —— 不需要新 UI。 */
   private backupsDir(): string {
     const root: string = this.packRoot();
     if (root === '') {
@@ -4980,12 +4538,10 @@ export struct LauncherHome {
     this.importRoot = root;
     this.importNote = countPackable(root);
     this.importMsg = '';
-    /* ⛔ **每次打开都把勾选清空。** 2026-10-05 审查查出：原来只有「导入成功收尾」和
-     *    「全不选」会清 `importPicked`，而「取消」不清 ⇒ 取消一次再导入时，
-     *    上一次勾的**覆盖目标还是勾着的** —— 而导入是「覆盖 / 新建」语义
-     *    （有数据就先整包备到回收站再覆盖），所以这是一条**误覆盖**的路。
-     * ⭐ 判据：一个「上次留下的选择」在新一轮里出现，而新一轮的第一步就是让玩家确认它 ——
-     *    那种默认值必须清掉，否则玩家会以为那是他自己这次选的。 */
+/* ⛔ **每次打开都把勾选清空。** 2026-10-05 审查查出：原来只有「导入成功收尾」和「全不选」清 `importPicked`，
+ * 而「取消」不清 ⇒ 取消一次再导入时，上一次勾的**覆盖目标还是勾着的** —— 而导入是「覆盖 / 新建」语义
+ * （有数据就先整包备到回收站再覆盖）⇒ 这是一条**误覆盖**的路。
+ * ⭐ 判据：一个「上次留下的选择」在新一轮里出现，而新一轮第一步就是让玩家确认它 —— 那种默认值必须清掉。 */
     this.importPicked = [];
     /* ⭐ 那三行原语在这里算一次（理由见 `importLiveDir` 的声明）—— 唯一打开这个框的地方。 */
     const live: VersionEntry = this.liveImportTarget();
@@ -5040,13 +4596,10 @@ export struct LauncherHome {
     out.done += 1;
   }
 
-  /** 确认之后：把暂存里的数据逐个落到**每一个**勾中的目标。
-   *
-   * ⭐ 用户 2026-10-03 定的形状是「**多选 + 确认**」。所以这里先关窗、再干活 ——
-   *    从这一刻起不再需要玩家输入，窗留着只会挡住进度提示。
-   * ⛔⛔ 原来的 `applyImportTo` 有**四条出路、只有三条关窗**（目标「没有数据」那条直连
-   *    `copyImportInto`，而它从不碰 `importOpen`）⇒ 那条路上框一直开着，再点第二项就**又导入一次**。
-   *    用户报的「点完不关」就是它。 */
+/** 确认之后：把暂存里的数据逐个落到**每一个**勾中的目标。
+ * ⭐ 用户 2026-10-03 定的形状是「**多选 + 确认**」⇒ 先关窗、再干活（从这一刻起不再需要玩家输入）。
+ * ⛔⛔ 原来的 `applyImportTo` 有**四条出路、只有三条关窗**（目标「没有数据」那条直连 `copyImportInto`，
+ * 而它从不碰 `importOpen`）⇒ 那条路上框一直开着，再点第二项就**又导入一次**（用户报的「点完不关」）。 */
   private async confirmImport(): Promise<void> {
     const targets: VersionEntry[] = this.pickedTargets();
     if (targets.length === 0) {
@@ -5178,13 +4731,9 @@ export struct LauncherHome {
     else if (kind === 'toast') { this.importToast = text; }
     else { this.exportMsg = text; }
     setTimeout(() => {
-      /* ⛔⛔ **身份校验通过之后，只能清【自己那一个】字段。**
-       *    2026-10-05 审查查出：原来这里调的是 `closePackNotice()` —— 它把
-       *    `importMsg`/`exportMsg`/`importToast` **三个一起清**。于是「校验通过」这件事
-       *    只保证了「我这条还在」，却顺手把**别的种类**正在显示的新提示也抹掉了：
-       *    4 秒内先出一条导入提示、再出一条导出提示 ⇒ 导入那条的旧定时器到点时
-       *    `importMsg === text` 成立 ⇒ **把新的导出提示一起清掉**。
-       * ⭐ 判据：身份校验要**贯穿到副作用** —— 校验的是哪个字段，就只能动那个字段。 */
+/* ⛔⛔ **身份校验通过之后，只能清【自己那一个】字段。** 2026-10-05 审查查出：原来这里调
+ * `closePackNotice()`，它把三个字段**一起清** ⇒ 4 秒内先出导入提示、再出导出提示时，导入那条的旧定时器
+ * 到点会把**新的导出提示**一起抹掉。⭐ 身份校验要**贯穿到副作用** —— 校验哪个字段就只动那个字段。 */
       if (kind === 'import') {
         if (this.importMsg === text) { this.importMsg = ''; }
       } else if (kind === 'toast') {
@@ -5209,15 +4758,10 @@ export struct LauncherHome {
     const who: string = v.version === '' ? v.label : v.version;
     const outName: string = 'Mindustry-' + who + '-' + stampNow() + '.zip';
 
-    /* ⭐⭐ **直接写到我们自建的 `MindustryArk/exports/`，不弹 picker**（用户 2026-10-03 定）。
-     *    这样少一次交互，而且位置是**可预期的** —— 玩家看一遍提示就知道东西在哪，
-     *    下次不必再找。
-     * ⛔ 曾经用 `DocumentSaveOptions` + `pickerMode = DOWNLOAD`，踩过两个坑（都记在这里免得重走）：
-     *    ① 不给 `pickerMode` 就是 `DEFAULT(=0)` = **应用沙箱** ⇒ 玩家在文件管理器里根本找不到；
-     *    ② 给了 `DOWNLOAD` 之后，它返回的是**目录**不是文件
-     *       （SDK 原文：「The **directories** created in DOWNLOAD mode are used only to save files.」）
-     *       ⇒ 拿它当文件去写必然失败。
-     *    ⇒ 现在干脆不经 picker。⚠️ 若哪天要恢复「让玩家自己选位置」，必须按 ② 的语义写。 */
+/* ⭐⭐ **直接写到我们自建的 `MindustryArk/exports/`，不弹 picker**（用户 2026-10-03）。
+ * ⛔ 曾经用 `DocumentSaveOptions` + `pickerMode = DOWNLOAD`，踩过两个坑：① 不给 `pickerMode` 就是
+ * `DEFAULT(=0)` = **应用沙箱**，玩家找不到；② 给了 `DOWNLOAD` 之后它返回的是**目录**不是文件
+ * （SDK 原文：directories … used only to save files）。⚠️ 若哪天要恢复「让玩家自己选位置」，必须按 ② 的语义写。 */
     const dir: string = this.exportsDir();
     if (dir === '') {
       /* ⚠️ 拿不到用户可见位置时**如实说**，不要默默丢进沙箱（那等于玩家拿不到）。
@@ -5231,13 +4775,10 @@ export struct LauncherHome {
     const wErr: string = await copyLocalFile(zip, outPath);
     this.showNotice(wErr === '' ? '已导出：' + outPath : wErr, 'export');
   }
-  /** 一个**永远存在**的导入目标：未隔离的那一份数据目录。
-   *
-   * ⭐⭐ 为什么需要它（用户 2026-10-03）：「单纯导入存档，**即便没有任何版本**」——
-   *    他打算拆出一个**管理工具**形态的包（手机上不装游戏）。那种形态下 `versions` 是空的，
-   *    而导入对话框若只列版本 ⇒ **导入功能直接死掉**。
-   * ⚠️ 这份目录就是隔离关着时所有版本共用的那个（`liveGameDataDir()`），
-   *    它在没有任何 jar 的时候**照样存在** —— 游戏数据与游戏本体是两回事。 */
+/** 一个**永远存在**的导入目标：未隔离的那一份数据目录。
+ * ⭐⭐ 为什么需要它（用户 2026-10-03）：「单纯导入存档，**即便没有任何版本**」—— 他打算拆出一个**管理工具**
+ * 形态的包，那时 `versions` 是空的，而对话框若只列版本 ⇒ **导入功能直接死掉**。
+ * ⚠️ 这份目录就是隔离关着时所有版本共用的那个，它在没有任何 jar 的时候**照样存在**。 */
   private liveImportTarget(): VersionEntry {
     const dir: string = liveGameDataDir();
     const c: GameDataCounts = countsOf(dir);
@@ -5472,12 +5013,10 @@ export struct LauncherHome {
       } else {
         /* ===================== 列表（含宽屏的右侧面板）===================== */
         Column() {
-          /* 视图切换：按存档 / 按版本。⭐ **它就是这一屏的标题**（2026-10-02 定的）—— 原来这里写着
-           * 一行 `Text('存档')`、分段控件摆在**右边**，用户指出该在**左边**、且 `存档` 与 `按存档`
-           * **语义重复** ⇒ 标题整个撤掉，由分段控件顶上。
-           * ⚠️ 形状**照抄设置页那组粒度选择**（一排 `Text` ＋ 切底色），⛔ 不新造组件（这类自带主题的
-           * 组件本项目为它付过代价：`stateStyles` 编译期崩、HdsTabs 的 UI Design Kit 只在中国境内）。
-           * ⚠️ 未选中的底色是 `launcher_bg`（不是 `launcher_card` —— 后者与页面底色同色 ⇒ **完全看不见**）。 */
+/* 视图切换：按存档 / 按版本。⭐ **它就是这一屏的标题**（2026-10-02）—— 原来这里写着一行
+ * `Text('存档')`、分段控件摆在**右边**，而 `存档` 与 `按存档` **语义重复** ⇒ 标题整个撤掉。
+ * ⚠️ 形状**照抄设置页那组粒度选择**，⛔ 不新造组件。⚠️ 未选中的底色是 `launcher_bg`（`launcher_card`
+ * 与页面底色同色 ⇒ **完全看不见**）。 */
           Row() {
             Text('按存档')
               .fontSize(13)
@@ -5544,15 +5083,10 @@ export struct LauncherHome {
             .margin({ top: 8 })
             .copyOption(CopyOptions.LocalDevice)
 
-          /* 多选那条，以及上一次多选删除的结果。⛔ 结果只说一句就走 —— 它是提示，不是门。
-           * ⛔⛔ **必须限定在「按存档」视图**（2026-10-05 修，两个独立审查员确认过）：
-           *    本段在 `SavesTab` 里、**不分视图**，而 `VersionDataPanel` 里**另有一条同样的**
-           *    `MultiBar`（那一屏的注释写着它存在的理由是 2026-10-02 的「右边的选择存档删除页
-           *    应该能长按多选」）。宽屏时两块**同时可见** ⇒ 屏幕上出现两条一模一样的
-           *    「已选 N 项 · 删除/复制/移动/取消」，同义同帧 —— 正是本项目明令的
-           *    「两个意思不同的同名按钮并存」的近亲（这里是**同义**重复，但一样让人以为点错了）。
-           * ⚠️ 反过来删 `VersionDataPanel` 那条是**错的**：**窄屏**的按版本子页不渲染页头，
-           *    删了那边窄屏用户就没有工具栏了。 */
+/* 多选那条，以及上一次多选删除的结果。⛔⛔ **必须限定在「按存档」视图**（2026-10-05 修）：
+ * `VersionDataPanel` 里**另有一条同样的** `MultiBar`（那是 2026-10-02「右边的选择存档删除页应该能长按
+ * 多选」的落点），宽屏时两块**同时可见** ⇒ 屏幕上出现两条一模一样的「已选 N 项」。
+ * ⚠️ 反过来删 `VersionDataPanel` 那条是**错的**：**窄屏**的按版本子页不渲染页头，删了就没工具栏了。 */
           if (this.multiMode && this.savesView === SAVES_VIEW_SAVE) {
             this.MultiBar()
           }
@@ -5614,11 +5148,10 @@ export struct LauncherHome {
                     .fontSize(12).fontColor($r('sys.color.font_tertiary'))
                     .margin({ top: 8 })
                 } else {
-                  /* ⭐⭐ 一屏列出**所有版本**的存档，按「共用同一份数据的版本」分组（2026-10-02 要的形状是
-                   * 「A版本→B版本」排下去、小字和详情标注属于哪（几个）版本）。⛔ 原来只列**当前版本**那一个
-                   * 目录 ⇒ 开了隔离后别的版本的存档**完全看不见**，而当前那个目录还没建出来时屏幕会写
-                   * 「没有存档」—— 玩家看到的是「我的存档全都不见了」，尽管几十上百个存档都还在盘上。
-                   * ⚠️ 分组键是**目录**而不是版本（见 buildSaveGroups）：隔离关着时只有一组。 */
+/* ⭐⭐ 一屏列出**所有版本**的存档，按「共用同一份数据的版本」分组。⛔ 原来只列**当前版本**那一个目录
+ * ⇒ 开了隔离后别的版本的存档**完全看不见**，而当前那个目录还没建出来时屏幕会写「没有存档」——
+ * 玩家看到的是「我的存档全都不见了」，尽管几十上百个存档都还在盘上。
+ * ⚠️ 分组键是**目录**而不是版本（见 buildSaveGroups）：隔离关着时只有一组。 */
                   /* ⭐⭐ 「当前版本那一档是空的」在**存档页**也要有出口 —— 玩家来找存档时就是在这儿看见
                    * 「空」的。⚠️ 放在列表**顶上**而不是塞进那一组里：这个状态意味着当前版本那一组本身是空的，
                    * 把按钮放进一个空组里玩家会以为它只对那一组有效。 */
@@ -5689,37 +5222,27 @@ export struct LauncherHome {
               .width('100%')
               .padding({ left: 16, right: 8, top: 12 })
             }
-            /* ⛔ **这一行 `height('100%')` 必须没有** —— 它是 2026-10-02 报的「我只能看到头两个，
-             * 后面的看不到（列表是固定死的）」的唯一原因。
-             * ⭐ `Scroll` 的直接子节点写 `height('100%')` ⇒ 高度**等于视口** ⇒ 内容再高也是
-             * 「和视口一样高」⇒ `Scroll` **可滚动的余量是 0**、多出来的被裁掉。⚠️ 界面上看起来就像
-             * 「列表只有这么长」，而不是「滚不动」—— 所以它一直没被发现。
-             * ⚠️ 它当初是治「列表竖直居中」的（Row 交叉轴默认 `VerticalAlign.Center`）；正确解法是
-             * **不要那个高度**：Row 变成内容高 ⇒ 没有多余空间 ⇒ 居中无从发生、滚动照常。
-             * ⛔ 别再把 height 加回来「以防万一」。 */
+/* ⛔ **这一行 `height('100%')` 必须没有** —— 它是 2026-10-02 报的「我只能看到头两个，后面的看不到」的
+ * 唯一原因。⭐ `Scroll` 的直接子节点写 `height('100%')` ⇒ 高度**等于视口** ⇒ 可滚动余量 0、多出的被裁掉。
+ * ⚠️ 界面看起来就像「列表只有这么长」，而不是「滚不动」—— 所以一直没被发现。
+ * ⛔ 它当初是治「列表竖直居中」的；正确解法是**不要那个高度**。别再加回来「以防万一」。 */
             .width('100%')
             .justifyContent(FlexAlign.Start)
             .alignItems(VerticalAlign.Top)
           }
           .layoutWeight(3)
           .height('100%')
-          /* ⛔ **必须有这一行，否则内容短的时候会被竖直居中。**
-           * ⭐ `Scroll` 的 `align` **默认是 `Alignment.Center`** —— 内容比视口矮时它就把内容摆在
-           * 中间。2026-10-02 报的「按版本，左边列表居中了，应该置顶」就是它。
-           * ⚠️ 以前看不出来：那时内层 Row 带着 `height('100%')`、**永远和视口一样高** ⇒ 没有「多余
-           * 空间」可居中；而那一行正是让存档列表**滚不动**的原因。
-           * ⇒ ⭐ 同一个布局缺了两个属性，各自遮住了对方的毛病：去掉 height 暴露了居中，补上 align
-           * 才两件都平。⛔ 别只改一个（`height('100%')` 与 `.align(Alignment.TopStart)` **缺一不可**）。 */
+/* ⛔ **必须有这一行，否则内容短的时候会被竖直居中。** ⭐ `Scroll` 的 `align` **默认是 `Alignment.Center`**
+ * —— 2026-10-02 报的「按版本，左边列表居中了，应该置顶」就是它。⚠️ 以前看不出来：那时内层 Row 带着
+ * `height('100%')`、永远和视口一样高；而那一行正是让存档列表**滚不动**的原因。
+ * ⇒ 同一个布局缺了两个属性，各自遮住了对方的毛病。⛔ `height('100%')` 与 `.align(TopStart)` **缺一不可**。 */
           .align(Alignment.TopStart)
           .scrollBar(BarState.Off)
 
-          /* ⚠️ 窄屏时**不渲染右侧面板**（那时它是子页，见上面那个分支），否则手机上 100% 宽度里再切
-           * 两栏、每栏只剩一百多 vp。
-           * ⛔ **这一层 `Column().layoutWeight(7)` 是必需的。** 面板的根节点写的是 `width('100%')` 而
-           * **没有权重** ⇒ 直接放进 Row 里会要求**整行**宽度，于是左边那个 `layoutWeight(3)` 的 `Scroll`
-           * 被挤成 0 宽 —— ⭐ **症状就是「从左边选的列表直接没了」**。
-           * ⇒ 权重必须加在**调用点**，不能加在面板里（面板在手机子页包在 `layoutWeight(1)` 里，若它自己
-           * 再带一个，两层权重叠在一起会算错比例）。⚠️ 3 : 7 与注释一致。 */
+/* ⚠️ 窄屏时**不渲染右侧面板**（那时它是子页），否则手机上 100% 宽度里再切两栏、每栏只剩一百多 vp。
+ * ⛔ **这一层 `Column().layoutWeight(7)` 是必需的。** 面板根节点写的是 `width('100%')` 而**没有权重**
+ * ⇒ 直接放进 Row 会要求**整行**宽度，于是左边 `layoutWeight(3)` 的 `Scroll` 被挤成 0 宽 —— **症状就是
+ * 「从左边选的列表直接没了」**。⇒ 权重必须加在**调用点**，不能加在面板里。 */
           if (!this.isNarrow()) {
             Column() {
               if (this.savesView === SAVES_VIEW_VERSION) {
@@ -5747,13 +5270,10 @@ export struct LauncherHome {
     .alignItems(HorizontalAlign.Start)
   }
 
-  /* 设置页。2026-10-02 改成**全宽 + 卡片**（参考 AMCL 的设置页）。从那边的形态里取了三样**结构**上的
-   * 东西，⛔ 不是照抄它的配色/图标体系：① **整片铺满**（左右各留 20，原来是一条 30% 的窄栏）；
-   * ② **圆角卡片分组**（`launcher_card` + `CARD_RADIUS_VP` + 内边距 16，组间用留白分开而不是靠一堆
-   * `top: 28` 硬撑）；③ **组标题在卡片外面** —— 读者才知道它是**这一组的名字**。⚠️ 我们**没有**取它的
-   * 「每节点进去是子页」那套（这一页只有四组、六项设置，再套一层只会让人多点一次）。
-   * ⚠️ 外面套 `Scroll` 是新加的：原来裸 `Column` + `Blank()` 在平板上刚好放得下，但卡片式总高变大、
-   * 而手机上可用高度只有 800 上下 ⇒ 不滚会被裁掉，且裁掉的正好是最后一组「关于」。⛔ `Blank()` 一并去掉。 */
+/* 设置页。2026-10-02 改成**全宽 + 卡片**（参考 AMCL）。从那边取了三样**结构**上的东西：① **整片铺满**；
+ * ② **圆角卡片分组**；③ **组标题在卡片外面**。⚠️ 我们**没有**取它的「每节点进去是子页」那套。
+ * ⚠️ 外面套 `Scroll` 是新加的：卡片式总高变大，手机上不滚会被裁掉，而裁掉的正好是最后一组「关于」。
+ * ⛔ `Blank()` 一并去掉。 */
   @Builder
   SettingsTab() {
     Scroll() {
@@ -5777,11 +5297,10 @@ export struct LauncherHome {
           Divider().strokeWidth(1).color($r('app.color.launcher_border'))
             .margin({ top: 14, bottom: 14 })
 
-          /* 「本次启动将加载」与「重新扫描」**同一行**（2026-10-02：「设置那里的重新扫描太宽了，这个
-           * 按钮最好和解释说明的字在同一行」）。⚠️ 原来「三行说明 + 一个 `width('100%')` 的按钮」上下排：
-           * 按钮拉满整张卡片那么宽而它只有四个字 ⇒ 说明一栏 `layoutWeight(1)` 吃掉剩余宽度、按钮按内容自适应。
-           * ⚠️ 字号【要给】：不给的话按钮按标签长度自适应时会**缩放字号**（就是「两个按钮字体大小不一样」的成因）。
-           * ⚠️ 对齐用 `VerticalAlign.Top` 不是 Center：说明三行、按钮一行，居中会让按钮浮在三行文字的**中间**。 */
+/* 「本次启动将加载」与「重新扫描」**同一行**（2026-10-02）。⚠️ 原来上下排：按钮拉满整张卡片那么宽而
+ * 它只有四个字 ⇒ 改成说明一栏 `layoutWeight(1)` 吃掉剩余宽度、按钮按内容自适应。
+ * ⚠️ 字号【要给】：不给的话按钮按标签长度自适应时会**缩放字号**（「两个按钮字体大小不一样」的成因）。
+ * ⚠️ 对齐用 `VerticalAlign.Top` 不是 Center：说明三行、按钮一行，居中会让按钮浮在文字**中间**。 */
           Row() {
             Column() {
               Text('本次启动将加载')
@@ -5818,17 +5337,10 @@ export struct LauncherHome {
           .fontSize(13).fontColor($r('sys.color.font_secondary'))
           .width('100%')
           .margin({ top: 20 })
-        /* --- 深色模式 --- */
-        /* ⭐ 两个开关（2026-10-04 用户：「开关深色模式 + 是否跟随系统深色模式」）。
-         *
-         * ⚠️⚠️ 第二个开关在「跟随系统」打开时**整行不渲染**（用户 2026-10-04 定的：
-         *    「跟随系统时：下面的自定义不显示；不跟随：再显示出来」）。
-         *    ⛔ 我第一版做的是**禁用**（理由是「隐藏会让卡片忽高忽低」）—— 那是**我**的顾虑，
-         *    不是他的要求，而且它有个实际坏处：一个灰着的控件仍然在问「你要不要点我」。
-         *    ⇒ 卡片高度会随开关变一行，这是**接受**的代价。
-         * ⛔ 两条**文字提示也删了**（同一句要求：「文字提示就不要了」）—— 「跟随系统深色模式」
-         *    和「深色模式」两个标签自己说完了，底下那行只是把标签重说一遍。
-         *    ⚠️ 别再加回来「界面用深色 / 由系统决定」之类 —— 那正是被删掉的东西。 */
+/* ⭐ 两个开关（2026-10-04 用户：「开关深色模式 + 是否跟随系统深色模式」）。
+ * ⚠️⚠️ 第二个开关在「跟随系统」打开时**整行不渲染**（用户 2026-10-04 定：跟随系统时下面的自定义不显示）。
+ * ⛔ 我第一版做的是**禁用** —— 那是我自己的顾虑，而且一个灰着的控件仍然在问「你要不要点我」。
+ * ⛔ 两条**文字提示也删了** —— 两个标签自己说完了。⚠️ 别再加回来。 */
         Column() {
           Row() {
             Text('跟随系统深色模式')
@@ -5906,12 +5418,10 @@ export struct LauncherHome {
               })
           }
           .width('100%')
-          /* ⛔ **不能用 `if` 来做这个显隐**。原因是动画而非风格：
-           *    `if` 会把节点整棵建/拆，而 `animateTo` 是在**两帧之间插值** —— 节点刚建出来时没有
-           *    上一帧，高度就从 0 直接跳到目标值，看着还是瞬移。
-           * ⇒ 让它**一直留在树里**，只改高度：`0`（收起）⇄ `SAFE_REVEAL_VP`（展开）。
-           * ⭐ 这也顺带做对了「上下出入」的手感：收回是往上收，不是原地淡出。
-           * ⛔ 开关本身**必须**一直在 —— 它是这一段唯一的出入口。 */
+/* ⛔ **不能用 `if` 来做这个显隐**。原因是动画而非风格：`if` 会把节点整棵建/拆，而 `animateTo` 是在
+ * **两帧之间插值** —— 节点刚建出来时没有上一帧，高度就从 0 直接跳到目标值。
+ * ⇒ 让它**一直留在树里**，只改高度：`0`（收起）⇄ `SAFE_REVEAL_VP`（展开）。
+ * ⛔ 开关本身**必须**一直在 —— 它是这一段唯一的出入口。 */
           Column() {
             Slider({
               value: this.safeVp,
@@ -5928,12 +5438,9 @@ export struct LauncherHome {
                  * 而这是一块闪存。`Moving` 时只改内存里的值，界面照常实时预览。 */
                 const end: boolean = (mode === SliderChangeMode.End
                                       || mode === SliderChangeMode.Click);
-                /* ⛔⛔ 这个守卫【不能】把 `end` 那次也挡掉 —— 它挡掉过一次，代价是**手动值永远存不下来**：
-                 *      拖动时 `Moving` 已经把 safeAuto 置 false、safeVp 跟到终点，于是 `End` 那一刻
-                 *      `nv === safeVp && !safeAuto` 成立 ⇒ 直接 return ⇒ `writeSafePref` 一次都没执行。
-                 *      内存里是对的（界面看着正常），文件里还是旧值，重启就回去了。
-                 * ⭐ 「跳过没变化的更新」与「只在结束时写盘」是两条各自合理的规则，
-                 *    叠在一起时**后者成了前者的受害者**。⇒ 写盘那一路必须从守卫里豁免。 */
+/* ⛔⛔ 这个守卫【不能】把 `end` 那次也挡掉 —— 挡掉过一次，代价是**手动值永远存不下来**（拖动时 `Moving`
+ * 已把 safeAuto 置 false、safeVp 跟到终点，于是 `End` 那一刻 `nv === safeVp && !safeAuto` 成立 ⇒ return）。
+ * ⭐ 「跳过没变化的更新」与「只在结束时写盘」叠在一起时**后者成了前者的受害者** ⇒ 写盘那一路必须豁免。 */
                 if (nv === this.safeVp && !this.safeAuto && !end) {
                   return;
                 }
@@ -5951,11 +5458,10 @@ export struct LauncherHome {
           /* ⛔ 承重：不给 clip 的话，高度收到 0 时**内容还在画**，只是被容器框住而已。 */
           .clip(true)
         }
-        /* ⛔ 四边一样，且**与其它卡片同一个值**（16）。
-         *   我为了「滑条行高大」把这里改成过不对称的 top 14 / bottom 10 —— 那是错的：
-         *   ① 自动开着时滑条**不显示**，卡片里只剩一行标题+开关 ⇒ 上下就不对称了；
-         *   ② 而上下对称、且等于 16，才是这一页所有卡片共有的形状（用户 2026-10-03 两次指出）。
-         * ⭐ 滑条与上面那行之间的间隔归**滑条自己的 margin** 管，不是归卡片的内边距管。 */
+/* ⛔ 四边一样，且**与其它卡片同一个值**（16）。我为了「滑条行高大」改过不对称的 top 14 / bottom 10 ——
+ * 那是错的：① 自动开着时滑条**不显示**，卡片里只剩一行标题+开关 ⇒ 上下就不对称了；② 上下对称且等于 16
+ * 才是这一页所有卡片共有的形状（用户 2026-10-03 两次指出）。
+ * ⭐ 滑条与上面那行之间的间隔归**滑条自己的 margin** 管，不是归卡片的内边距管。 */
         .width('100%').padding(16)
         .backgroundColor($r('app.color.launcher_card'))
         .borderRadius(CARD_RADIUS_VP)
@@ -5973,16 +5479,13 @@ export struct LauncherHome {
             .fontSize(12).fontColor($r('sys.color.font_tertiary'))
             .margin({ top: 4 })
 
-          /* 四个写成**并列的一行**而不是下拉菜单：互斥的四选一，一眼看全比点开一层省事，而且「当前是
-           * 哪一档」不需要点开才看得见。⚠️ 下面那行说明是**必需**的：四档的差别（尤其中间两档）对玩家
-           * 不是自明的，而选错的代价是「换个版本就看不到存档了」。
-           * ⚠️ 未选中的底色从 `launcher_card` 改成 `launcher_bg`：卡片本身就是 `launcher_card`，两者同色
-           * 会让未选中的那三个**完全看不见**（不是「颜色不好看」，是「没画出来」）。 */
-          /* ⭐ **必须能换行。** 四个 chip 是定长的（各 12vp 内边距 + 三四个汉字），
-           * 手机默认档实测就已经贴边，系统字体一大就会把最后一个挤出屏幕外 ——
-           * 而这一行【不换行】的时候，溢出是**裁掉**，看起来像少了一个选项。
-           * ⚠️ 间距从「每个左边 8」改成「每个右边 8 + 下边 8」：换行之后，
-           *    第二行第一个若还带左间距，整行会比第一行缩进 8vp。 */
+/* 四个写成**并列的一行**而不是下拉菜单：互斥的四选一，一眼看全比点开一层省事。⚠️ 下面那行说明是**必需**
+ * 的：四档的差别（尤其中间两档）对玩家不是自明的，而选错的代价是「换个版本就看不到存档了」。
+ * ⚠️ 未选中的底色从 `launcher_card` 改成 `launcher_bg`：卡片本身就是 `launcher_card`，同色会让未选中的
+ * 那三个**完全看不见**（不是「颜色不好看」，是「没画出来」）。 */
+/* ⭐ **必须能换行。** 四个 chip 是定长的，手机默认档实测就已经贴边，系统字体一大就会把最后一个挤出屏幕外
+ * —— 而这一行【不换行】的时候，溢出是**裁掉**，看起来像少了一个选项。
+ * ⚠️ 间距从「每个左边 8」改成「每个右边 8 + 下边 8」：换行之后，第二行第一个若还带左间距，整行会比第一行缩进。 */
           Flex({ wrap: FlexWrap.Wrap }) {
             Text('不隔离')
               .fontSize(13)
@@ -6056,11 +5559,10 @@ export struct LauncherHome {
         .margin({ top: 8 })
 
         /* --- 存储位置 --- */
-        /* ⚠️ **第 1 步只展示，不提供切换**（2026-10-04）。先证明「意图」与「实际」能对上，
-         *    再让玩家能改它 —— 顺序反过来的话，一旦哪里对不上，你会同时面对
-         *    「开关是新的」和「数据落到别处」两个未知数。
-         * ⭐ 两行分开报，因为它们是**两件事**：意图是「你选的」，实际是「游戏上次真的用了哪个」。
-         *    只报一个数的时候，改完设置还没重启会看起来像「没生效」。 */
+          /* ⚠️ **第 1 步只展示，不提供切换**（2026-10-04）。先证明「意图」与「实际」能对上，再让玩家能改它 ——
+           * 顺序反过来的话，一旦哪里对不上，你会同时面对「开关是新的」和「数据落到别处」两个未知数。
+           * ⭐ 两行分开报，因为它们是**两件事**：意图是「你选的」，实际是「游戏上次真的用了哪个」。
+           * 只报一个数的时候，改完设置还没重启会看起来像「没生效」。 */
         Column() {
           Row() {
             Column() {
@@ -6076,22 +5578,13 @@ export struct LauncherHome {
             .layoutWeight(1)
 
             /* ⭐ 开关的「开」= 用外置。
-             *
-             * ⛔⛔ **`isOn` 绑的是一个独立的 `@State`，不是直接绑意图 —— 这是 2026-10-04 改的，
-             *    因为原来那种写法有个真 bug。** 那一版绑的是 `this.storageIntent === EXTERNAL`，
-             *    我以为「不动意图，开关自己就会弹回去」。**不会。**
-             *    `Toggle` 有自己的视觉状态，而 `isOn` **只在绑定表达式的值【发生变化时】才重新应用**；
-             *    意图没变 ⇒ 值没变 ⇒ 控件照样停在「开」。
-             *    ⇒ 用户看到的是：**点取消，开关还是开着的，而下面的文字仍写着「沙箱」**
-             *      （文字读的是意图，所以文字是对的 —— 两个不同步的东西并排显示，就是这么来的）。
-             * ⭐ 所以要有这个显式的控件状态 + `syncStorageToggle()`：任何**没有真正提交**的出口
-             *    （探针不过 / 取消 / 迁移失败）都要调它，把控件拉回意图那一档。
-             * ⛔ 别再改回「直接绑意图」那种写法，也别删掉那些 sync —— 删了就退回这个 bug。 */
+             * ⛔⛔ **`isOn` 绑的是一个独立的 `@State`，不是直接绑意图**（2026-10-04 改的，因为原写法有真 bug）：
+             * `Toggle` 有自己的视觉状态，而 `isOn` **只在绑定表达式的值【发生变化时】才重新应用** ⇒ 意图没变
+             * ⇒ 控件照样停在「开」（用户看到：**点取消，开关还是开着的，而下面的文字仍写着「沙箱」**）。 */
             /* ⭐ **搬移期间置灰、不给点**（用户 2026-10-04 要的防呆）。
-             * ⛔ `enabled(false)` 是承重的，不只是好看：没有它，搬移那一小段里玩家
-             *    再拨一次就**又发起一次搬移**，而那时源/目标的中间态正在被读写。
-             * ⚠️ 灰**要能被看见**，所以搬移不能在同一个事件回调里跑完 —— 见
-             *    `askStorageSwitch` 里那个 `setTimeout` 的说明。 */
+             * ⛔ `enabled(false)` 是承重的：没有它，搬移那一小段里玩家再拨一次就**又发起一次搬移**，而那时
+             * 源/目标的中间态正在被读写。⚠️ 灰**要能被看见**，所以搬移不能在同一个事件回调里跑完
+             * —— 见 `askStorageSwitch` 里那个 `setTimeout`。 */
             Toggle({ type: ToggleType.Switch, isOn: this.storageToggleOn })
               .enabled(!this.storageBusy)
               .onChange((on: boolean) => { this.askStorageSwitch(on); })
@@ -6106,14 +5599,9 @@ export struct LauncherHome {
           }
 
           /* ⛔ 这里原来还有一行「游戏上次启动用的是：…（需要重启才生效）」，**2026-10-04 删了**。
-           * 用户的理由：**切换时游戏进程肯定是关着的**。而这条比听上去更强 ——
-           * 启动器的设置页与游戏**不可能同时在跑**（同一个应用、同一个进程）⇒
-           * `usedUserHome()` 读到的永远来自**上一次**启动，**不存在活的冲突**，
-           * 所以「要重启才生效」是句废话。⭐ 它当年存在的理由是「界面上说的和实际用的会分叉」，
-           * 而那个分叉在这个功能里**构造上不可能出现**。
-           * ⚠️ `usedUserHome()` / `usedUserHomeReason()` **仍然要留着** ——
-           * `dumpStorageState()` 把它们写进 `storage_state.txt` 给 hdc 读，那是**排查通道**，
-           * 与「界面上要不要显示」是两件事。 */
+           * 用户的理由：**切换时游戏进程肯定是关着的** —— 启动器设置页与游戏不可能同时在跑（同一进程）⇒
+           * `usedUserHome()` 读到的永远来自**上一次**启动，**不存在活的冲突** ⇒「要重启才生效」是句废话。
+           * ⚠️ `usedUserHome()` / `usedUserHomeReason()` **仍然要留着**（进 `storage_state.txt` 给 hdc 读）。 */
 
           /* 只在**出错**时给的提示。⛔ **原样显示探针那句话** —— 它返回五种不同处境
            * （`no-path` / `no-dir` / `open: errno=…` / `readback: …` / `left-behind: …`），
@@ -6135,11 +5623,9 @@ export struct LauncherHome {
           .width('100%')
           .margin({ top: 20 })
         Column() {
-          /* 启动后进哪里。⭐ 这个开关是从一次真实的卡死里长出来的：他把一个 **mod 当成游戏**选了，
-           * 于是每次打开都直接进游戏树、立刻闪退，而**没有任何界面能让他改回来**。检测机制
-           * （launch_pending）现在也能把他送回启动器，但这是**不依赖检测**的那条路 —— 存在感为零、
-           * 却让最坏情况有出口。
-           * ⚠️ 默认「先进首页」（见 LauncherPrefs 的 LAUNCH_MODE_DEFAULT）；拨完立刻写盘、下次启动生效。 */
+          /* 启动后进哪里。⭐ 这个开关是从一次真实的卡死里长出来的：他把一个 **mod 当成游戏**选了，于是每次
+           * 打开都直接进游戏树、立刻闪退，而**没有任何界面能让他改回来**。检测机制也会把他送回启动器，但
+           * 这是**不依赖检测**的那条路。⚠️ 默认「先进首页」；拨完立刻写盘、下次启动生效。 */
           Row() {
             Column() {
               Text('启动时直接进游戏')
@@ -6164,24 +5650,9 @@ export struct LauncherHome {
           .width('100%')
 
           /* ⭐⭐ 游戏语言跟随系统（2026-10-04 用户要求）。
-           *
-           * ⛔⛔ **这是启动器**补**的一个能力，不是修游戏或本项目的缺陷** —— 用户 2026-10-04 明确
-           *    纠正过一次：「这不是缺陷，正常 mindustry 就没有跟随」。他是对的，别再把这条写成
-           *    「修复」：
-           *      · Mindustry **本来就没有**「跟随系统」这个设置项。它的语言就是 `settings.bin`
-           *        里那个值，`default` 的含义是「用 **JVM 的默认 locale**」。
-           *      · 桌面版看起来「跟着系统」，只是因为桌面 JVM 的默认 locale 跟着操作系统环境走 ——
-           *        同一套机制，不需要游戏做任何事。
-           *      · 本启动器此前没给 JVM 传 locale ⇒ HotSpot 的 C locale 是 `C` ⇒ 那个
-           *        `default` 落在**英文**上。这是**没人告诉过 JVM 设备语言**，不是谁坏了。
-           *    ⭐ 所以这里做的是「把设备语言喂给 JVM」，出厂打开（见 `LauncherPrefs`）。
-           *
-           * ⚠️ **对已经在 `settings.bin` 里写死了语言的存档无效** —— 游戏读的是那个显式值，
-           *    `-Duser.language` 只在它等于 `default` 时才起作用。改回中文的办法是**在游戏里
-           *    「设置 → 语言」重选一次**。
-           * ⛔ **这一条【不】在界面上写出来**（用户 2026-10-04：「提示不需要，冗余了」）。
-           *    所以：界面上只有标题 + 开关，一个字的解释都没有。别再自己加回来 ——
-           *    与深色模式那张卡同一个口味（那边也明确删过两条文字提示）。 */
+           * ⛔⛔ **这是启动器**补**的一个能力，不是修游戏或本项目的缺陷** —— 用户纠正过：「这不是缺陷，正常
+           * mindustry 就没有跟随」（它本来就没这个设置项；桌面版看着跟随只是 JVM 默认 locale 跟着系统走）。
+           * ⭐ 做的是「把设备语言喂给 JVM」，出厂打开。⚠️ 对写死语言的存档无效；这一条**不在界面上写出来**。 */
           Row() {
             Text('游戏语言跟随系统')
               .fontSize(14).fontColor($r('sys.color.font_primary'))
@@ -6206,51 +5677,19 @@ export struct LauncherHome {
         .margin({ top: 8 })
 
         /* ================= 游戏内显示 ================= */
-        /* ⭐ 2026-10-04 用户要的：「对游戏内的异形屏适配以及 UI 缩放做出调整，启动器默认帮用户
-         * 调好（空存档），已有设置不覆盖」。
-         *
-         * ⛔ 这两行改的不是启动器，是**游戏自己的 `settings.bin`** —— 理由与格式见 `GameSettings.ets`。
-         * ⭐ 但**默认值就是游戏的默认值**（边距 0、缩放 100 = 什么都不改变），因为合适的数值
-         *    取决于真机上游戏 HUD 与挖孔的位置关系，而我**看不到屏幕**。
-         *    ⇒ 给他两个滑条去试；试出合适的数之后把那两个数改成 `LauncherPrefs` 的出厂值，
-         *      后面的人就自动调好了。⛔ 别在这里编一个数 —— 那会让游戏界面看起来像坏了，
-         *      而玩家不知道是谁弄的。 */
+        /* ⭐ 2026-10-04 用户要的：「对游戏内的异形屏适配以及 UI 缩放做出调整，启动器默认帮用户调好（空存档），
+         * 已有设置不覆盖」。⛔ 这两行改的不是启动器，是**游戏自己的 `settings.bin`**。
+         * ⭐ 但**默认值就是游戏的默认值**（边距 0、缩放 100），因为合适的数值取决于真机上 HUD 与挖孔的位置。
+         * ⛔ 别在这里编一个数 —— 那会让游戏界面看起来像坏了。 */
         Text('游戏内显示')
           .fontSize(13).fontColor($r('sys.color.font_secondary'))
           .width('100%')
           .margin({ top: 20 })
         Column() {
-          /* ⭐⭐ **实验性：自动异形屏适配**
-           * （用户 2026-10-05 定的显示名。⚠️ 别写成「自动**型**屏」——
-           *  `形` 是形状、`型` 是型号，这里说的是「非矩形（挖孔 / 圆角）的屏幕」这个**形状**，
-           *  而且「异形屏」也是他自己用过的词，以及项目里既有的叫法。）
-           * ⛔ 出厂关闭（见 `LauncherPrefs.GAME_DISPLAY_DEFAULT`）。
-           * 算法与依据全在 `GameAutoFit.ets` 的文件头 —— 那里也记着**它算出来的值（84）
-           * 比你在真机上实测最好的值（100）小**，而那是**有意的**：它给的是「刚好让开挖孔」的下限。
-           * ⚠️ **注释里其余地方仍简称「自动适配」**（十来处）——那是**有意的简称**，不是漏改：
-           *    把每处都换成全名只会让注释更长而不更清楚。⛔ 但**界面字符串必须用全名**
-           *    （目前只有标题这一处，见下面 `Text('自动异形屏适配（实验性）')`）。
-           *
-           * ⛔⛔ **这一张卡上的文字是【逐条经过用户同意】的**：
-           *    ① 标题（用户 2026-10-05 定的全名）
-           *    ② 两个数值的名字（游戏自己的原话）
-           *    ③ `只覆盖默认设置`（⚠️ 它现在排在数值**上面** —— 2026-10-05 两行对调过，
-           *       别按「在下面」去找它，见那一段的说明）
-           * 用户 2026-10-04 立过一条规矩：**默认不加提示，他同意了才加。** ⇒
-           *    ⛔ 别在这里写「关闭时用滑条自己定」之类的小字；
-           *    ⛔ 也**不要在标题里带上当前数值**（那也是一种提示，是他要删的那一类）。
-           *
-           * ⛔⛔ **这里【曾经】有第三处，用户 2026-10-05 决定删掉**：开关下面那行
-           *    「调整缩放比例后重新打开【自动适配】，UI 内边距会被重新更改」。
-           *    理由他说得很直接：**上机测过，调整过之后不会被覆盖** ⇒ 那句话描述的行为不成立。
-           *    ⭐ 我当时读代码认为它仍成立（开关的 `onChange` 里 `seedGameEdgeFromDevice()`
-           *    对 `gameEdge` 是无条件赋值，而 `refresh()` / `initSafeArea()` 那两条路有
-           *    `!gameEdgeSet` 守卫）—— **实测推翻了它**，而这正是本项目的规矩：
-           *    能测的东西不要推（见 `USER.md` 那条与教训 #90）。⛔ 别再拿那段读代码的结论回来加字。
-           * ⚠️ 那句提示背后的**机制**仍然是真的：避让的算式 `ceil(挖孔px / scl) + 余量` 里
-           *    `scl` 含 `uiscale/100` ⇒ **改缩放会改避让**。但它**不再是玩家需要知道的操作指引**
-           *    ⇒ 它归 `GameAutoFit.ets` 的文件头与 `seedGameEdgeFromDevice` 的注释。
-           * ⛔ **不要再在这个卡片上加回任何形式的提示。** */
+          /* ⭐⭐ **实验性：自动异形屏适配**（用户 2026-10-05 定的显示名。⚠️ 别写成「自动**型**屏」——`形` 是形状）。
+           * ⛔ 出厂关闭；算法与依据全在 `GameAutoFit.ets` 的文件头（那里记着**它算出来的 84 比实测最好的 100
+           * 小**，而有意的：它给的是「刚好让开挖孔」的下限）。⚠️ 注释里其余地方仍简称「自动适配」，是有意的。
+           * ⛔⛔ **这张卡上的文字是【逐条经过用户同意】的**，他立过「默认不加提示，同意了才加」⇒ **别再往上加提示**。 */
           Row() {
             Text('自动异形屏适配（实验性）')
               .fontSize(14).fontColor($r('sys.color.font_primary'))
@@ -6270,46 +5709,19 @@ export struct LauncherHome {
           }
           .width('100%')
 
-          /* ⛔ 这里【曾经】有一行提示（「调整缩放比例后重新打开【自动适配】，UI 内边距会被
-           *    重新更改」）。**用户 2026-10-05 让删的**，理由见上面那段：
-           *    他上机测过，调整过之后不会被覆盖 ⇒ 那句话描述的行为不成立。
-           * ⛔ **不要加回来**，也不要改用别的说法提示同一件事。 */
 
-          /* ⛔ 用户 2026-10-04：**自动适配关着时这两个滑条不显示** —— 原话「游戏内能调的
-           *    不给别人看；开了适配再把两个滑条放出来」。理由很正：游戏自己的设置里就有这两项，
-           *    启动器复制一份出来只会让人分不清哪个在生效。
-           * ⭐ 所以滑条的定位是「**给自动算出来的值做微调**」，而不是「另一个调这两项的地方」。
-           * ⚠️ 关着时这一整段不渲染 ⇒ 卡片高度会变，这是**接受**的代价（同深色模式那张卡的做法）。 */
           /* ⭐⭐ **两个滑条已删**（用户 2026-10-05：「滑条可以去掉了，只留下一行提示和数值说明」）。
-           *
-           * ⛔⛔ **为什么删得掉、而且删了更好**：项目里**本来就有这两个设置**，在游戏自己的设置界面里
-           *    （`setting.uiEdgePadding.name` / `setting.uiscale.name`）。启动器再摆一份滑条，
-           *    玩家就得猜「哪个在生效」—— 这正是用户 2026-10-04 说「游戏内能调的**不给别人看**」
-           *    的那条理由。**把那一份收掉，启动器这边就只剩一件事：按本机挖孔算一个值。**
-           * ⭐ 附带的效果（是好事，不是代价）：**没有滑条 ⇒ 没有「微调」** ⇒ `gameEdgeSet` /
-           *    `gameScaleSet` 再也不会被手动置真（只剩「游戏里那个值本来就不是出厂值」那条回显会置）
-           *    ⇒ `refresh()` / `initSafeArea()` 里那两个 `!gameEdgeSet` 守卫**恒成立**，
-           *    自动值每次都按当次输入重算。⚠️ 也因此**彻底不存在**「重新打开开关会不会盖掉微调」
-           *    这个问题了 —— 它连被问的前提都没有了（那句提示刚被删，见上面那段）。
-           *
-           * ⚠️ **这三行现在是「说明 → 数值」的顺序**（用户 2026-10-05 让两行对调的；
-           *    原来数值在上、说明在下）。两行的**字号已统一为 12**（用户同日指出它们不一致）。
-           * ⭐ 取 12 而不是 13 的理由：这一页的**说明/附注**一律是 12（下面那条写入失败的报错
-           *    也是 12），而 13 在这张卡里只当过「数值」这一处 ⇒ 统一到 12 之后，
-           *    **层级是「标题 14 → 两条附注 12」**，标题才立得住。⛔ 要改成 13 就两条一起改，
-           *    别只动一条（那就又回去了）。
-           * ⚠️ 间距：说明 `top 10`（与开关分开），数值 `top 6`（与它上面那行贴近）。
-           *    原来那个 `14` 是给「数值 → 说明」那种关系用的，两行对调后不再合适。 */
+           * ⛔ 删得掉而且更好：项目里**本来就有这两个设置**（游戏自己的设置界面），启动器再摆一份，玩家就得
+           * 猜哪个在生效（2026-10-04 那条「游戏内能调的不给别人看」）。⭐ 附带好处：没有滑条 ⇒ `gameEdgeSet`/
+           * `gameScaleSet` 再也不会被手动置真 ⇒ 那两个 `!gameEdgeSet` 守卫恒成立。⚠️ 三行现在是「说明 → 数值」。 */
           Text('只覆盖默认设置')
             .fontSize(12).fontColor($r('sys.color.font_tertiary'))
             .width('100%').margin({ top: 10 })
 
-          /* ⚠️ 这一行**只有两个数值**（用户 2026-10-05 删掉了它左边那句提示）：
-           *    · 两个数值的名字用**游戏自己的原话**（`UI 内边距` / `界面缩放比例`），
-           *      理由与原来一致：玩家在游戏设置里看到的就是这两个词，两边同一套说法他才对得上号。
-           *    · ⚠️ 数值**必须显示** —— 这一行现在是这两个值的**唯一**出口（滑条没了）。
-           * ⛔ 只在**开关开着**时显示（用户 2026-10-05 定的）：关着时这两个数只是游戏里的现状，
-           *    与这张卡要做的事无关。⚠️ 关着时卡片高度会变，与原来一样是**接受**的。 */
+          /* ⚠️ 这一行**只有两个数值**（用户 2026-10-05 删掉了它左边那句提示）：名字用**游戏自己的原话**
+           * （`UI 内边距` / `界面缩放比例`），玩家在游戏设置里看到的就是这两个词；⚠️ 数值**必须显示**
+           * —— 这一行现在是这两个值的**唯一**出口（滑条没了）。
+           * ⛔ 只在**开关开着**时显示（用户 2026-10-05 定的）；关着时卡片高度会变，是**接受**的。 */
           if (this.gameAuto) {
             Text('UI 内边距 ' + String(this.gameEdge)
                  + '　界面缩放比例 ' + String(this.gameScale) + '%')
@@ -6381,64 +5793,35 @@ export struct LauncherHome {
      * ⚠️ 内层的 Navigation 及其整条链**刻意没有重新缩进**（与 Index.ets 那处同理）：给几百行整体
      * 加两格缩进会让「多了一个 Stack」这个唯一真实的改动被埋进一片空白 diff 里、审查时看不出来。 */
     Stack() {
-    /* ⛔ 右侧「非界面区底色」那次尝试已**整体回退**（2026-10-02）。两次都失败，记这里免得重走：
-     * 尝试 1：在 Navigation 【后面】加一层全屏底色 ⇒ 盖在界面上 ⇒ **UI 全部不见了**；尝试 2：移到
-     * Navigation 【前面】（正确层序）+ 底色改透明 ⇒ UI 回来了，但**设置页的内容被推到屏幕右侧外并截断**。
-     * ⚠️ 第二次的成因**没有查清**就回退了（可查：Navigation 底色改透明是否影响 Tabs 尺寸计算、Stack 里
-     * 多一个 `position()` 的兄弟节点是否影响布局、那层空 Column 是否元凶）。
-     * ⭐ 结论：**这条是纯观感改动，不值得在用户的实机上盲试** —— 要再做，先用最小页面把层序和尺寸行为
-     * 验证清楚。⚠️ 而且「分成两块」可能与 `barOverlap(true)` 的悬浮底栏冲突：底栏居中在**整个窗口**
-     * 宽度上，必然横跨这两块的边界。 */
+    /* ⛔ 右侧「非界面区底色」那次尝试已**整体回退**（2026-10-02）。两次都失败：尝试 1：在 Navigation
+     * 【后面】加一层全屏底色 ⇒ 盖在界面上 ⇒ **UI 全部不见了**；尝试 2：移到【前面】（正确层序）+ 底色改
+     * 透明 ⇒ UI 回来了，但**设置页的内容被推到屏幕右侧外并截断**。⚠️ 第二次的成因**没有查清**就回退了。
+     * ⭐ 结论：**这条是纯观感改动，不值得在用户的实机上盲试**。 */
 
     Navigation() {
-      /* 2026-10-03：从裸 Tabs 换成 HdsTabs（鸿蒙设计系统组件，@kit.UIDesignKit）。三条依据：
-       *   ① 参考项目 AMCL 用的就是它（Index.ets:2567），而用户对它的评价是「AMCL 就没有（掉帧）」；
-       *   ② 裸 Tabs 的切换动效没有旋钮 —— TabsAttribute 里能碰的只有 animationCurve /
-       *      animationDuration（逐条列过），而 HdsTabs 是设计系统组件，切换动效由系统那套实现；
-       *   ③ 它让两条分支合成一条（理由见 tabController 那处）。
-       *
-       * ✅ 2026-10-03 **已定案：就用 HdsTabs**（用户实测「差不多」，且外观有变但他接受）。
-       *    用户另给了一条长期口径：**后续同类的底部导航一律走沉浸光感**（即 HdsTabs 这套）。
-       *
-       * ⛔ 已知的取舍（我记录在案，不再当作「待观察」）：HdsTabs 没有 animationCurve ——
-       *    逐条核过本机 SDK 的 HdsTabsAttribute 全部方法，确实没有。⇒ 我们那条显式曲线
-       *    （实测让滑动顺畅了一些）在 HdsTabs 上设不了，切换节奏改由组件自己决定。
-       * ⚠️ 也就是说：**这次是「拿掉一个已知有效的改动，换组件级实现，手感持平」**。
-       *    用户是在知情下选的它，理由是设计系统组件是平台推荐路径、且要统一口径。
-       *    改动前的整份文件备份在项目外（不在 git 里）：
-       *    MindustryArkDocs/_backup_launcher_home_20261003/LauncherHome.ets.pre-hdstabs。
-       *
-       * ⚠️ 页签内容仍然走 @Builder（没有第二份）。⚠️ currentTab 现在是普通字段、不是 @State，
-       *    见它自己的注释 —— 那是一次一行实验，别顺手改回去。 */
+      /* 2026-10-03：从裸 Tabs 换成 HdsTabs（@kit.UIDesignKit）。依据：① AMCL 用的就是它；② 裸 Tabs 的切换
+       * 动效没有旋钮，而 HdsTabs 由系统那套实现；③ 它让两条分支合成一条。✅ **已定案：就用 HdsTabs**，用户另给
+       * 长期口径：**后续同类底部导航一律走沉浸光感**。⛔ 已知取舍：HdsTabs 没有 animationCurve（逐条核过本机 SDK）。
+       * ⚠️ 页签内容仍走 @Builder；`currentTab` 是普通字段（别改回去）。 */
       HdsTabs({ barPosition: BarPosition.End, controller: this.tabController }) {
         TabContent() { this.GamesTab() }.tabBar(this.tabItem($r('sys.symbol.house_fill'), '首页'))
         TabContent() { this.SavesTab() }.tabBar(this.tabItem($r('sys.symbol.doc_text'), '存档'))
         TabContent() { this.SettingsTab() }.tabBar(this.tabItem($r('sys.symbol.gearshape_fill'), '设置'))
       }
-      /* ⛔ **显式写出 `vertical(false)`**（2026-10-05，离线文档的**使用约束**要求
-       *    「`barPosition` 取 `BarPosition.End`」与「`vertical(false)`」并列 —— 而原代码
-       *    只写了前者）。
-       * ⚠️ **它是属性调用，不是构造选项** —— 本机 `tabs.d.ts` 的 `TabsOptions` 逐条读过，
-       *    只有 `barPosition` / `index` / `controller` / `barModifier`，**没有 `vertical`**；
-       *    写进 `HdsTabs({ … })` 里是**编译不过**的。
-       * ⭐ 本机 SDK 里 `HdsTabsAttribute` **自己**声明了
-       *    `vertical(value: boolean): HdsTabsAttribute`，注解原文 "Default value is false."
-       *    ⇒ 实机本来就是这个值，这一行**不改变任何观感**。
-       *    ⭐ 它买到的是**不再依赖一个默认值**：本项目刚为「拿相似组件的默认值去推这个组件的
-       *    行为」吃过一次亏（`HdsTabs.cachedMaxCount` 的文档根本没写默认值），
-       *    而这里组件自带一份默认值声明 ⇒ 更该按它自己的口径写出来，别靠碰巧。 */
+      /* ⛔ **显式写出 `vertical(false)`**（2026-10-05，离线文档的**使用约束**要求「`barPosition` 取
+       * `BarPosition.End`」与「`vertical(false)`」并列，而原代码只写了前者）。⚠️ **它是属性调用，不是构造
+       * 选项** —— 本机 `tabs.d.ts` 的 `TabsOptions` 里**没有 `vertical`**，写进 `HdsTabs({…})` 是编译不过的。
+       * ⭐ `HdsTabsAttribute` 自己声明了它（默认 false，实机本就这个值）⇒ 买到的是**不再依赖一个默认值**。 */
       .vertical(false)
       .barFloatingStyle({
         /* 左右同一个留白 ⇒ 居中由构造保证。见 BAR_MAX_VP。 */
         barSideMargin: this.sideMargin(),
         /* 把栏从屏幕下沿抬起来 —— 悬浮观感的另一半。 */
         barBottomMargin: BAR_BOTTOM_MARGIN_VP,
-        /* ⛔ 字段名与裸 Tabs 不同，别照抄旧代码：
-         *   · 旧：systemMaterial: uiMaterial.Material  +  maskColor: Color.Transparent
-         *   · 新：systemMaterialEffect: { materialType, materialLevel }
-         * ⛔ HdsTabsFloatingStyle 没有 maskColor（逐条核过字段表）⇒ 那一项去掉。
-         * ⭐ ADAPTIVE 的官方释义就是「Follow system material policy / level」——
-         *   交给系统按设备性能与主题自适应。⚠️ 这两个枚举是 @since 6.1.0(23)。 */
+        /* ⛔ 字段名与裸 Tabs 不同，别照抄旧代码：旧 `systemMaterial: uiMaterial.Material` + `maskColor`；
+         * 新 `systemMaterialEffect: { materialType, materialLevel }`。⛔ `HdsTabsFloatingStyle` 没有 maskColor
+         * （逐条核过字段表）⇒ 那一项去掉。⭐ ADAPTIVE 的官方释义是「Follow system material policy / level」。
+         * ⚠️ 这两个枚举是 @since 6.1.0(23)。 */
         systemMaterialEffect: {
           materialType: hdsMaterial.MaterialType.ADAPTIVE,
           materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE,
@@ -6452,12 +5835,10 @@ export struct LauncherHome {
        * ⛔ 这里【不能】再写 animationCurve —— HdsTabs 没有这个方法（见上面那条取舍）。
        * ⚠️ 也因此，裸 Tabs 上「滑动走 spring、点击走贝塞尔」的那个不一致，
        *    在 HdsTabs 上由组件自己统一 —— 我们不再能（也不需要）干预。 */
-      /* ⭐ 与 AMCL 对齐的那一行（`LauncherTabsStyle.ets:20`）。
-       * ⛔ 我一度判定它「等于默认值、是噪音」—— **那个判断是错的**：我引的是【裸 Tabs】的文档
-       *    （`tabs.d.ts:1591`：「不设时全部缓存」），而 **HdsTabs 自己的文档【没有】写默认值**
-       *    （本机 `@hms.hds.hdsBaseComponent.d.ets` 里这条只有参数说明）⇒ 对 HdsTabs 不能假定。
-       * ⇒ 既然 AMCL 显式写了、且它对结果满意，而 `.ets` 里的 `TabsCacheMode` 是全局声明
-       *    （AMCL 也没 import 它），这一行的代价为零。 */
+      /* ⭐ 与 AMCL 对齐的那一行（`LauncherTabsStyle.ets:20`）。⛔ 我一度判定它「等于默认值、是噪音」——
+       * **那个判断是错的**：我引的是【裸 Tabs】的文档（「不设时全部缓存」），而 **HdsTabs 自己的文档【没有】写
+       * 默认值** ⇒ 对 HdsTabs 不能假定。⭐ 既然 AMCL 显式写了、且它对结果满意，而 `.ets` 里的 `TabsCacheMode`
+       * 是全局声明，这一行的代价为零。 */
       .cachedMaxCount(2, TabsCacheMode.CACHE_BOTH_SIDE)
       .animationDuration(300)
       .barBackgroundColor(Color.Transparent)
@@ -6473,14 +5854,10 @@ export struct LauncherHome {
     /* ⭐ 走资源。拿不到时给空串 —— 标题栏宁可空着，也不要显示另一个应用的名字。 */
     .title(this.appName)
     .titleMode(NavigationTitleMode.Mini)
-    /* ⚠️ 必须显式写 Stack，**不能靠默认的 Auto** —— 这一行同时是两个缺陷的根因。
-     * SDK 原文（`NavigationMode.Auto`）：In API version 10 and later versions: If the window width is
-     * greater than or equal to 600 vp, the **Split** mode is used; otherwise, the Stack mode is used.
-     * 600 vp = minNavBarWidth (240 vp) + minContentWidth (360 vp)。
-     * 平板远超 600 vp ⇒ Auto 切成 **Split** ⇒ **左边多出一个 240 vp 的导航栏**，而 Tabs（连同悬浮底栏）
-     * 住在**右侧的内容区**里 ⇒ 用户报的「底栏不居中」（在内容区里居中，相对整屏就偏了）与「界面太窄」
-     * （那 240 vp 白给了）。Stack 下导航页与内容区互相独立，本页因此拿到整个窗口宽度。
-     * ⚠️ 本页没有任何 NavDestination，Split 的那个导航栏里本来就什么都没有 ⇒ 关掉不损失任何东西。 */
+    /* ⚠️ 必须显式写 Stack，**不能靠默认的 Auto** —— 这一行同时是两个缺陷的根因。SDK 原文（`NavigationMode.Auto`）：
+     * 宽度 ≥ 600 vp 时用 **Split**，否则 Stack；600 vp = minNavBarWidth(240) + minContentWidth(360)。
+     * 平板远超 600 ⇒ Auto 切成 Split ⇒ **左边多出一个 240 vp 的导航栏**，而 Tabs 住在右侧内容区 ⇒
+     * 用户报的「底栏不居中」与「界面太窄」。⚠️ 本页没有任何 NavDestination，关掉不损失任何东西。 */
     .mode(NavigationMode.Stack)
     /* ⚠️ 必须关掉：Navigation 默认在左上角画一个返回箭头，而**这一页不在任何 NavPathStack 里**
      * ⇒ 它没有任何可返回的东西、点它什么都不会发生（用户看到的就是「一个空按钮」）。 */
@@ -6510,13 +5887,10 @@ export struct LauncherHome {
     if (this.showIsolationAsk) {
       Column() {
         Column() {
-          /* ⭐ 标题（2026-10-04 用户重写的结构：「按"xxx"进行数据隔离」）。
-           * ⛔ 它**取代了原来两段**：`打开数据隔离  ·  构建号` 与「之后，当前选中的版本的数据与
-           *    其他版本隔离。你想怎么处理存档？」—— 那两句在说同一件事，而用户的原话是
-           *    「之前的提示我都快看不懂了」。
-           * ⚠️⚠️ 被取代的第二句，代码里原本标着**「用户留给他自己改的，别动」**（2026-10-02 他点名）。
-           *    这次是他自己重做这个窗、并给了新结构，所以按新结构并进了标题。
-           *    **它没有丢**（在 git 里），他要是要那句回来，一句话就能加。 */
+          /* ⭐ 标题（2026-10-04 用户重写的结构：「按"xxx"进行数据隔离」）。⛔ 它**取代了原来两段**（`打开数据
+           * 隔离 · 构建号` 与「之后…你想怎么处理存档？」）—— 那两句在说同一件事，而用户原话是「之前的提示我
+           * 都快看不懂了」。⚠️⚠️ 被取代的第二句原本标着**「用户留给他自己改的，别动」**；这次是他自己重做这个窗，
+           * 所以按新结构并进了标题，**它没有丢**（在 git 里）。 */
           Text('按「' + this.granularityName(this.pendingGranularity) + '」进行数据隔离')
             .fontSize(18).fontColor($r('sys.color.font_primary'))
 
@@ -6528,10 +5902,8 @@ export struct LauncherHome {
 
           Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
 
-          /* ⭐⭐ 「显示详情」—— 把原来摊在外面的两块收进来（用户 2026-10-04：
-           * 「显示详情（点开后，列表分别展示哪几个版本共用存档）」）。
-           * ⛔ 原来「这一档怎么分」+ 一张「版本 → 目录」表是**常驻**的，加上六行说明文字，
-           *    整个弹窗读不完 —— 那正是他说的「快看不懂了」。现在默认收起。
+          /* ⭐⭐ 「显示详情」—— 把原来摊在外面的两块收进来（用户 2026-10-04）。⛔ 原来「这一档怎么分」+ 一张
+           * 「版本 → 目录」表是**常驻**的，加上六行说明文字，整个弹窗读不完 —— 那正是他说的「快看不懂了」。
            * ⭐ 形状照抄多选那个展开器：整行是个盒子、右边一个 `▾/▴`（那是「它能点」的唯一视觉线索）。 */
           Row() {
             Text(this.showIsolationDetail ? '收起详情' : '显示详情')
@@ -6564,14 +5936,10 @@ export struct LauncherHome {
 
           Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
 
-          /* ⭐ 「注意」那一行（2026-10-04 用户指定的措辞与黄色）。
-           * ⚠️ 仍然**有条件**，判据从 `pendingUsesBundled` 放宽到 `hasBundled`：
-           *    · 这句话说的是「内置游戏」，而没有内置游戏的包（lite 分支，`SHIPS_GAME = False`）
-           *      里它是**一句假话** ⇒ 不能无条件显示；
-           *    · 放宽到「包里有没有那份游戏」，是他写的「常驻」在 master 上成立、在 lite 上不成立
-           *      这两件事的交集。
-           * ⛔ 原来挂得更窄（选中的正好是内置那份）—— 那时它解释的是「为什么切了档位没变化」；
-           *    现在它是**陈述**，所以条件也换成「这份游戏在不在」。 */
+          /* ⭐ 「注意」那一行（2026-10-04 用户指定的措辞与黄色）。⚠️ 仍然**有条件**，判据从 `pendingUsesBundled`
+           * 放宽到 `hasBundled`：这句话说的是「内置游戏」，而没有内置游戏的包（lite，`SHIPS_GAME = False`）里它是
+           * **一句假话** ⇒ 不能无条件显示。⛔ 原来挂得更窄（选中的正好是内置那份），那时它解释的是「为什么切了
+           * 档位没变化」；现在它是**陈述**。 */
           if (this.hasBundled) {
             Text('注意：内置游戏永远使用 bundled 目录存放数据')
               .fontSize(12).fontColor($r('sys.color.warning'))
@@ -6585,28 +5953,15 @@ export struct LauncherHome {
             .fontSize(12).fontColor($r('sys.color.font_secondary'))
             .width('100%').margin({ top: 12 })
 
-          /* 每一块的顺序是【说明在上、按钮在下】（2026-10-02 要的对调）。⚠️「复制过去」**不配任何说明**
-           * （「很直观了，根本不需要任何说明」）—— ⛔ 别在别处补一句解释回去，那正是被删掉的冗余。
-           * ⭐⭐ 用真 `Button` 而不是给 `Text` 上色：设置页那个「重新扫描」是裸 `Button()`，它的蓝色是
-           * **组件自带的默认主题色**，用它就自动与那一处一致（⛔ 不需要自己写一个蓝值，那样两处迟早分叉）。
-           * ⚠️ 宽度 `'50%'` 之后要 `alignSelf(ItemAlign.Center)`：父 Column 是 `HorizontalAlign.Start`，
-           * 光给宽度会让按钮贴左边。 */
+          /* 每一块的顺序是【说明在上、按钮在下】（2026-10-02）。⚠️「复制过去」**不配任何说明**（「很直观了，
+           * 根本不需要任何说明」）—— ⛔ 别在别处补一句。⭐⭐ 用真 `Button` 而不是给 `Text` 上色：设置页那个
+           * 「重新扫描」是裸 `Button()`，用它就自动与那一处一致（⛔ 别自己写一个蓝值）。
+           * ⚠️ 给了宽度要 `alignSelf(ItemAlign.Center)`。 */
 
-          /* ⭐⭐ 按钮组：**一条分隔线 + 三个按钮**。
-           * ⛔ 原来每个按钮上面各有一条线（共三条）—— 那是每个选项**各带一段说明**时的产物；
-           *    说明在 2026-10-02 就删了，那两条线从此没有任何东西可分，只是把弹窗拉长。
-           *
-           * ⚠️ 三个都不设底色，全用 `Button` 的**系统默认主题色** —— 一处颜色，不给自己造的色值
-           *    留分叉的机会。（`launcher_bg` 在深色模式下是近黑色，当年做过一次黑按钮。）
-           *
-           * ⭐ 尺寸（用户 2026-10-04：「文字可以小一点，按钮再稍微宽一点扁一点」）：
-           *    字号 15 → **13**；宽 40% → **56%**；高显式给 **34**（`Button` 默认 40 ⇒ 扁一点）。
-           *
-           * ⛔⛔ 而「取消」原来是 `width('20%')` —— 它**装不下那两个字**：弹窗内容宽只有 280vp
-           *    （`max(320, winW × 0.5)` = 320，减左右各 20vp 内边距），20% = **56vp**；
-           *    而「取消」两字 14fp ≈ 28vp + `Button` 默认左右内边距 ≈ 32vp = **60vp** ⇒ **溢出成「...」**。
-           *    这正是用户报的那个现象。现在 34% ≈ 95vp，宽裕。
-           * ⚠️ 取消比另外两个窄是**刻意**的：它是否定动作，不该和「复制过去」长得一样重。 */
+          /* ⭐⭐ 按钮组：**一条分隔线 + 三个按钮**。⛔ 原来每个按钮上面各有一条线（共三条）—— 那是每个选项各带
+           * 一段说明时的产物；说明 2026-10-02 删了，那两条线从此没有东西可分。⚠️ 三个都不设底色，全用 `Button`
+           * 的**系统默认主题色**。⭐ 尺寸（用户 2026-10-04）：字号 15 → **13**；宽 40% → **56%**；高显式 **34**。
+           * ⛔⛔ 而「取消」原来是 `width('20%')` —— 它**装不下那两个字**（20% = 56vp，而两字 ≈ 60vp ⇒ 溢出成「...」）。 */
           Divider().strokeWidth(1).color($r('app.color.launcher_border')).margin({ top: 14 })
           Button('复制过去')
             .fontSize(13)
@@ -6650,10 +6005,8 @@ export struct LauncherHome {
       .width('100%').height('100%')
       .backgroundColor('#80000000')
       .justifyContent(FlexAlign.Center)
-      /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
-     * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
-     * ⚠️ 四边的 32 是**卡片自己的**边距（原本就有，只作用在左右），与避让无关，所以两者相加而不是覆盖。
-     * ⚠️ 避让为 0 时这里与从前**逐像素相同**。 */
+    /* ⭐ 异形屏避让：遮罩要铺满（背景全屏），卡片落在避让区里 —— 加在遮罩的 padding 上而非外层 Stack
+     * （理由见 Navigation 那处）。⚠️ 那 32 是卡片自己的边距，与避让无关，两者相加；避让为 0 时逐像素同从前。 */
     .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
                top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
     /* 整层淡入（遮罩 + 卡片一起）。 */
@@ -6672,14 +6025,9 @@ export struct LauncherHome {
                ? '复制到哪些分类' : '再确认一次')
             .fontSize(17).fontColor($r('sys.color.font_primary'))
 
-          /* ============================================================
-           * ⭐⭐ 「复制过去」＝**自己挑复制进哪些分类**（2026-10-02：「复制改成多版本自行选择，
-           * **告知用户可以复制到哪些粒度下的分类里面**。现在这个有点反直觉」）。
-           * ⛔ 原来是我替他全选，而它在界面上**看不见**（没东西告诉玩家刚才复制了几份）⇒ 一个聪明
-           * 但沉默的默认值，比一个看得见的选择差。
-           * ⭐ 每一行就是**这一档下的一个分类**（一个键），后面列出落进它的版本、以及它现在有没有数据
-           * —— 那正是「勾了会发生什么」的答案。⚠️ 默认**全勾**（见 chooseGranularity）。
-           * ============================================================ */
+          /* ⭐⭐ 「复制过去」＝**自己挑复制进哪些分类**（2026-10-02：「复制改成多版本自行选择…现在这个有点反直觉」）。
+           * ⛔ 原来是我替他全选，而它在界面上**看不见** ⇒ 一个聪明但沉默的默认值，比一个看得见的选择差。
+           * ⚠️ 每一行就是这一档下的一个分类（一个键）+ 落进它的版本 + 它现在有没有数据。⚠️ 默认**全勾**。 */
           if (this.isolationConfirm === 'copy') {
             Scroll() {
               Column() {
@@ -6763,10 +6111,8 @@ export struct LauncherHome {
       .width('100%').height('100%')
       .backgroundColor('#80000000')
       .justifyContent(FlexAlign.Center)
-      /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
-     * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
-     * ⚠️ 四边的 32 是**卡片自己的**边距（原本就有，只作用在左右），与避让无关，所以两者相加而不是覆盖。
-     * ⚠️ 避让为 0 时这里与从前**逐像素相同**。 */
+      /* ⭐ 异形屏避让：遮罩要铺满（背景全屏），卡片落在避让区里 —— 加在遮罩的 padding 上而非外层 Stack
+       * （理由见 Navigation 那处）。⚠️ 那 32 是卡片自己的边距，与避让无关，两者相加；避让为 0 时逐像素同从前。 */
     .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
                top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
     /* 整层淡入（遮罩 + 卡片一起）。 */
@@ -6799,12 +6145,10 @@ export struct LauncherHome {
             .fontSize(13).fontColor($r('sys.color.font_secondary'))
             .margin({ top: 4 })
 
-          /* 上游与本仓库是两个地址，别合并：本应用是上游的 fork，而「报问题」应当去
-           * 它自己那个仓库。两个都列是因为它们回答的是不同的问题。
-           *
-           * ⛔ 这里原来缺了 `Text('上游')` 那一行，而它的三个修饰符留了下来、接到了上面那句
-           * 「以 GPL-3.0 分发。」身上（后写的胜）⇒ 那行字实际渲染成 12/tertiary/间距16。
-           * 同时第一个地址写的是**本仓库**，而注释说的是上游。两处都已修。 */
+          /* 上游与本仓库是两个地址，别合并：本应用是上游的 fork，而「报问题」应当去它自己那个仓库。
+           * ⛔ 这里原来缺了 `Text('上游')` 那一行，而它的三个修饰符留了下来、接到了上面那句「以 GPL-3.0 分发。」
+           * 身上（后写的胜）⇒ 那行字实际渲染成 12/tertiary/间距16；同时第一个地址写的是**本仓库**，而注释说上游。
+           * 两处都已修。 */
           Text('上游')
             .fontSize(12).fontColor($r('sys.color.font_tertiary'))
             .margin({ top: 16 })
@@ -6842,10 +6186,8 @@ export struct LauncherHome {
       .width('100%').height('100%')
       .backgroundColor('#80000000')
       .justifyContent(FlexAlign.Center)
-      /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
-     * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
-     * ⚠️ 四边的 32 是**卡片自己的**边距（原本就有，只作用在左右），与避让无关，所以两者相加而不是覆盖。
-     * ⚠️ 避让为 0 时这里与从前**逐像素相同**。 */
+      /* ⭐ 异形屏避让：遮罩要铺满（背景全屏），卡片落在避让区里 —— 加在遮罩的 padding 上而非外层 Stack
+       * （理由见 Navigation 那处）。⚠️ 那 32 是卡片自己的边距，与避让无关，两者相加；避让为 0 时逐像素同从前。 */
     .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
                top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
     /* 整层淡入（遮罩 + 卡片一起）。 */
@@ -6921,12 +6263,10 @@ export struct LauncherHome {
             .fontSize(12).fontColor($r('sys.color.font_tertiary'))
             .margin({ top: 10 })
 
-          /* 按钮**并排**，各占一半。⚠️ 两个都用 `layoutWeight(1)` —— 在 Row 里它让子项**平分**可用宽度
-           * ⇒ 两者**宽度严格相等**、一起铺满弹窗（用户报过「知道了这个按钮有点窄」，那正是按内容收缩时
-           * 短标签必然更窄）⇒「一样宽」由**结构**保证，不必给 `minWidth` 填拍脑袋的数。
-           * ⚠️ 顺序：次要的（灰）在左，主推的（主题色）在右 —— 各类对话框的通行次序。⚠️ ⛔ **不要**因为
-           * 「看着不建议」就把「仍然尝试启动」禁用掉：它整个存在的意义就是在判定失误时留一条出路
-           * （禁用它等于把逃生门拆了装成一个门把手）。 */
+          /* 按钮**并排**，各占一半。⚠️ 两个都用 `layoutWeight(1)` —— 在 Row 里它让子项**平分**可用宽度 ⇒
+           * 「一样宽」由**结构**保证（用户报过「知道了这个按钮有点窄」，那正是按内容收缩时短标签必然更窄）。
+           * ⚠️ 顺序：次要的（灰）在左、主推的（主题色）在右。⛔ **不要**因为「看着不建议」就把「仍然尝试启动」
+           * 禁用掉 —— 它整个存在的意义就是在判定失误时留一条出路。 */
           Row({ space: 12 }) {
             Button('仍然尝试启动')
               .fontSize(BUTTON_FONT_VP).height(44)
@@ -6958,10 +6298,8 @@ export struct LauncherHome {
       .width('100%').height('100%')
       .backgroundColor('#B0000000')
       .justifyContent(FlexAlign.Center)
-      /* ⭐ 异形屏避让：遮罩本身要**铺满**（背景是全屏的），但卡片要落在避让区里面。
-     * ⚠️ 为什么是加在遮罩的 padding 上、而不是靠外层 Stack 的 padding：见 Navigation 那处的说明。
-     * ⚠️ 四边的 32 是**卡片自己的**边距（原本就有，只作用在左右），与避让无关，所以两者相加而不是覆盖。
-     * ⚠️ 避让为 0 时这里与从前**逐像素相同**。 */
+      /* ⭐ 异形屏避让：遮罩要铺满（背景全屏），卡片落在避让区里 —— 加在遮罩的 padding 上而非外层 Stack
+       * （理由见 Navigation 那处）。⚠️ 那 32 是卡片自己的边距，与避让无关，两者相加；避让为 0 时逐像素同从前。 */
     .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
                top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
     /* 整层淡入（遮罩 + 卡片一起）。 */
