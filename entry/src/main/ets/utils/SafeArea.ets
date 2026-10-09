@@ -172,7 +172,7 @@ export function uniformOf(ins: SafeInsets): number {
 /** 探测**命中**了哪几边（值 > 0 的）。返回固定的四字串数组顺序，便于比较与显示。
  * ⭐ 它决定滑条的值作用在哪些边上（「只用在探测到的那几边」）—— 顶部一个挖孔不该逼左右下也白让。
  * ⚠️ 空数组是**有意义的**：表示这台机器什么都探测不到，调用方必须单独定行为 —— 见 LauncherHome.edgeVp()：
- * 那种情况四边都让，否则滑条在**最需要它的机器上**恰好失效。 */
+ * 那种情况**只让上边**（按最常见的形状假定顶部一个挖孔）。⛔ 这句曾写「四边都让」，2026-10-03 被用户否掉。 */
 export function edgesOf(ins: SafeInsets): string[] {
   const out: string[] = [];
   if (ins.top > 0) { out.push('top'); }
