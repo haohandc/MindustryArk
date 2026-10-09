@@ -39,6 +39,11 @@ entry/libs/
 #    放进去会让 stash 被打进包。
 /.tools-stash/
 
+# make_store_app.sh 的临时文件落点：module.json5 的备份、构建日志。
+# 用【仓库内的相对路径】是为了让 bash 与 Windows 版 Python 指向同一处 ——
+# 两者对 `/tmp` 的解析不同，用 TEMP 会各写各的（见该脚本里的说明）。
+/.store-scratch/
+
 # The INPUTS those scripts assemble entry/libs/ from: the upstream and patched
 # game jars, the LWJGL jars and natives, and two files out of the trimmed JDK.
 # Same reasoning as entry/libs/ -- large, mostly reproducible, and the parts that

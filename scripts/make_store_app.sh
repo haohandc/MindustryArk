@@ -118,6 +118,13 @@ set -o pipefail
 cd "$(dirname "$0")/.." || exit 1
 export MSYS_NO_PATHCONV=1
 
+# 临时文件的落点：仓库根下的相对目录。
+# ⛔ 别写 `${TEMP:-/tmp}` —— Git Bash 的 TEMP 可能为空 ⇒ 退回字面量 `/tmp`，而 bash 与
+# Windows 版 Python 对 `/tmp` 的解析【不同】（前者 C:\...\Temp，后者按当前盘符 E:\tmp）
+# ⇒ 备份写在 A、Python 去 B 找，当场 FileNotFoundError。相对路径两边都按 cwd 解析。
+SCRATCH=".store-scratch"
+mkdir -p "$SCRATCH"
+
 MODE="${1:-}"
 
 # 第二个参数决定【产物形态】。⛔ 它**不改包内容** —— 改的只是签名与容器：
@@ -269,7 +276,7 @@ OUTAPP="$OUTDIR/$ARTIFACT-$MODE.app"
 #      而它在别的方面**完全一样**，所以这个错误从产物上看不出来。
 HAP_OUT="entry/build/default/outputs/default/$ARTIFACT.hap"
 OUTHAP="dist/$ARTIFACT-$MODE-hap.hap"
-BACKUP="${TEMP:-/tmp}/module.json5.pre-store"
+BACKUP="$SCRATCH/module.json5.pre-store"
 
 # tools 模式把 entry/libs/arm64-v8a/ 挪到这里。
 # ⛔ **不能放在 entry/libs/ 里面** —— hvigor 会递归收集那里的 `.so`，
@@ -522,7 +529,7 @@ fi
 # 一次「报成功、但其实什么都没写」的构建会让下面那个 glob 捡到**上一次的**
 # 包 —— 而「不要拿旧的当新的」正是本脚本存在的一半理由。
 # （匹配不到时 `rm -f` 是静默的，所以目录还不存在也不会在这里报错。）
-BUILD_LOG="${TEMP:-/tmp}/store_app.log"
+BUILD_LOG="$SCRATCH/store_app.log"
 if [ "$KIND" = hap ]; then
     # 只删这一个文件，不整目录：debug 的中间产物留着可以增量，快得多；
     # 而这个 HAP 是**按名字**取回来的，不会有捡到旧文件的问题。
