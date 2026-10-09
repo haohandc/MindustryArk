@@ -30,30 +30,30 @@
 
 **未对Mindustry游戏本体做任何修改。** 通过加载`jar`补丁到Mindustry的游戏运行框架Arc实现兼容.
 
-| 形态                | 分支                                                           | 带游戏本体          |
-|-------------------|--------------------------------------------------------------|----------------|
-| **Mindustry Ark** | `master`                                                     | ✅ 内置 Mindustry |
-| **Ark Launcher**  | [`lite`](https://github.com/haohandc/MindustryArk/tree/lite) | ⛔ 玩家自备 `.jar`  |
+| 形态                | 分支                                                           | 带游戏本体                |
+|-------------------|--------------------------------------------------------------|----------------------|
+| **Mindustry Ark** | `master`                                                     | ✅ 内置 Mindustry       |
+| **Ark Launcher**  | [`lite`](https://github.com/haohandc/MindustryArk/tree/lite) | ⛔ 自备 `Mindustry.jar` |
 
 Ark Launcher 只是去除了游戏本体。安装后，
-把自备的 `Mindustry.jar` 放进启动器显示的文件夹即可。`jar`文件名称可以随意更改。
+需要把自备的 `Mindustry.jar` 放进`Downloads/应用名/games`文件夹。`.jar`文件名称可以随意更改。
 
 ## 仓库内容
 
-| 路径                                                 | 用途                                     |
-|----------------------------------------------------|----------------------------------------|
-| [`entry/`](entry/)                                 | 应用本体：ArkTS 界面、native（C）启动器、打包进来的运行时与游戏 |
-| [`AppScope/`](AppScope/)                           | 应用级配置与图标                               |
-| [`scripts/`](scripts/)                             | 构建、打包与校验脚本                             |
-| [`docs/`](docs/)                                   | 常见问题 / 已知限制 / 构建 / 权限 / 目录导览           |
-| [`payload-src/`](payload-src/)                     | 构建输入的说明与清单                             |
-| [`helper-src/`](helper-src/)                       | 启动器辅助 jar 的源码                          |
-| [`tools/`](tools/)                                 | 探针模组                                   |
-| [`release-notes/`](release-notes/)                 | 各版本的英文发布说明                             |
-| [`assets/`](assets/)                               | 图标                                     |
-| [`RELEASE.md`](RELEASE.md)                         | 下载与安装                                  |
-| [`RELEASE-MAINTENANCE.md`](RELEASE-MAINTENANCE.md) | 维护者手册                                  |
-| [`THIRD-PARTY.md`](THIRD-PARTY.md)                 | 逐组件的许可义务                               |
+| 路径                                                 | 用途                           |
+|----------------------------------------------------|------------------------------|
+| [`entry/`](entry/)                                 | 应用本体，包含打包进来的运行时与游戏           |
+| [`AppScope/`](AppScope/)                           | 应用级配置与图标                     |
+| [`scripts/`](scripts/)                             | 构建、打包与校验脚本                   |
+| [`docs/`](docs/)                                   | 常见问题 / 已知限制 / 构建 / 权限 / 目录导览 |
+| [`payload-src/`](payload-src/)                     | 构建输入的说明与清单                   |
+| [`helper-src/`](helper-src/)                       | 启动器辅助 jar 的源码                |
+| [`tools/`](tools/)                                 | 探针模组                         |
+| [`release-notes/`](release-notes/)                 | 各版本的英文发布说明                   |
+| [`assets/`](assets/)                               | 图标                           |
+| [`RELEASE.md`](RELEASE.md)                         | 下载与安装                        |
+| [`RELEASE-MAINTENANCE.md`](RELEASE-MAINTENANCE.md) | 维护者手册                        |
+| [`THIRD-PARTY.md`](THIRD-PARTY.md)                 | 逐组件的许可义务                     |
 
 ## 功能
 
@@ -63,7 +63,7 @@ Ark Launcher 只是去除了游戏本体。安装后，
 | 图形          | OpenGL ES，经 SDL3              |
 | 音频          | OHAudio，经自编的 `libarcarm64.so` |
 | 触屏          | 可用，含双指捏合缩放                    |
-| 键盘          | 物理键盘可用；游戏内输入走弹出式输入框           |
+| 键盘          | 物理键盘可用；输入使用系统指定的IME           |
 | 鼠标 / 手柄     | 鼠标可用；手柄未测试                    |
 | 存档导入导出      | 走「下载」里的应用文件夹往返                |
 | 模组          | 用游戏自带的「导入模组」按钮导入，不用重启         |
@@ -76,13 +76,13 @@ Ark Launcher 只是去除了游戏本体。安装后，
 
 启动器拥有独立界面（**首页 / 存档 / 设置**）。
 
-| 功能            | 说明                                                                 |
-|---------------|--------------------------------------------------------------------|
-| 自选Mindustry版本 | 内置一份，可把任意多个 `Mindustry.jar` 放进 `Download/Mindustry Ark/games/`自选版本 |
-| **版本隔离**      | 每个游戏版本各用一套游戏数据，四档粒度                                                |
-| **存档管理**      | 列出所有版本的存档，看元数据，复制、移动、跨版本搬                                          |
-| 删除存档          | 可以选择回收（放进回收站）或直接永久删除，保留 3 / 7 / 30 天或归档。                           |
-| 启动模式          | 每次启动先进启动器，或直接进游戏                                                   |
+| 功能            | 说明                                                                  |
+|---------------|---------------------------------------------------------------------|
+| 自选Mindustry版本 | 内置一份，可把任意多个 `Mindustry.jar` 放进 `Download/Mindustry Ark/games/`并自选版本 |
+| **版本隔离**      | 每个游戏版本各用一套游戏数据，四档粒度                                                 |
+| **存档管理**      | 列出所有版本的存档，查看元数据，复制、移动、跨版本迁移                                         |
+| 删除存档          | 可以选择回收（放进回收站）或直接永久删除，保留 3 / 7 / 30 天，也可以归档                          |
+| 启动模式          | 每次启动先进启动器，或直接进游戏                                                    |
 
 > [!NOTE]
 > 版本隔离：默认「不隔离」
@@ -90,9 +90,10 @@ Ark Launcher 只是去除了游戏本体。安装后，
 
 ## 下载与安装
 
-**[Releases 页面](https://github.com/haohandc/MindustryArk/releases)** 上的产物属于 **Mindustry Ark**：
-未签名的 HAP 与一个载荷包（只有要从源码构建才需要）。
-**Ark Launcher 是计划上架应用商店的版本，不在仓库发布 release** —— 需要的话，从 [`lite`](https://github.com/haohandc/MindustryArk/tree/lite) 分支自行构建。
+**Mindustry Ark**的构建产物目前在**[Releases 页面](https://github.com/haohandc/MindustryArk/releases)** 发布。
+包含未签名的 `.hap` 与一个载荷包（只有要从源码构建才需要）。
+**Ark Launcher 是计划上架应用商店的版本，不在仓库发布 release** 
+—— 需要的话，可以从 [`lite`](https://github.com/haohandc/MindustryArk/tree/lite) 分支自行构建。
 
 **未签名的 HAP 无法直接安装。**
 
@@ -116,13 +117,15 @@ Ark Launcher 只是去除了游戏本体。安装后，
 
 **应用商店（计划中）**：按地区与设备分为三种包。
 
-| 地区   | 手机                                      | 平板 / PC · 2in1    |
-|------|-----------------------------------------|-------------------|
-| 中国大陆 | **Ark Launcher 工具版** —— 管理工具，**不能运行游戏** | **Ark Launcher**  |
-| 海外   | 同上                                      | **Mindustry Ark** |
+| 地区   | 手机                                   | 平板 / PC · 2in1                  |
+|------|--------------------------------------|---------------------------------|
+| 中国大陆 | **Ark Launcher**<br/>管理工具，**不能运行游戏** | **Ark Launcher**<br/>可运行导入的游戏   |
+| 海外   | 同上                                   | **Mindustry Ark**<br/>完全体，无任何限制 |
 
-Ark Launcher手机版不带游戏运行时，只有管理功能。原因：可执行匿名内存权限**只支持平板与
-PC / 2in1** 。GitHub Release(Mindustry Ark)自签名安装不受影响，手机用户可以正常游玩。
+Ark Launcher手机版不带游戏运行时，只有管理功能。原因：商店上架的Release不支持部分ACL权限。
+JIT需要的可执行匿名内存权限**只支持平板与 PC / 2in1** 。
+
+Mindustry Ark**自签名安装不受影响**，手机用户可以**正常**游玩。
 
 ## 从源码构建
 
