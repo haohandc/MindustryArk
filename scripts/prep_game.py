@@ -65,21 +65,26 @@ PROJECT_ROOT = config.PROJECT_ROOT
 # prep_arc.py 来自 bundle。所以放进游戏槽位的就是原始 jar。
 #
 # 因此下面的哈希标识的是一个上游产物，这比过去是更强的
-# 陈述：两个 SHA-1 和文件名检查以前全都
+# 陈述：两处哈希和文件名检查以前全都
 # 指向我们自己的多阶段输出，链中任何一处出错都会
 # 产生一个只有这个常量才能注意到的不同 jar。
 SRC = config.UPSTREAM_JAR
 
 # Mindustry v8 Build 160.5，官方桌面发布版。它的 version.properties
 # 写着 build=160.5, modifier=release, type=official。
-SRC_SHA1 = "8e0fd5d7dd7828fccff59a693a635948883a704b"
+#
+# ⭐ 2026-10-09：SHA-1 → SHA-256。理由不是强度，是**便利**：上游 GitHub Release
+#    的 asset 自带 `digest: "sha256:…"`，换版本时可以直接和它对，不必自己先算一遍。
+#    【实测已核对】本地这份的 sha256 与 Anuken/Mindustry v160.5 那条 asset 的
+#    digest 完全一致（size 88902250 也一致）⇒ 它就是官方原版。
+SRC_SHA256 = "c2fd5a5dcb8d306525bb47ff28121237d4d25f53868562946491f2ef261dc272"
 
 DEST = os.path.join(PROJECT_ROOT,
                     "entry", "libs", "arm64-v8a", "game", "mindustry.so")
 
 
-def sha1_of(path, chunk=1 << 20):
-    h = hashlib.sha1()
+def sha256_of(path, chunk=1 << 20):
+    h = hashlib.sha256()
     with open(path, "rb") as f:
         while True:
             b = f.read(chunk)
@@ -95,13 +100,13 @@ def ship(check):
         print("FAIL source jar is missing: %s" % SRC)
         return 1
 
-    actual = sha1_of(SRC)
+    actual = sha256_of(SRC)
     print("source : %s" % SRC)
     print("size   : %d" % os.path.getsize(SRC))
-    print("sha1   : %s" % actual)
-    if actual != SRC_SHA1:
+    print("sha256 : %s" % actual)
+    if actual != SRC_SHA256:
         print("FAIL this is NOT the pinned artifact.")
-        print("     expected %s" % SRC_SHA1)
+        print("     expected %s" % SRC_SHA256)
         print("     This slot takes the upstream release byte-for-byte. Re-download it")
         print("     rather than building or patching a jar into it -- see the note on SRC.")
         return 1
@@ -109,7 +114,7 @@ def ship(check):
 
     if check:
         if os.path.isfile(DEST):
-            ok = sha1_of(DEST) == SRC_SHA1
+            ok = sha256_of(DEST) == SRC_SHA256
             print("dest   : present, %s" % ("matches" if ok else "DIFFERS"))
             return 0 if ok else 1
         print("dest   : ABSENT")
@@ -119,13 +124,13 @@ def ship(check):
     shutil.copyfile(SRC, DEST)
 
     # 校验实际落盘的内容，而不是我们打算写入的内容。
-    if sha1_of(DEST) != SRC_SHA1:
+    if sha256_of(DEST) != SRC_SHA256:
         print("FAIL the copy does not match the source; removing it")
         os.remove(DEST)
         return 1
 
     print("dest   : %s" % DEST)
-    print("       : %d bytes, sha1 verified" % os.path.getsize(DEST))
+    print("       : %d bytes, sha256 verified" % os.path.getsize(DEST))
     print("OK")
     return 0
 
