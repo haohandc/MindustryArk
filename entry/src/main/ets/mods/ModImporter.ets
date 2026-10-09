@@ -23,7 +23,16 @@ interface ModFolder {
   uri: string;
 }
 
-/** 读取已存储的文件夹位置；如果还没有，就返回一对空值。 */
+/**
+ * 读取已存储的 Mod 文件夹信息。
+ *
+ * 从指定路径的`statePath`文件中读取存储的文件夹路径和URI，并返回。
+ * 如果文件不存在、文件内容为空或读取失败，则返回`{ path: '', uri: '' }`。
+ *
+ * @param statePath - 存储文件夹信息的文件路径（绝对路径或沙箱路径）
+ * @returns 包含文件夹路径和URI的 `ModFolder` 对象。若未找到有效信息，`path` 和 `uri` 均为空字符串。
+ * @throws {BusinessError}  文件访问出现系统级错误时（如权限不足、路径无效），错误信息会被记录到日志中，函数安全返回空值。
+ */
 function readModFolder(statePath: string): ModFolder {
   const none: ModFolder = { path: '', uri: '' };
   try {

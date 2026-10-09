@@ -1,23 +1,19 @@
-/* 「加载哪一个游戏」—— 这个文件的唯一职责。
- * 为什么必须是运行期的：自带那份固定在 bundle 里，换一个游戏版本意味着重新构建、重新签名、再装一遍
+/** 该文件负责分辨用户选择并加载的是哪一个版本的游戏。
  * 171 MB ⇒ 让玩家把若干版本的 jar 丢进 Downloads 里本应用的那个文件夹，在界面上挑一个。
- * 为什么 jar 放在 [games] 子目录而不是那个 Downloads 文件夹本身：⚠️ 那个文件夹是【游戏自带文件浏览器】
- * 打开的根目录，它过去被自动扫描进模组目录，正是「模组删了又复活」和「存档被当成模组」的根因 —— 扫描
- * 代码已删不该回来。只收 .jar 不收 .zip：存档就是 .zip。
  * ⚠️ 这里是 launcher.c 的 resolve_game_jar() 的第二份副本：native 要在 ArkTS 判定【之后】再确认一次
- * （文件可能被删），ArkTS 要在挂载 XComponent【之前】判定（native 还没跑）—— **两处都要改**。 */
+ * （文件可能被删），ArkTS 要在挂载 XComponent【之前】判定（native 还没跑） */
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { modFolderPath } from '../mods/ModImporter';
-/* 从 jar 里读出版本号，原生实现（cpp/jarver.c）：version.properties 在 ZIP 里是 raw deflate，
+/** 从 jar 里读出版本号，原生实现（cpp/jarver.c）：version.properties 在 ZIP 里是 raw deflate，
  * 而 @ohos.zlib 只给 zlib 格式。 */
 import jarver from 'libjarver.so';
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
 
-/** 玩家选中的那个 jar 的绝对路径；一行纯文本。不存在 = 没选过。 */
+// 玩家选中的那个 jar 的绝对路径；一行纯文本。不存在 = 没选过。
 const SELECTION_FILE_NAME = 'selected_game.txt';
 
 /* 「正在尝试启动」的标记 —— 本文件【写】，native（launcher.c）拿到游戏入口方法后【删】，内容是被选中的 jar 路径。
@@ -29,12 +25,12 @@ const LAUNCH_PENDING_FILE_NAME = 'launch_pending';
 /** 「下次启动直接进启动器」的请求标记。见 consumeLauncherRequest()。 */
 const LAUNCHER_MARKER_FILE_NAME = 'show_launcher';
 
-/* 内置游戏在包里的路径，相对 bundleCodeDir。
+/** 内置游戏在包里的路径，相对 bundleCodeDir。
  * ⚠️ 结尾是 .so 而不是 .jar，不是笔误：hvigor 只把文件名以 .so 结尾的东西从 entry/libs/ 拷进包，
  *    所以两个 jar 都是改过名的。见 launcher.c 的 GAME_JAR 注释。 */
 const BUNDLED_GAME_REL = '/libs/arm64/game/mindustry.so';
 
-/* 包内那份 JVM，相对 `bundleCodeDir`。⭐ 两种包不带运行时：`SHIPS_GAME = False` 的 lite（带 JDK 不带游戏）、
+/** 包内那份 JVM，相对 `bundleCodeDir`。⭐ 两种包不带运行时：`SHIPS_GAME = False` 的 lite（带 JDK 不带游戏）、
  *    `make_store_app.sh tools` 的「管理工具」包（JDK 和游戏都不带 —— 不跑 JVM 就不需要
  *    `ALLOW_WRITABLE_CODE_MEMORY`，那条 ACL 只覆盖平板与 PC/2in1 ⇒ 那是它在手机上架的全部理由）。
  * ⚠️ 路径来自 `launcher.c` 的编译期常量（`JDK_HOME`、真正的 JVM 是 `libjvm_real.so`），改这里要同时看那边。 */
@@ -62,11 +58,6 @@ export interface GameResolution {
   source: string;
 }
 
-/* ⚠️⚠️ 那个公共文件夹在**磁盘上叫 `Download`（单数）**，不是英文惯用的 "Downloads"。两条实测判据：
- * `user_dirs.txt` 里记着 `/storage/Users/currentUser/Download/<包名>`，而
- * `Environment.getUserDownloadDir()` 返回 `/storage/Users/currentUser/Download`。
- * ⭐ 它是个会直接害到玩家的错：写复数就是叫他去找一个磁盘上不存在的文件夹 ⇒ 印给玩家看的路径一律用 `Download`。 */
-
 /** 玩家放游戏 jar 的目录；还拿不到那个 Download 文件夹时为 ''。
  * ⚠️ 它是从模组那个状态文件【推】出来的，而不是另立一份：那个文件夹已经是「本应用在 Download
  * 里的家」，多一个状态文件就多一份会跑偏的知识。 */
@@ -75,16 +66,20 @@ export function gameJarDir(filesDir: string): string {
   if (base === '') {
     return '';
   }
-  /* ⭐ 子目录名是**复数**，因为它装的就是**多个** jar（自选版本这个功能的前提）。⚠️ 时机只有这一次：该目录由
-   * `b4f1a2b` 引入，而那笔提交在 `v1.1.0.1` 之后 —— **没有任何已发布版本用过 `/game`**。发布后再改，用户放进
-   * 旧目录的 jar 会从列表里消失，而 `selected_game.txt` 还指着旧路径 ⇒ **列表空着但游戏照常启动**。 */
+  //放在games文件夹
   return base + '/games';
 }
 
-/** 确保那个子目录存在，返回它；建不出来时返回 ''。
- * ⚠️ 它在平板上【可能永远建不出来】—— 平台 Download 目录的写入被以 EPERM 拒绝（手机则要靠
- * DOWNLOAD 模式 picker 的授权）。这不是错误，是本项目的既定事实 ⇒ 只记一条 info 并返回 ''，
- * 让上层安静地退回「只有内置游戏」。 */
+/**确认指定路径`filesDir`的合法性。
+ *
+ * 如果路径存在，则返回解析过的路径。如果不存在，尝试创建路径。
+ *
+ * 若创建成功，返回解析过的路径；若失败，返回`''`
+ * @param filesDir 传入一个路径
+ * @returns 返回空，代表路径不存在。
+ * @returns 返回原路径，代表路径存在
+ * @throws {BusinessError} 文件创建出现系统级错误时（如权限不足、路径无效），错误信息会被记录到日志中，函数安全返回空值。
+ */
 export function ensureGameJarDir(filesDir: string): string {
   const dir: string = gameJarDir(filesDir);
   if (dir === '') {
@@ -103,7 +98,9 @@ export function ensureGameJarDir(filesDir: string): string {
   }
 }
 
-/** 那个目录里的 .jar，按名字排序。目录不存在时为空的。 */
+/**
+ *
+ * */
 export function listGameJars(filesDir: string): GameJar[] {
   const out: GameJar[] = [];
   const dir: string = gameJarDir(filesDir);
