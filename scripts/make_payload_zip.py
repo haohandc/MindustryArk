@@ -50,6 +50,13 @@ import config
 
 PAYLOAD_README = "README-PAYLOAD.txt"
 
+# 许可文本：唯一一份在 rawfile（它随 HAP 一起发），这里再放进载荷 zip。
+# ⚠️ 不额外维护第二份 —— 两份许可文本分叉时没有任何东西会报错，而
+# 成品里带的义务说明就会是旧的。
+LICENSE_SRC = os.path.join(config.PROJECT_ROOT,
+                           "entry", "src", "main", "resources", "rawfile", "licenses")
+LICENSE_PREFIX = "licenses/"
+
 # 相对 config.LIBS 的路径 -> 为什么缺了它是致命的，或者它是谁产出的
 #
 # ⚠️ 不要加 "arm64-v8a/" 前缀：config.LIBS 已经以它结尾。两边都写会让
@@ -159,6 +166,27 @@ def main():
     if not os.path.isfile(readme):
         sys.exit("!! %s is missing -- it is the only documentation in the zip" % readme)
 
+    # 许可：必须有，且 rawfile 里那份 THIRD-PARTY.md 必须与仓库根的一致。
+    # 分叉时成品里带的义务清单会与实际发布内容对不上，而 zip 看起来完全正常。
+    if not os.path.isdir(LICENSE_SRC):
+        sys.exit("!! %s is missing -- the licences have to travel with the payload"
+                 % LICENSE_SRC)
+    licences = sorted(f for f in os.listdir(LICENSE_SRC)
+                      if os.path.isfile(os.path.join(LICENSE_SRC, f)))
+    if not licences:
+        sys.exit("!! %s is empty" % LICENSE_SRC)
+    ship = os.path.join(LICENSE_SRC, "THIRD-PARTY.md")
+    root_doc = os.path.join(root, "THIRD-PARTY.md")
+    if not (os.path.isfile(ship) and os.path.isfile(root_doc)):
+        sys.exit("!! THIRD-PARTY.md is missing (repository root or rawfile copy)")
+    with io.open(root_doc, "rb") as a, io.open(ship, "rb") as b:
+        if a.read() != b.read():
+            sys.exit("!! rawfile/licenses/THIRD-PARTY.md differs from the repository's\n"
+                     "   -- re-copy it; a stale copy ships an outdated obligation list")
+    print("checking licences")
+    for f in licences:
+        print("   ok  %s%s" % (LICENSE_PREFIX, f))
+
     files = collect()
     if not files:
         sys.exit("!! nothing under %s" % config.LIBS)
@@ -168,6 +196,8 @@ def main():
     print("\nwriting %s" % os.path.basename(out))
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         z.write(readme, PAYLOAD_README)
+        for f in licences:
+            z.write(os.path.join(LICENSE_SRC, f), LICENSE_PREFIX + f)
         for full, rel in files:
             z.write(full, rel)
 
@@ -180,7 +210,8 @@ def main():
         if bad is not None:
             sys.exit("!! the zip is corrupt at %s" % bad)
         got = set(z.namelist())
-    want = set([PAYLOAD_README] + [rel for _full, rel in files])
+    want = set([PAYLOAD_README] + [LICENSE_PREFIX + f for f in licences]
+               + [rel for _full, rel in files])
     missing = sorted(want - got)
     extra = sorted(got - want)
     if missing or extra:

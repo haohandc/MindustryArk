@@ -2,6 +2,7 @@
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { SymbolGlyphModifier } from '@kit.ArkUI';
+import { util } from '@kit.ArkTS';
 import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { bundleManager, common, ConfigurationConstant } from '@kit.AbilityKit';
 import { appLabel } from '../utils/AppLabel';
@@ -222,6 +223,21 @@ function formatDate(sec: number): string {
   return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
 }
 
+/* 开源许可：界面展示的组件与它对应的许可正文（rawfile/licenses/ 下）。 */
+interface LicenseEntry {
+  name: string;
+  file: string;
+}
+
+const LICENSE_FILES: LicenseEntry[] = [
+  { name: 'Mindustry · GPL-3.0', file: 'licenses/GPL-3.0.txt' },
+  { name: 'Arc · Apache-2.0', file: 'licenses/Apache-2.0.txt' },
+  { name: 'OpenJDK 21 · GPL-2.0 with Classpath Exception', file: 'licenses/OpenJDK-GPLv2-CE.txt' },
+  { name: 'LWJGL · BSD-3-Clause', file: 'licenses/LWJGL-BSD-3.txt' },
+  { name: 'SDL3 · Zlib', file: 'licenses/SDL3-Zlib.txt' },
+  { name: '第三方组件与修改声明', file: 'licenses/THIRD-PARTY.md' },
+];
+
 @Component
 export struct LauncherHome {
   filesDir: string = '';
@@ -264,6 +280,9 @@ export struct LauncherHome {
   @State storageNote: string = '';
   @State faultAck: boolean = false;
   @State showAbout: boolean = false;
+  @State showLicenses: boolean = false;
+  @State licenseSel: string = '';
+  @State licenseBody: string = '';
   @State granularity: string = GRANULARITY_OFF;
   @State saves: SaveEntry[] = [];
   @State saveGroups: SaveGroup[] = [];
@@ -286,6 +305,7 @@ export struct LauncherHome {
     }
     if (this.launchFault !== '' && !this.faultAck) { this.faultAck = true; return true; }
     if (this.showAbout) { this.showAbout = false; return true; }
+    if (this.showLicenses) { this.showLicenses = false; this.licenseSel = ''; this.licenseBody = ''; return true; }
     if (this.showVault) { this.closeVault(); return true; }
     if (this.panelOpen) { this.panelOpen = false; return true; }
     return false;
@@ -1485,6 +1505,25 @@ private versionSavesLine(v: VersionEntry): string {
     } catch (e) {
       const err = e as BusinessError;
       hilog.warn(DOMAIN, TAG, 'about: version lookup failed: %{public}s', err.message);
+    }
+  }
+
+  /** 打开开源许可。正文按需从 rawfile 读，不在 build 里同步读大文件。 */
+  private openLicenses(): void {
+    this.showLicenses = true;
+    this.licenseSel = '';
+    this.licenseBody = '';
+  }
+
+  private readLicense(file: string): string {
+    try {
+      const ctx = getContext(this) as common.Context;
+      const data: Uint8Array = ctx.resourceManager.getRawFileContentSync(file);
+      return util.TextDecoder.create('utf-8').decodeToString(data);
+    } catch (e) {
+      const err = e as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'licenses: cannot read %{public}s: %{public}s', file, err.message);
+      return '';
     }
   }
 
@@ -4399,6 +4438,23 @@ TransferDialog() {
         .borderRadius(CARD_RADIUS_VP)
         .margin({ top: 8 })
         .onClick(() => { this.openAbout(); })
+
+        /* ===== 开源许可 ===== */
+        Column() {
+          Row() {
+            Text('开源许可')
+              .fontSize(14).fontColor($r('sys.color.font_primary'))
+              .layoutWeight(1)
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(16).fontColor([$r('sys.color.font_tertiary')])
+          }
+          .width('100%')
+        }
+        .width('100%').padding(16)
+        .backgroundColor($r('app.color.launcher_card'))
+        .borderRadius(CARD_RADIUS_VP)
+        .margin({ top: 8 })
+        .onClick(() => { this.openLicenses(); })
       }
       .width('100%')
       .padding({ left: 20, right: 20, top: 20, bottom: BAR_CLEARANCE_VP })
@@ -4704,6 +4760,89 @@ TransferDialog() {
                top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
     .transition(enterFade())
       .onClick(() => { this.showAbout = false; })
+    }
+
+    if (this.showLicenses) {
+      Column() {
+        Column() {
+          Row() {
+            if (this.licenseSel === '') {
+              Text('开源许可')
+                .fontSize(18).fontColor($r('sys.color.font_primary'))
+                .layoutWeight(1)
+            } else {
+              Text('返回')
+                .fontSize(15).fontColor($r('sys.color.brand'))
+                .layoutWeight(1)
+                .onClick(() => { this.licenseSel = ''; this.licenseBody = ''; })
+            }
+            Text('✕')
+              .fontSize(18).fontColor($r('sys.color.font_secondary'))
+              .padding({ left: 14, right: 4, top: 2, bottom: 2 })
+              .onClick(() => {
+                this.showLicenses = false;
+                this.licenseSel = '';
+                this.licenseBody = '';
+              })
+          }
+          .width('100%')
+
+          if (this.licenseSel === '') {
+            List() {
+              ForEach(LICENSE_FILES, (item: LicenseEntry) => {
+                ListItem() {
+                  Row() {
+                    Text(item.name)
+                      .fontSize(14).fontColor($r('sys.color.font_primary'))
+                      .layoutWeight(1)
+                    SymbolGlyph($r('sys.symbol.chevron_right'))
+                      .fontSize(16).fontColor([$r('sys.color.font_tertiary')])
+                  }
+                  .width('100%').padding({ top: 14, bottom: 14 })
+                  .onClick(() => {
+                    this.licenseSel = item.file;
+                    this.licenseBody = this.readLicense(item.file);
+                  })
+                }
+              }, (item: LicenseEntry) => item.file)
+            }
+            .width('100%').layoutWeight(1)
+            .margin({ top: 8 })
+            .scrollBar(BarState.Off)
+          } else {
+            Scroll() {
+              Text(this.licenseBody)
+                .fontSize(11).fontColor($r('sys.color.font_secondary'))
+                .width('100%')
+                .copyOption(CopyOptions.LocalDevice)
+            }
+            .width('100%').layoutWeight(1)
+            .margin({ top: 8 })
+            .align(Alignment.TopStart)
+            .scrollBar(BarState.Off)
+          }
+        }
+        .width('100%')
+        .constraintSize({ maxWidth: this.dialogWidthVp() })
+        .height('80%')
+        .padding(20)
+        .backgroundColor($r('app.color.launcher_card'))
+        .borderRadius(CARD_RADIUS_VP)
+        .alignItems(HorizontalAlign.Start)
+        /* 吞掉卡片上的点击，避免冒泡到遮罩。空处理器有意。 */
+        .onClick(() => {})
+      }
+      .width('100%').height('100%')
+      .backgroundColor('#80000000')
+      .justifyContent(FlexAlign.Center)
+      .padding({ left: 32 + this.edgeVp('left'), right: 32 + this.edgeVp('right'),
+                 top: this.edgeVp('top'), bottom: this.edgeVp('bottom') })
+      .transition(enterFade())
+      .onClick(() => {
+        this.showLicenses = false;
+        this.licenseSel = '';
+        this.licenseBody = '';
+      })
     }
 
     /* 复制/移动目标选择。 */

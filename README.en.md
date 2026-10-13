@@ -166,10 +166,11 @@ Mindustry and related names and marks belong to their respective owners.
 - [**Arc**](https://github.com/Anuken/Arc) — the game framework, by Anuken
 - [**SDL3**](https://github.com/libsdl-org/SDL) — window, input and audio
 - [**LWJGL**](https://github.com/LWJGL/lwjgl3) — JNI bindings for OpenGL and SDL
-- [**OpenJDK 21**](https://github.com/openjdk/jdk) — the runtime
-- [**AMCL**](https://github.com/LZZLHY/amcl) — a reference implementation of the same idea.
-  A few of our approaches were inspired by it; it is not a dependency, and none of its code
-  is in our artifacts.
+- [**OpenJDK 21**](https://github.com/openjdk/jdk) — the runtime. We use the OpenHarmony build
+  published by [**AMCL**](https://github.com/LZZLHY/amcl) (`jdk21-ohos-full-v7.zip`, upstream
+  `jdk-21.0.5+11`), with a 14-byte change to `libjvm.so`
+- [**AMCL**](https://github.com/LZZLHY/amcl) — a reference implementation of the same idea; a few of
+  our approaches were inspired by it, and our JDK runtime is its published build (above)
 
 > [!NOTE]
 > Almost all of the code, documentation and prose in this repository was produced with AI

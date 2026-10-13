@@ -6,10 +6,12 @@ WHY THIS IS NEEDED
     ".so", and it drops everything else silently. Two files under
     jdk21/lib/ are not libraries but are opened by name at runtime:
 
-        modules     the module image; renamed in place to jimg.so by
-                    patch_libjvm.py, so it already travels. java.home is then
-                    pointed at a sandbox directory holding a copy named
-                    "modules" -- see prepare_java_home() in launcher.c.
+        modules     the module image; it ships renamed to jimg.so (hvigor
+                    keeps only .so names, and no script performs the rename --
+                    patch_libjvm.py only rewrites libjvm.so's two format strings
+                    to look for that name). java.home is then pointed at a
+                    sandbox directory holding a copy named "modules" -- see
+                    prepare_java_home() in launcher.c.
         tzdb.dat    the time-zone database. java.base opens
                     $java.home/lib/tzdb.dat while initialising
                     sun.util.calendar.ZoneInfoFile, which happens the first time

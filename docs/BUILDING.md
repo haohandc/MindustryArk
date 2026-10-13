@@ -47,7 +47,7 @@ entry/libs/arm64-v8a/jdk21/
 ├── release
 ├── conf/             prep_jdkconf.py 的输入（security/ 等）
 └── lib/
-    ├── modules       134 MB 的模块镜像；patch_libjvm.py 会把它改名成 jimg.so 发运
+    ├── modules       134 MB 的模块镜像；发运时要改名成 jimg.so（hvigor 只搬 .so；没有脚本做这步）
     ├── tzdb.dat      prep_jdklib.py 的输入（游戏读日期时会打开它）
     └── …             其余 JDK 库
 ```
@@ -301,7 +301,7 @@ entry/libs/arm64-v8a/jdk21/
 ├── release
 ├── conf/            input to prep_jdkconf.py (security/ and friends)
 └── lib/
-    ├── modules      the 134 MB module image; patch_libjvm.py ships it renamed to jimg.so
+    ├── modules      the 134 MB module image; it ships renamed to jimg.so (hvigor keeps only .so; no script does this step)
     ├── tzdb.dat     input to prep_jdklib.py (the game opens it when it asks for a date)
     └── ...          the rest of the JDK's libraries
 ```

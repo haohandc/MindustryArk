@@ -6,6 +6,12 @@ Each licence below was **read from the upstream repository's own licence file**,
 not from memory. Source and date are recorded so the claim can be re-checked.
 Retrieved 2026-09-20; the Arc entry re-checked 2026-10-13.
 
+The licence texts themselves ship with the app, in
+`entry/src/main/resources/rawfile/licenses/` — and in the payload zip under
+`licenses/`. That directory holds **copies**: when a licence changes, re-copy it
+there. `make_payload_zip.py` fails if the `THIRD-PARTY.md` copy diverges from
+this file.
+
 | Component | Licence | Verified from |
 |---|---|---|
 | Mindustry | **GPL-3.0** | <https://raw.githubusercontent.com/Anuken/Mindustry/master/LICENSE> |
@@ -128,8 +134,9 @@ Apache-2.0 §4 obligations, and where each is met:
 - **§4(b) — notices on modified files.** Every modified and added source file
   carries a header notice stating that it was changed and when (added
   2026-10-13). The table above is the change record.
-- **§4(a) — a copy of the licence.** The Apache-2.0 text ships at
-  [`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt).
+- **§4(a) — a copy of the licence.** The Apache-2.0 text ships with the app at
+  `entry/src/main/resources/rawfile/licenses/Apache-2.0.txt`, and in the payload
+  zip under `licenses/`.
 - **§4(c) — retain attribution.** Upstream's copyright headers are left in place;
   Arc is credited in the README.
 - **§4(d) — NOTICE file.** Not applicable: upstream Arc has no `NOTICE` file.
@@ -160,7 +167,32 @@ The modifications are confined to the OpenHarmony backend directories.
 
 The embedded runtime is redistributed. The Classpath Exception is what permits
 linking and shipping it alongside a work under other terms; without it this
-project's combination would be a GPL-2.0 work as a whole.
+project's combination would be a GPL-2.0 work as a whole. The GPL-2.0 text,
+including the Classpath Exception section, ships with the app at
+`entry/src/main/resources/rawfile/licenses/OpenJDK-GPLv2-CE.txt`.
+
+The runtime is a prebuilt OpenJDK 21 build for OpenHarmony (musl / aarch64),
+taken as-is rather than compiled here. Precisely: it is the build AMCL publishes
+as `jdk21-ohos-full-v7.zip` (release `v21.0.5-ohos-7` of
+<https://github.com/LZZLHY/mc-ohos-resources>, sha256 `21556d0d…`), which
+corresponds to upstream `jdk-21.0.5+11`
+(<https://github.com/openjdk/jdk>, commit `dfcd8d2eecfe62e91070244d8eb10906dc3c812d`)
+with AMCL's OpenHarmony patches. Every JDK file this project ships was verified
+byte-for-byte against that asset; the only difference is the 14 bytes in
+`libjvm.so` described below.
+
+**OpenJDK is also modified by this project, and the modified binary is what
+ships.** `scripts/prep_vendor.py` calls `scripts/patch_libjvm.py`, which rewrites
+`libjvm.so` in place, 7 bytes for 7 bytes: the module image's name `modules`
+becomes `jimg.so` in two path format strings. Nothing else in the library is
+touched — the `DT_SONAME` is left intact, exactly as the JDK ships it. The result
+ships as `jdk21/lib/server/libjvm_real.so` and `verify_hap.py` asserts the patch
+is present. GPL-2.0 §2 requires a notice stating the file was changed and when;
+§3 requires the corresponding source of the modified binary to be available —
+that is upstream OpenJDK (<https://github.com/openjdk/jdk>) plus
+`scripts/patch_libjvm.py`, which is the entire change. The other JDK files that
+ship (`jimg.so`, `tzdb.so`, and the `conf/` and `lib/security/` trees) are
+renamed or copied, not modified.
 
 Note that this is GPL **v2**, unlike Mindustry's v3 — two different GPL versions
 are involved here, and they are not interchangeable.
@@ -197,7 +229,8 @@ a clone would. `RELEASE.md` covers what may be published at all.
   <https://github.com/Anuken/Arc>
 - SDL3 — <https://github.com/libsdl-org/SDL>
 - LWJGL — <https://www.lwjgl.org/>
-- OpenJDK — <https://openjdk.org/>
+- OpenJDK — <https://openjdk.org/>; the OpenHarmony build redistributed here is
+  published by **AMCL** — <https://github.com/LZZLHY/amcl>
 
 ## This project is unofficial
 

@@ -164,9 +164,8 @@ Mindustry Ark**自签名安装不受影响**，手机用户可以**正常**游�
 - [**Arc**](https://github.com/Anuken/Arc) —— Anuken 开发的游戏框架
 - [**SDL3**](https://github.com/libsdl-org/SDL) —— 窗口 / 输入 / 音频层
 - [**LWJGL**](https://github.com/LWJGL/lwjgl3) —— OpenGL 与 SDL 的 JNI 绑定
-- [**OpenJDK 21**](https://github.com/openjdk/jdk) —— 运行时
-- [**AMCL**](https://github.com/LZZLHY/amcl) —— 同类项目的参考实现。本项目有几处做法受它启发，
-  但它不是本项目的依赖，产物里也不含它的代码。
+- [**OpenJDK 21**](https://github.com/openjdk/jdk) —— 运行时。本项目所用的是
+- [**AMCL**](https://github.com/LZZLHY/amcl) 发布的 OpenHarmony 构建（`jdk21-ohos-full-v7.zip`， 上游 `jdk-21.0.5+11`）
 
 > [!NOTE]
 > 本仓库绝大部分代码、文档和文字由 AI 辅助完成（Claude via Cherry Studio，模型 deepseek-flash v4.1）。
