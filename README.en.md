@@ -37,7 +37,7 @@ framework the game runs on: it is a jar patch loaded before the game.
 | **Ark Launcher** | [`lite`](https://github.com/haohandc/MindustryArk/tree/lite) | No — you supply the `.jar` |
 
 Ark Launcher is the same thing with the game removed. After installing it, put your own
-`Mindustry.jar` into the folder the launcher shows. The file name does not matter.
+`Mindustry.jar` into the `Downloads/<app name>/games` folder. The `.jar` file name does not matter.
 
 ## Repository contents
 
@@ -64,7 +64,7 @@ Ark Launcher is the same thing with the game removed. After installing it, put y
 | Graphics | OpenGL ES, through SDL3 |
 | Audio | OHAudio, through our own `libarcarm64.so` |
 | Touch | Works, pinch-to-zoom included |
-| Keyboard | Physical keyboards work; in-game text uses a pop-up input field |
+| Keyboard | Physical keyboards work; text input uses the system IME |
 | Mouse / gamepad | Mouse works; gamepad untested |
 | Save import and export | Through the app folder under Downloads |
 | Mods | Imported with the game's own "Import mod" button; no restart |
@@ -121,11 +121,14 @@ Automatically generate signature** → `bash deploy.sh`.
 
 | Region | Phone | Tablet / PC · 2-in-1 |
 |---|---|---|
-| Mainland China | **Ark Launcher, tool build** — a management tool; **cannot run the game** | **Ark Launcher** |
-| Elsewhere | same as above | **Mindustry Ark** |
+| Mainland China | **Ark Launcher**, a management tool — **cannot run the game** | **Ark Launcher** — runs imported games |
+| Elsewhere | same as above | **Mindustry Ark** — the full build, no restrictions |
 
-The phone build carries no game runtime, so it can only manage. The reason: the anonymous
-executable memory permission **covers tablets and PC / 2-in-1 only**.
+The phone build of Ark Launcher carries no game runtime, so it can only manage. The reason: a
+store release cannot declare some ACL permissions, and the anonymous executable memory permission
+that JIT needs **covers tablets and PC / 2-in-1 only**.
+
+A self-signed install of Mindustry Ark is unaffected — phone users can play normally.
 
 ## Building from source
 
@@ -166,11 +169,9 @@ Mindustry and related names and marks belong to their respective owners.
 - [**Arc**](https://github.com/Anuken/Arc) — the game framework, by Anuken
 - [**SDL3**](https://github.com/libsdl-org/SDL) — window, input and audio
 - [**LWJGL**](https://github.com/LWJGL/lwjgl3) — JNI bindings for OpenGL and SDL
-- [**OpenJDK 21**](https://github.com/openjdk/jdk) — the runtime. We use the OpenHarmony build
-  published by [**AMCL**](https://github.com/LZZLHY/amcl) (`jdk21-ohos-full-v7.zip`, upstream
-  `jdk-21.0.5+11`), with a 14-byte change to `libjvm.so`
-- [**AMCL**](https://github.com/LZZLHY/amcl) — a reference implementation of the same idea; a few of
-  our approaches were inspired by it, and our JDK runtime is its published build (above)
+- [**OpenJDK 21**](https://github.com/openjdk/jdk) — the runtime. Ours is
+- [**AMCL**](https://github.com/LZZLHY/amcl)'s published OpenHarmony build (`jdk21-ohos-full-v7.zip`,
+  upstream `jdk-21.0.5+11`)
 
 > [!NOTE]
 > Almost all of the code, documentation and prose in this repository was produced with AI
