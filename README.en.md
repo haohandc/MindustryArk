@@ -27,6 +27,8 @@ Runs **Mindustry** on HarmonyOS / OpenHarmony.
 **Nothing in Mindustry itself is modified.** The compatibility work targets **Arc**, the
 framework the game runs on: it is a jar patch loaded before the game.
 
+Ark Launcher v1.3.3.2 **has already been uploaded to AppGallery.**
+
 > [!CAUTION]
 > AI-generated project; the code has not been reviewed by a person. It also has two giant
 > files (`LauncherHome.ets` and `launcher.c`, 5000 / 2000 lines), so maintainability is poor —
