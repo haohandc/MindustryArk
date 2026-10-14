@@ -15,11 +15,7 @@
     <img src="https://img.shields.io/github/stars/haohandc/MindustryArk?style=flat-square&label=stars" alt="GitHub stars">
   </p>
   <p>
-    <a href="https://github.com/haohandc/MindustryArk/releases/latest">Download</a> ·
     <a href="docs/BUILDING.md">Build from source</a> ·
-    <a href="docs/FAQ.md">FAQ</a> ·
-    <a href="docs/LIMITATIONS.md">Known limitations</a> ·
-    <a href="PRIVACY.md">Privacy</a> ·
     <a href="https://github.com/haohandc/MindustryArk/issues">Issues</a>
   </p>
 </div>
