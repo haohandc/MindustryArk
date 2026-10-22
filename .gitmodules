@@ -1,0 +1,3 @@
+[submodule "MindustryArkCore"]
+	path = MindustryArkCore
+	url = https://github.com/haohandc/MindustryArkCore.git
